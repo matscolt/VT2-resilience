@@ -1,0 +1,2 @@
+Charts were skipped because matplotlib is not installed.
+Install it with: pip install matplotlib

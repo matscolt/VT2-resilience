@@ -1,0 +1,23 @@
+{
+  "note": "BOM per phone variant. FUSE2 uses two fuses, FUSE1 uses one fuse, and FUSE0 uses zero fuses. All variants use one Bottom cover, one Top cover, and one PCB.",
+  "bom_units_per_phone": {
+    "FUSE2": {
+      "Fuse": 2,
+      "Bottom cover": 1,
+      "Top cover": 1,
+      "PCB": 1
+    },
+    "FUSE1": {
+      "Fuse": 1,
+      "Bottom cover": 1,
+      "Top cover": 1,
+      "PCB": 1
+    },
+    "FUSE0": {
+      "Fuse": 0,
+      "Bottom cover": 1,
+      "Top cover": 1,
+      "PCB": 1
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "stock_unit": "pieces",
+  "materials_in_stock": {
+    "Fuse": 1000,
+    "Bottom cover": 1000,
+    "Top cover": 1000,
+    "PCB": 1000
+  }
+}

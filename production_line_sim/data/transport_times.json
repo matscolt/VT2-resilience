@@ -1,0 +1,10 @@
+{
+  "time_unit": "seconds",
+  "transport_times_between_consecutive_stations": {
+    "Station 1: Bottom cover -> Station 2: Drill station": 10.3,
+    "Station 2: Drill station -> Station 3: Robot cell": 28.0,
+    "Station 3: Robot cell -> Station 4: Inspection": 13.5,
+    "Station 4: Inspection -> Station 5: Top cover": 10.4,
+    "Station 5: Top cover -> Station 6: Packaging": 34.8
+  }
+}

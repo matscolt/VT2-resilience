@@ -1,0 +1,37 @@
+{
+  "time_unit": "seconds",
+  "station_sequence": [
+    "Station 1: Bottom cover",
+    "Station 2: Drill station",
+    "Station 3: Robot cell",
+    "Station 4: Inspection",
+    "Station 5: Top cover",
+    "Station 6: Packaging"
+  ],
+  "process_times": {
+    "FUSE2": {
+      "Station 1: Bottom cover": 6.6,
+      "Station 2: Drill station": 10.4,
+      "Station 3: Robot cell": 84.5,
+      "Station 4: Inspection": 2.1,
+      "Station 5: Top cover": 4.6,
+      "Station 6: Packaging": 4.0
+    },
+    "FUSE1": {
+      "Station 1: Bottom cover": 6.6,
+      "Station 2: Drill station": 10.4,
+      "Station 3: Robot cell": 76.4,
+      "Station 4: Inspection": 2.1,
+      "Station 5: Top cover": 4.6,
+      "Station 6: Packaging": 4.0
+    },
+    "FUSE0": {
+      "Station 1: Bottom cover": 6.6,
+      "Station 2: Drill station": 10.4,
+      "Station 3: Robot cell": 60.9,
+      "Station 4: Inspection": 2.1,
+      "Station 5: Top cover": 4.6,
+      "Station 6: Packaging": 4.0
+    }
+  }
+}
