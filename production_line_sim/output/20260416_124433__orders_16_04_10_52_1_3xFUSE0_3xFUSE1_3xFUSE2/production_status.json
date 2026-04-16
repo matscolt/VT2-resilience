@@ -1,0 +1,29 @@
+{
+  "requested_unit_count": 9,
+  "produced_unit_count": 9,
+  "unproduced_unit_count": 0,
+  "produced_mix": {
+    "FUSE0": 3,
+    "FUSE1": 3,
+    "FUSE2": 3
+  },
+  "unproduced_mix": {},
+  "produced_unit_positions": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "unproduced_unit_positions": [],
+  "first_unproduced_position": null,
+  "shortage_reason": null,
+  "skipped_units_due_to_shortage": [],
+  "status": "complete",
+  "simulation_time_seconds": 360.0,
+  "requested_units_with_order_time_at_or_before_sim_time": 9
+}

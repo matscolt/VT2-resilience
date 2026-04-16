@@ -1,0 +1,23 @@
+{
+  "order_text": "orders_16-04_10-52_1__3xFUSE0, 3xFUSE1, 4xFUSE2",
+  "expanded_order_sequence": [
+    "FUSE0",
+    "FUSE1",
+    "FUSE2",
+    "FUSE0",
+    "FUSE1",
+    "FUSE2",
+    "FUSE0",
+    "FUSE1",
+    "FUSE2",
+    "FUSE2"
+  ],
+  "data_directory": "C:\\Users\\macie\\Desktop\\Simulationsv2\\VT2-resilience\\production_line_sim\\data",
+  "output_directory": "C:\\Users\\macie\\Desktop\\Simulationsv2\\VT2-resilience\\production_line_sim\\output\\20260416_124724__orders_16_04_10_52_1_3xFUSE0_3xFUSE1_4xFUSE2",
+  "created_at": "2026-04-16T12:47:24",
+  "input_root": "C:\\Users\\macie\\Desktop\\Simulationsv2\\VT2-resilience\\production_line_sim\\input",
+  "input_batch_directory": "C:\\Users\\macie\\Desktop\\Simulationsv2\\VT2-resilience\\production_line_sim\\input\\orders_16-04_10-52_1",
+  "input_orders_csv": "C:\\Users\\macie\\Desktop\\Simulationsv2\\VT2-resilience\\production_line_sim\\input\\orders_16-04_10-52_1\\orders_16-04_10-52_1.csv",
+  "input_settings_json": "C:\\Users\\macie\\Desktop\\Simulationsv2\\VT2-resilience\\production_line_sim\\input\\orders_16-04_10-52_1\\settings.json",
+  "simulation_time_seconds": 3600.0
+}

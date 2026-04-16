@@ -19,15 +19,7 @@ def generate_order():
         }]
 
 #Create settings JSON file
-def create_json(output_path: Path):
-    Setting = {
-        "Sim_time [s]" :    3600
-        }
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(Setting, f, indent=4) 
-
-#Create settings JSON file
-def create_setting_json(output_path: Path):
+def create_settings_json(output_path: Path):
     Setting = {
         "Sim_time [s]" :    3600
         }
@@ -36,13 +28,36 @@ def create_setting_json(output_path: Path):
 
 #Create disruption JSON file
 def create_disruption_json(output_path: Path):
-    Setting = {
-        "station"
-            "Machine breakdown chance [%]" :    0,
-            "Machine breakdown duration [s]" :  0,
+    disruption = {
+        "station 1": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
+        },
+        "station 2": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
+        },
+        "station 3": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
+        },
+        "station 4": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
+        },
+        "station 5": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
+        },
+        "station 6": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
         }
+
+    }
+
     with output_path.open("w", encoding="utf-8") as f:
-        json.dump(Setting, f, indent=4) 
+        json.dump(disruption, f, indent=4)
 
 # 🔷 Write CSV
 def write_csv(rows, output_path: Path):
@@ -79,8 +94,8 @@ def main():
 
     rows = generate_order()
     write_csv(rows, output_path_csv)
-    create_json(output_path_settingsjson)
-    create_json(output_path_disruptionjson)
+    create_settings_json(output_path_settingsjson)
+    create_disruption_json(output_path_disruptionjson)
     print(f"--- Created order file: {orderfoldername} ----")
 
 
