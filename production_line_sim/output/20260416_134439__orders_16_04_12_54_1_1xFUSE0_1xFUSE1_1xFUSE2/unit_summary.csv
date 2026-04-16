@@ -1,4 +1,0 @@
-unit_id,variant,first_arrival_time_s,start_time_s,completion_time_s,flow_time_s
-U001,FUSE0,0.0,0.0,185.6,185.6
-U002,FUSE1,0.0,6.6,262.0,262.0
-U003,FUSE2,0.0,13.2,346.5,346.5
