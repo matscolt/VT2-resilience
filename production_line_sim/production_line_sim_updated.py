@@ -88,7 +88,17 @@ class StationState:
 
 EVENT_FINISH = "finish"
 EVENT_ARRIVAL = "arrival"
-EVENT_PRIORITY = {EVENT_FINISH: 0, EVENT_ARRIVAL: 1}
+EVENT_RELEASE = "release"
+EVENT_CART_RETURN = "cart_return"
+EVENT_PRIORITY = {
+    EVENT_FINISH: 0,
+    EVENT_CART_RETURN: 1,
+    EVENT_ARRIVAL: 2,
+    EVENT_RELEASE: 3,
+}
+
+MAX_UNITS_IN_SYSTEM = 8
+RETURN_TO_STATION_1_TIME_S = 31.3
 
 INPUT_BATCH_NAME_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)$", re.IGNORECASE)
 INPUT_ORDER_CSV_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)\.csv$", re.IGNORECASE)
@@ -446,6 +456,8 @@ def run_simulation(
     process_time_data: dict[str, Any],
     transport_time_data: dict[str, Any],
     unit_release_times: list[float] | None = None,
+    max_units_in_system: int = MAX_UNITS_IN_SYSTEM,
+    return_to_station_1_time_s: float = RETURN_TO_STATION_1_TIME_S,
 ) -> tuple[list[OperationRecord], list[TransportRecord], list[UnitSummary], list[StationSummary], dict[str, float]]:
     station_sequence = process_time_data["station_sequence"]
     process_times = process_time_data["process_times"]
@@ -462,6 +474,8 @@ def run_simulation(
 
     event_queue: list[tuple[float, int, int, str, int, int]] = []
     event_sequence = 0
+    available_system_slots = max_units_in_system
+    waiting_for_system_slot: deque[tuple[int, float]] = deque()
 
     def push_event(time_s: float, event_type: str, station_index: int, unit_index: int) -> None:
         nonlocal event_sequence
@@ -477,6 +491,23 @@ def run_simulation(
             ),
         )
         event_sequence += 1
+
+    def release_waiting_units_into_system(current_time_s: float) -> None:
+        nonlocal available_system_slots
+
+        while available_system_slots > 0 and waiting_for_system_slot:
+            unit_index, requested_release_time_s = waiting_for_system_slot[0]
+            if requested_release_time_s > current_time_s:
+                break
+
+            waiting_for_system_slot.popleft()
+            available_system_slots -= 1
+            push_event(
+                time_s=current_time_s,
+                event_type=EVENT_ARRIVAL,
+                station_index=0,
+                unit_index=unit_index,
+            )
 
     def try_start_next(station_index: int, current_time_s: float) -> None:
         station_state = station_states[station_index]
@@ -528,13 +559,30 @@ def run_simulation(
         unit_release_times = [0.0] * len(ordered_units)
     if len(unit_release_times) != len(ordered_units):
         raise ValueError("unit_release_times must have the same length as ordered_units")
+    if max_units_in_system <= 0:
+        raise ValueError("max_units_in_system must be greater than 0")
+    if return_to_station_1_time_s < 0:
+        raise ValueError("return_to_station_1_time_s cannot be negative")
 
     for unit_index in range(len(ordered_units)):
-        push_event(float(unit_release_times[unit_index]), EVENT_ARRIVAL, 0, unit_index)
+        push_event(float(unit_release_times[unit_index]), EVENT_RELEASE, -1, unit_index)
 
     while event_queue:
         time_s, _, _, event_type, station_index, unit_index = heapq.heappop(event_queue)
-        station_state = station_states[station_index]
+        station_state = station_states[station_index] if station_index >= 0 else None
+
+        if event_type == EVENT_RELEASE:
+            if available_system_slots > 0:
+                available_system_slots -= 1
+                push_event(time_s, EVENT_ARRIVAL, 0, unit_index)
+            else:
+                waiting_for_system_slot.append((unit_index, time_s))
+            continue
+
+        if event_type == EVENT_CART_RETURN:
+            available_system_slots = min(max_units_in_system, available_system_slots + 1)
+            release_waiting_units_into_system(time_s)
+            continue
 
         if event_type == EVENT_ARRIVAL:
             _update_queue_area(station_state, time_s)
@@ -584,6 +632,12 @@ def run_simulation(
                 )
             else:
                 unit_completion[unit_index] = time_s
+                push_event(
+                    time_s=time_s + return_to_station_1_time_s,
+                    event_type=EVENT_CART_RETURN,
+                    station_index=-1,
+                    unit_index=unit_index,
+                )
 
             try_start_next(station_index, time_s)
             continue
@@ -1149,6 +1203,8 @@ def main() -> None:
             "input_orders_csv": str(generated_input["orders_csv_path"].resolve()),
             "input_settings_json": str(generated_input["settings_path"].resolve()),
             "simulation_time_seconds": simulation_time_s,
+            "max_units_in_system": MAX_UNITS_IN_SYSTEM,
+            "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
         }
 
     run_output_dir = create_run_output_dir(output_root, order_text)
@@ -1166,6 +1222,9 @@ def main() -> None:
         bom_data=bom_data,
         material_stock_data=material_stock_data,
     )
+
+    production_status["max_units_in_system"] = MAX_UNITS_IN_SYSTEM
+    production_status["return_to_station_1_time_seconds"] = RETURN_TO_STATION_1_TIME_S
 
     if simulation_time_s is not None:
         production_status["simulation_time_seconds"] = simulation_time_s
@@ -1204,6 +1263,9 @@ def main() -> None:
         station_summaries=station_summaries,
     )
 
+    kpis["max_units_in_system"] = MAX_UNITS_IN_SYSTEM
+    kpis["return_to_station_1_time_seconds"] = round(RETURN_TO_STATION_1_TIME_S, 4)
+
     if simulation_time_s is not None:
         kpis["simulation_time_seconds"] = round(simulation_time_s, 4)
 
@@ -1224,6 +1286,8 @@ def main() -> None:
     print(f"Run folder: {run_output_dir.resolve()}")
     if simulation_time_s is not None:
         print(f"Simulation time: {simulation_time_s} s")
+    print(f"Max units in system: {MAX_UNITS_IN_SYSTEM}")
+    print(f"Return time to Station 1: {RETURN_TO_STATION_1_TIME_S} s")
     print(f"Requested units: {len(ordered_units)}")
     print(f"Produced units: {len(produced_units)}")
     if unproduced_units:
