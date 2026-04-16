@@ -6,6 +6,7 @@ import heapq
 import json
 import math
 import re
+import time
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -915,6 +916,15 @@ def main() -> None:
     data_dir: Path = args.data_dir
     output_root: Path = args.output_root
 
+    if args.order:
+        order_text = args.order
+    else:
+        order_text = input(
+            "Enter order (example: 3xFUSE2, 2xFUSE1, 4xFUSE0): "
+        ).strip()
+
+    starttime = time.perf_counter() #start time of the whole execution, including setup and file writing
+
     process_time_data = load_json(data_dir / "process_times.json")
     transport_time_data = load_json(data_dir / "transport_times.json")
     material_stock_data = load_json(data_dir / "material_stock.json")
@@ -984,6 +994,10 @@ def main() -> None:
             variant = production_status["shortage_reason"]["variant"]
             print(f"Stopped at unit {pos} ({variant}) because of material shortage.")
 
+    endtime = time.perf_counter() #end time of the whole execution, including setup and file writing
+    print(f"Total execution time: {endtime - starttime:.6f} seconds")
+
 
 if __name__ == "__main__":
     main()
+    
