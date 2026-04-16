@@ -19,14 +19,6 @@ def generate_order():
         }]
 
 #Create settings JSON file
-def create_json(output_path: Path):
-    Setting = {
-        "Sim_time [s]" :    3600
-        }
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(Setting, f, indent=4) 
-
-#Create settings JSON file
 def create_setting_json(output_path: Path):
     Setting = {
         "Sim_time [s]" :    3600
@@ -36,13 +28,41 @@ def create_setting_json(output_path: Path):
 
 #Create disruption JSON file
 def create_disruption_json(output_path: Path):
-    Setting = {
-        "station"
-            "Machine breakdown chance [%]" :    0,
-            "Machine breakdown duration [s]" :  0,
+    setting = {
+        #Stations
+        "Stations": {
+            "1": {
+                "Machine breakdown chance [%]": 0,
+                "Machine breakdown duration [s]": 0
+            },
+            "2": {
+                "Machine breakdown chance [%]": 0,
+                "Machine breakdown duration [s]": 0
+            },
+            "3": {
+                "Machine breakdown chance [%]": 0,
+                "Machine breakdown duration [s]": 0
+            },
+            "4": {
+                "Machine breakdown chance [%]": 0,
+                "Machine breakdown duration [s]": 0
+            },
+            "5": {
+                "Machine breakdown chance [%]": 0,
+                "Machine breakdown duration [s]": 0
+            },
+            "6": {
+                "Machine breakdown chance [%]": 0,
+                "Machine breakdown duration [s]": 0
+            }
+        },
+        "Material": {
+            "Broken material chance [%]": 0
         }
+    }
+
     with output_path.open("w", encoding="utf-8") as f:
-        json.dump(Setting, f, indent=4) 
+        json.dump(setting, f, indent=4)
 
 # 🔷 Write CSV
 def write_csv(rows, output_path: Path):
@@ -59,6 +79,7 @@ def write_csv(rows, output_path: Path):
 def main():
     base_dir = Path(__file__).resolve().parent
     input_dir = base_dir / "input"
+    input_dir.mkdir(exist_ok=True)
 
     n=1
     timestamp = datetime.now().strftime("%d-%m_%H-%M")
@@ -79,8 +100,8 @@ def main():
 
     rows = generate_order()
     write_csv(rows, output_path_csv)
-    create_json(output_path_settingsjson)
-    create_json(output_path_disruptionjson)
+    create_setting_json(output_path_settingsjson)
+    create_disruption_json(output_path_disruptionjson)
     print(f"--- Created order file: {orderfoldername} ----")
 
 
