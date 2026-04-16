@@ -26,6 +26,7 @@
         }
     },
     "Material": {
-        "Broken material chance [%]": 0
+        "Broken material chance [%]": 0,
+        "ran out of material chance [%]": 0
     }
 }
