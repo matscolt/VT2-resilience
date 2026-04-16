@@ -452,6 +452,7 @@ def disruptions(seed):
     #then it should generate the disruption chance for each operation within the given range
     #it should be able to also check every time a dummy phone reaches a station if there should be a disruption or not
 
+    #NOTE TRANSPORT 2 LOOKS WRONG
 
 
 # -----------------------------
