@@ -1,0 +1,31 @@
+{
+    "Stations": {
+        "1": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
+        },
+        "2": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
+        },
+        "3": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
+        },
+        "4": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
+        },
+        "5": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
+        },
+        "6": {
+            "Machine breakdown chance [%]": 0,
+            "Machine breakdown duration [s]": 0
+        }
+    },
+    "Material": {
+        "Broken material chance [%]": 0
+    }
+}
