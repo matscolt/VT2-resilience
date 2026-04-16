@@ -1,2 +1,4 @@
-production/input/
-production/output/
+production/input/*.csv
+production/input/*.json
+production/output/*.csv
+production/output/*.json
