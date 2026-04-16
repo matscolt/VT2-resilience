@@ -1,0 +1,7 @@
+station_index,station_name,busy_time_s,first_start_time_s,last_finish_time_s,max_queue_length,average_queue_length,average_wait_time_s,total_wait_time_s,utilization_overall,utilization_active_window
+1,Station 1: Bottom cover,13.2,0.0,13.2,1,0.022472,3.3,6.6,0.044944,1.0
+2,Station 2: Drill station,20.8,16.9,37.7,1,0.012938,1.9,3.8,0.070821,1.0
+3,Station 3: Robot cell,169.0,55.3,224.3,1,0.252298,37.05,74.1,0.575417,1.0
+4,Station 4: Inspection,4.2,153.3,239.9,1,0.0,0.0,0.0,0.0143,0.048499
+5,Station 5: Top cover,9.2,165.8,254.9,1,0.0,0.0,0.0,0.031324,0.103255
+6,Station 6: Packaging,8.0,205.2,293.7,1,0.0,0.0,0.0,0.027239,0.090395

@@ -1,0 +1,18 @@
+{
+  "order_text": "10xFUSE2",
+  "expanded_order_sequence": [
+    "FUSE2",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2"
+  ],
+  "data_directory": "C:\\Users\\macie\\Desktop\\Simulationsv2\\VT2-resilience\\production_line_sim\\data",
+  "output_directory": "C:\\Users\\macie\\Desktop\\Simulationsv2\\VT2-resilience\\production_line_sim\\output\\20260416_094225__10xFUSE2",
+  "created_at": "2026-04-16T09:42:25"
+}

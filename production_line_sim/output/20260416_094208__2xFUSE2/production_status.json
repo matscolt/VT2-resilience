@@ -1,0 +1,12 @@
+{
+  "requested_unit_count": 2,
+  "produced_unit_count": 2,
+  "unproduced_unit_count": 0,
+  "produced_mix": {
+    "FUSE2": 2
+  },
+  "unproduced_mix": {},
+  "first_unproduced_position": null,
+  "shortage_reason": null,
+  "status": "complete"
+}

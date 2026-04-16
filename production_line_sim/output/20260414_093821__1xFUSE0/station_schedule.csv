@@ -1,7 +1,0 @@
-unit_id,variant,station_index,station_name,arrival_time_s,start_time_s,finish_time_s,process_time_s,wait_time_s,queue_length_on_arrival
-U001,FUSE0,1,Station 1: Bottom cover,0.0,0.0,6.6,6.6,0.0,0
-U001,FUSE0,2,Station 2: Drill station,16.9,16.9,27.3,10.4,0.0,0
-U001,FUSE0,3,Station 3: Robot cell,55.3,55.3,116.2,60.9,0.0,0
-U001,FUSE0,4,Station 4: Inspection,129.7,129.7,131.8,2.1,0.0,0
-U001,FUSE0,5,Station 5: Top cover,142.2,142.2,146.8,4.6,0.0,0
-U001,FUSE0,6,Station 6: Packaging,181.6,181.6,185.6,4.0,0.0,0
