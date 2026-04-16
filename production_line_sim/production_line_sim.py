@@ -88,7 +88,20 @@ class StationState:
 
 EVENT_FINISH = "finish"
 EVENT_ARRIVAL = "arrival"
-EVENT_PRIORITY = {EVENT_FINISH: 0, EVENT_ARRIVAL: 1}
+EVENT_RELEASE = "release"
+EVENT_CART_RETURN = "cart_return"
+EVENT_PRIORITY = {
+    EVENT_FINISH: 0,
+    EVENT_CART_RETURN: 1,
+    EVENT_ARRIVAL: 2,
+    EVENT_RELEASE: 3,
+}
+
+MAX_UNITS_IN_SYSTEM = 8
+RETURN_TO_STATION_1_TIME_S = 31.3
+
+INPUT_BATCH_NAME_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)$", re.IGNORECASE)
+INPUT_ORDER_CSV_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)\.csv$", re.IGNORECASE)
 
 
 # -----------------------------
@@ -140,6 +153,172 @@ def build_transport_lookup(
     return lookup
 
 
+def _parse_input_batch_sort_key(name: str) -> tuple[int, int, int, int, int]:
+    stem = Path(name).stem
+    match = INPUT_BATCH_NAME_RE.match(stem)
+    if not match:
+        raise ValueError(
+            f"Input batch name '{name}' must match orders_DD-MM_HH-MM_N or orders_DD-MM_HH-MM_N.csv"
+        )
+
+    day_s, month_s, hour_s, minute_s, sequence_s = match.groups()
+    day = int(day_s)
+    month = int(month_s)
+    hour = int(hour_s)
+    minute = int(minute_s)
+    sequence = int(sequence_s)
+    return (month, day, hour, minute, sequence)
+
+
+def _read_int(cell_value: str, default: int = 0) -> int:
+    text_value = str(cell_value).strip()
+    if text_value == "":
+        return default
+    return int(float(text_value))
+
+
+def _read_float(cell_value: str, default: float = 0.0) -> float:
+    text_value = str(cell_value).strip()
+    if text_value == "":
+        return default
+    return float(text_value)
+
+
+def find_newest_input_batch_dir(input_root: Path) -> Path:
+    if not input_root.exists():
+        raise FileNotFoundError(f"Input folder not found: {input_root}")
+
+    candidate_dirs = [
+        path
+        for path in input_root.iterdir()
+        if path.is_dir() and INPUT_BATCH_NAME_RE.match(path.name)
+    ]
+    if not candidate_dirs:
+        raise FileNotFoundError(
+            f"No generated input folders were found in {input_root}. Expected folders like orders_DD-MM_HH-MM_N"
+        )
+
+    return max(candidate_dirs, key=lambda path: _parse_input_batch_sort_key(path.name))
+
+
+def find_newest_orders_csv(batch_dir: Path) -> Path:
+    candidate_csv_files = [
+        path
+        for path in batch_dir.iterdir()
+        if path.is_file() and path.suffix.lower() == ".csv" and INPUT_ORDER_CSV_RE.match(path.name)
+    ]
+
+    if candidate_csv_files:
+        return max(candidate_csv_files, key=lambda path: _parse_input_batch_sort_key(path.name))
+
+    fallback_csv_files = [path for path in batch_dir.iterdir() if path.is_file() and path.suffix.lower() == ".csv"]
+    if fallback_csv_files:
+        return max(fallback_csv_files, key=lambda path: path.stat().st_mtime)
+
+    raise FileNotFoundError(f"No order CSV file was found in {batch_dir}")
+
+
+def load_latest_generated_input(
+    input_root: Path, valid_variants: set[str]
+) -> dict[str, Any]:
+    batch_dir = find_newest_input_batch_dir(input_root)
+    orders_csv_path = find_newest_orders_csv(batch_dir)
+    settings_path = batch_dir / "settings.json"
+
+    if not settings_path.exists():
+        raise FileNotFoundError(f"settings.json was not found in {batch_dir}")
+
+    settings_data = load_json(settings_path)
+    simulation_time_s = float(settings_data.get("Sim_time [s]", 0.0))
+
+    expanded_units: list[str] = []
+    unit_release_times: list[float] = []
+    unit_priorities: list[int] = []
+    order_rows: list[dict[str, Any]] = []
+
+    with orders_csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None:
+            raise ValueError(f"Order CSV is empty: {orders_csv_path}")
+
+        for row_index, row in enumerate(reader, start=1):
+            if not row or not any(str(cell).strip() for cell in row):
+                continue
+
+            order_id = str(row[0]).strip() if len(row) > 0 else str(row_index)
+            order_time_s = _read_float(row[1], 0.0) if len(row) > 1 else 0.0
+            priority = max(1, _read_int(row[2], 1)) if len(row) > 2 else 1
+
+            row_variants: list[dict[str, Any]] = []
+            for col_idx in range(3, len(row), 2):
+                variant_text = str(row[col_idx]).strip().upper() if col_idx < len(row) else ""
+                quantity = _read_int(row[col_idx + 1], 0) if col_idx + 1 < len(row) else 0
+
+                if variant_text == "":
+                    continue
+                if variant_text not in valid_variants:
+                    raise ValueError(
+                        f"Unknown variant '{variant_text}' in {orders_csv_path.name}. Valid options: {', '.join(sorted(valid_variants))}"
+                    )
+                if quantity < 0:
+                    raise ValueError(
+                        f"Negative quantity for variant '{variant_text}' in row {row_index} of {orders_csv_path.name}"
+                    )
+
+                row_variants.append(
+                    {
+                        "variant": variant_text,
+                        "quantity": quantity,
+                        "variant_slot_index": (col_idx - 3) // 2,
+                    }
+                )
+
+            order_rows.append(
+                {
+                    "order_id": order_id,
+                    "order_time_s": order_time_s,
+                    "priority": priority,
+                    "variants": row_variants,
+                    "row_index": row_index,
+                }
+            )
+
+    # Earlier orders are released earlier. For equal release time, higher priority is released first.
+    order_rows.sort(key=lambda row: (row["order_time_s"], -row["priority"], row["row_index"], str(row["order_id"])))
+
+    for row in order_rows:
+        if row["order_time_s"] > simulation_time_s:
+            continue
+
+        for variant_entry in row["variants"]:
+            variant = variant_entry["variant"]
+            quantity = int(variant_entry["quantity"])
+            for _ in range(quantity):
+                expanded_units.append(variant)
+                unit_release_times.append(float(row["order_time_s"]))
+                unit_priorities.append(int(row["priority"]))
+
+    batch_name = batch_dir.name
+    order_text = batch_name
+    if expanded_units:
+        order_mix = Counter(expanded_units)
+        mix_text = ", ".join(f"{qty}x{variant}" for variant, qty in sorted(order_mix.items()))
+        order_text = f"{batch_name}__{mix_text}"
+
+    return {
+        "order_text": order_text,
+        "ordered_units": expanded_units,
+        "unit_release_times": unit_release_times,
+        "unit_priorities": unit_priorities,
+        "simulation_time_s": simulation_time_s,
+        "input_root": input_root,
+        "batch_dir": batch_dir,
+        "orders_csv_path": orders_csv_path,
+        "settings_path": settings_path,
+    }
+
+
 # -----------------------------
 # Materials
 # -----------------------------
@@ -172,6 +351,9 @@ def determine_producible_units(
 
     produced_units: list[str] = []
     unproduced_units: list[str] = []
+    produced_unit_positions: list[int] = []
+    unproduced_unit_positions: list[int] = []
+    skipped_units_due_to_shortage: list[dict[str, Any]] = []
     first_unproduced_position: int | None = None
     shortage_reason: dict[str, Any] | None = None
 
@@ -194,18 +376,29 @@ def determine_producible_units(
                 )
 
         if shortages:
-            first_unproduced_position = index
-            shortage_reason = {
-                "unit_position": index,
-                "variant": variant,
-                "shortages": shortages,
-            }
-            unproduced_units = ordered_units[index - 1 :]
-            break
+            if first_unproduced_position is None:
+                first_unproduced_position = index
+                shortage_reason = {
+                    "unit_position": index,
+                    "variant": variant,
+                    "shortages": shortages,
+                }
+
+            unproduced_units.append(variant)
+            unproduced_unit_positions.append(index)
+            skipped_units_due_to_shortage.append(
+                {
+                    "unit_position": index,
+                    "variant": variant,
+                    "shortages": shortages,
+                }
+            )
+            continue
 
         for material, needed in unit_bom.items():
             remaining_stock[material] = int(remaining_stock.get(material, 0)) - needed
         produced_units.append(variant)
+        produced_unit_positions.append(index)
 
     requested_requirements = calculate_material_requirements(ordered_units, bom_data)
     consumed_requirements = calculate_material_requirements(produced_units, bom_data)
@@ -236,8 +429,11 @@ def determine_producible_units(
         "unproduced_unit_count": len(unproduced_units),
         "produced_mix": dict(Counter(produced_units)),
         "unproduced_mix": dict(Counter(unproduced_units)),
+        "produced_unit_positions": produced_unit_positions,
+        "unproduced_unit_positions": unproduced_unit_positions,
         "first_unproduced_position": first_unproduced_position,
         "shortage_reason": shortage_reason,
+        "skipped_units_due_to_shortage": skipped_units_due_to_shortage,
         "status": "complete" if not unproduced_units else "partial_due_to_material_shortage",
     }
 
@@ -259,6 +455,9 @@ def run_simulation(
     ordered_units: list[str],
     process_time_data: dict[str, Any],
     transport_time_data: dict[str, Any],
+    unit_release_times: list[float] | None = None,
+    max_units_in_system: int = MAX_UNITS_IN_SYSTEM,
+    return_to_station_1_time_s: float = RETURN_TO_STATION_1_TIME_S,
 ) -> tuple[list[OperationRecord], list[TransportRecord], list[UnitSummary], list[StationSummary], dict[str, float]]:
     station_sequence = process_time_data["station_sequence"]
     process_times = process_time_data["process_times"]
@@ -275,6 +474,8 @@ def run_simulation(
 
     event_queue: list[tuple[float, int, int, str, int, int]] = []
     event_sequence = 0
+    available_system_slots = max_units_in_system
+    waiting_for_system_slot: deque[tuple[int, float]] = deque()
 
     def push_event(time_s: float, event_type: str, station_index: int, unit_index: int) -> None:
         nonlocal event_sequence
@@ -290,6 +491,23 @@ def run_simulation(
             ),
         )
         event_sequence += 1
+
+    def release_waiting_units_into_system(current_time_s: float) -> None:
+        nonlocal available_system_slots
+
+        while available_system_slots > 0 and waiting_for_system_slot:
+            unit_index, requested_release_time_s = waiting_for_system_slot[0]
+            if requested_release_time_s > current_time_s:
+                break
+
+            waiting_for_system_slot.popleft()
+            available_system_slots -= 1
+            push_event(
+                time_s=current_time_s,
+                event_type=EVENT_ARRIVAL,
+                station_index=0,
+                unit_index=unit_index,
+            )
 
     def try_start_next(station_index: int, current_time_s: float) -> None:
         station_state = station_states[station_index]
@@ -337,12 +555,34 @@ def run_simulation(
             unit_index=unit_index,
         )
 
+    if unit_release_times is None:
+        unit_release_times = [0.0] * len(ordered_units)
+    if len(unit_release_times) != len(ordered_units):
+        raise ValueError("unit_release_times must have the same length as ordered_units")
+    if max_units_in_system <= 0:
+        raise ValueError("max_units_in_system must be greater than 0")
+    if return_to_station_1_time_s < 0:
+        raise ValueError("return_to_station_1_time_s cannot be negative")
+
     for unit_index in range(len(ordered_units)):
-        push_event(0.0, EVENT_ARRIVAL, 0, unit_index)
+        push_event(float(unit_release_times[unit_index]), EVENT_RELEASE, -1, unit_index)
 
     while event_queue:
         time_s, _, _, event_type, station_index, unit_index = heapq.heappop(event_queue)
-        station_state = station_states[station_index]
+        station_state = station_states[station_index] if station_index >= 0 else None
+
+        if event_type == EVENT_RELEASE:
+            if available_system_slots > 0:
+                available_system_slots -= 1
+                push_event(time_s, EVENT_ARRIVAL, 0, unit_index)
+            else:
+                waiting_for_system_slot.append((unit_index, time_s))
+            continue
+
+        if event_type == EVENT_CART_RETURN:
+            available_system_slots = min(max_units_in_system, available_system_slots + 1)
+            release_waiting_units_into_system(time_s)
+            continue
 
         if event_type == EVENT_ARRIVAL:
             _update_queue_area(station_state, time_s)
@@ -392,6 +632,12 @@ def run_simulation(
                 )
             else:
                 unit_completion[unit_index] = time_s
+                push_event(
+                    time_s=time_s + return_to_station_1_time_s,
+                    event_type=EVENT_CART_RETURN,
+                    station_index=-1,
+                    unit_index=unit_index,
+                )
 
             try_start_next(station_index, time_s)
             continue
@@ -876,6 +1122,7 @@ def save_run_metadata(
     output_path: Path,
     data_dir: Path,
     output_dir: Path,
+    extra_payload: dict[str, Any] | None = None,
 ) -> None:
     payload = {
         "order_text": order_text,
@@ -884,6 +1131,8 @@ def save_run_metadata(
         "output_directory": str(output_dir.resolve()),
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
+    if extra_payload:
+        payload.update(extra_payload)
     save_json(payload, output_path)
 
 
@@ -906,6 +1155,12 @@ def main() -> None:
         help="Folder containing process_times.json, transport_times.json, material_stock.json and bom.json",
     )
     parser.add_argument(
+        "--input-root",
+        type=Path,
+        default=Path(__file__).resolve().parent / "input",
+        help="Folder containing generated input batch folders such as orders_DD-MM_HH-MM_N",
+    )
+    parser.add_argument(
         "--output-root",
         type=Path,
         default=Path(__file__).resolve().parent / "output",
@@ -914,14 +1169,8 @@ def main() -> None:
     args = parser.parse_args()
 
     data_dir: Path = args.data_dir
+    input_root: Path = args.input_root
     output_root: Path = args.output_root
-
-    if args.order:
-        order_text = args.order
-    else:
-        order_text = input(
-            "Enter order (example: 3xFUSE2, 2xFUSE1, 4xFUSE0): "
-        ).strip()
 
     starttime = time.perf_counter() #start time of the whole execution, including setup and file writing
 
@@ -932,14 +1181,40 @@ def main() -> None:
 
     valid_variants = set(process_time_data["process_times"].keys())
 
-    order_text = args.order or input(
-        "Enter order (example: 3xFUSE2, 2xFUSE1, 4xFUSE0): "
-    ).strip()
+    order_text: str
+    ordered_units: list[str]
+    unit_release_times: list[float]
+    simulation_time_s: float | None = None
+    run_metadata_extra: dict[str, Any] = {}
 
-    ordered_units = parse_order(order_text, valid_variants)
+    if args.order:
+        order_text = args.order
+        ordered_units = parse_order(order_text, valid_variants)
+        unit_release_times = [0.0] * len(ordered_units)
+    else:
+        generated_input = load_latest_generated_input(input_root, valid_variants)
+        order_text = generated_input["order_text"]
+        ordered_units = generated_input["ordered_units"]
+        unit_release_times = generated_input["unit_release_times"]
+        simulation_time_s = generated_input["simulation_time_s"]
+        run_metadata_extra = {
+            "input_root": str(generated_input["input_root"].resolve()),
+            "input_batch_directory": str(generated_input["batch_dir"].resolve()),
+            "input_orders_csv": str(generated_input["orders_csv_path"].resolve()),
+            "input_settings_json": str(generated_input["settings_path"].resolve()),
+            "simulation_time_seconds": simulation_time_s,
+            "max_units_in_system": MAX_UNITS_IN_SYSTEM,
+            "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
+        }
+
     run_output_dir = create_run_output_dir(output_root, order_text)
     save_run_metadata(
-        order_text, ordered_units, run_output_dir / "run_metadata.json", data_dir, run_output_dir
+        order_text,
+        ordered_units,
+        run_output_dir / "run_metadata.json",
+        data_dir,
+        run_output_dir,
+        extra_payload=run_metadata_extra,
     )
 
     produced_units, unproduced_units, material_report, production_status = determine_producible_units(
@@ -947,6 +1222,13 @@ def main() -> None:
         bom_data=bom_data,
         material_stock_data=material_stock_data,
     )
+
+    production_status["max_units_in_system"] = MAX_UNITS_IN_SYSTEM
+    production_status["return_to_station_1_time_seconds"] = RETURN_TO_STATION_1_TIME_S
+
+    if simulation_time_s is not None:
+        production_status["simulation_time_seconds"] = simulation_time_s
+        production_status["requested_units_with_order_time_at_or_before_sim_time"] = len(ordered_units)
 
     write_material_report_csv(material_report, run_output_dir / "material_report.csv")
     save_json(production_status, run_output_dir / "production_status.json")
@@ -957,10 +1239,21 @@ def main() -> None:
     station_summaries: list[StationSummary] = []
 
     if produced_units:
+        produced_unit_positions = production_status.get("produced_unit_positions", [])
+        if produced_unit_positions:
+            produced_release_times = [
+                unit_release_times[position - 1]
+                for position in produced_unit_positions
+                if 1 <= int(position) <= len(unit_release_times)
+            ]
+        else:
+            produced_release_times = unit_release_times[: len(produced_units)]
+
         operations, transport_records, unit_summaries, station_summaries, _ = run_simulation(
             ordered_units=produced_units,
             process_time_data=process_time_data,
             transport_time_data=transport_time_data,
+            unit_release_times=produced_release_times,
         )
 
     kpis = calculate_kpis(
@@ -969,6 +1262,12 @@ def main() -> None:
         unit_summaries=unit_summaries,
         station_summaries=station_summaries,
     )
+
+    kpis["max_units_in_system"] = MAX_UNITS_IN_SYSTEM
+    kpis["return_to_station_1_time_seconds"] = round(RETURN_TO_STATION_1_TIME_S, 4)
+
+    if simulation_time_s is not None:
+        kpis["simulation_time_seconds"] = round(simulation_time_s, 4)
 
     write_kpis_csv(kpis, run_output_dir / "kpi_summary.csv")
     write_operations_csv(operations, run_output_dir / "station_schedule.csv")
@@ -985,6 +1284,10 @@ def main() -> None:
         (run_output_dir / "charts_skipped.txt").write_text("\n".join(chart_notes), encoding="utf-8")
 
     print(f"Run folder: {run_output_dir.resolve()}")
+    if simulation_time_s is not None:
+        print(f"Simulation time: {simulation_time_s} s")
+    print(f"Max units in system: {MAX_UNITS_IN_SYSTEM}")
+    print(f"Return time to Station 1: {RETURN_TO_STATION_1_TIME_S} s")
     print(f"Requested units: {len(ordered_units)}")
     print(f"Produced units: {len(produced_units)}")
     if unproduced_units:
@@ -992,7 +1295,7 @@ def main() -> None:
         if production_status.get("shortage_reason"):
             pos = production_status["shortage_reason"]["unit_position"]
             variant = production_status["shortage_reason"]["variant"]
-            print(f"Stopped at unit {pos} ({variant}) because of material shortage.")
+            print(f"First skipped unit due to material shortage: unit {pos} ({variant}).") 
 
     endtime = time.perf_counter() #end time of the whole execution, including setup and file writing
     print(f"Total execution time: {endtime - starttime:.6f} seconds")
