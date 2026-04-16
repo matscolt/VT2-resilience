@@ -7,19 +7,23 @@ from datetime import datetime
 # 🔷 Generate orders
 def generate_order():
     return [{
-        "order_id": "O1",
-        "variant": "FUSE0",   # manually chosen
-        "quantity": 1,        # fixed number
-        "start_time": 0,
-        "priority": 1         # fixed priority
-    }]
+        "order_id": 1,
+        "Order_time": 0,
+        "priority": 1,
+        "variant0": "FUSE0",   
+        "quantity": 0,
+        "variant1": "FUSE1",   
+        "quantity": 0,
+        "variant2": "FUSE2",
+        "quantity": 0
+        }]
 
 # 🔷 Write CSV
 def write_csv(rows, output_path: Path):
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["order_id", "variant", "quantity", "start_time", "priority"]
+            fieldnames=["order_id", "Order_time", "priority", "variant0", "quantity", "variant1", "quantity", "variant2", "quantity"]
         )
         writer.writeheader()
         writer.writerows(rows)
@@ -32,7 +36,7 @@ def main():
 
     input_dir.mkdir(exist_ok=True)
 
-    timestamp = datetime.now().strftime("%m-%d_%H-%M")
+    timestamp = datetime.now().strftime("%d-%m_%H-%M")
     ordername = f"orders_{timestamp}_1.csv"
     while (input_dir / ordername).exists():
         ordername = f"orders_{timestamp}_{int(ordername.split('_')[-1].removesuffix('.csv')) + 1}.csv"
