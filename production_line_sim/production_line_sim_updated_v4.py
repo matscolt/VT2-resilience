@@ -1286,6 +1286,7 @@ def create_gantt_chart(
             color=color,
             edgecolor="black",
             linewidth=0.25,
+            alpha=0.65,
         )
         if duration > 1.0:
             ax.text(
@@ -1347,6 +1348,7 @@ def create_gantt_chart_no_transport(
         ax.set_title("Production line Gantt chart")
         ax.set_xlabel("Time [s]")
         ax.set_ylabel("Stations / Transport")
+        ax.grid(True, axis="x", alpha=0.3)
         ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
         fig.tight_layout()
         fig.savefig(output_path, dpi=200, bbox_inches="tight")
@@ -1381,6 +1383,7 @@ def create_gantt_chart_no_transport(
             color=color,
             edgecolor="black",
             linewidth=0.25,
+            alpha=0.65,
         )
         if duration > 1.0:
             ax.text(
@@ -1397,7 +1400,6 @@ def create_gantt_chart_no_transport(
     ax.set_xlabel("Time [s]")
     ax.set_ylabel("Stations / Transport")
     ax.set_title("Production line Gantt chart")
-    ax.grid(True, axis="x", alpha=0.3)
     # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
     fig.tight_layout()
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
