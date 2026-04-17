@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import random
 import argparse
 import csv
 import heapq
@@ -438,6 +438,21 @@ def determine_producible_units(
     }
 
     return produced_units, unproduced_units, material_report, production_status
+
+# -----------------------------
+# Materials
+# -----------------------------
+
+def disruptions(seed):
+    seed = datetime.now().strftime("%Y%m%d%H%M%S")
+    print(f"--- Setting random seed for disruptions: {seed} ---")
+    #using a random seed it should check the base disruptions
+    #after checking the base disruptions it should check if there are any changes given in the input
+
+    #then it should generate the disruption chance for each operation within the given range
+    #it should be able to also check every time a dummy phone reaches a station if there should be a disruption or not
+
+    #NOTE TRANSPORT 2 LOOKS WRONG
 
 
 # -----------------------------
