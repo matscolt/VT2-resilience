@@ -22,6 +22,7 @@ def generate_order():
 def create_setting_json(output_path: Path):
     Setting = {
         "Sim_time [s]" :    3600,
+        "seed": datetime.now().strftime("%Y%m%d%H%M%S"),
         "carriers": {
             "number of carriers": 8,
         }

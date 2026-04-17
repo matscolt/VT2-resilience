@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import numpy as np
 import argparse
 import csv
 import heapq
@@ -485,9 +485,17 @@ def load_latest_generated_input(
         "settings_path": settings_path,
     }
 
-def disruptions(seed):
-    seed = datetime.now().strftime("%Y%m%d%H%M%S")
-    print(f"--- Setting random seed for disruptions: {seed} ---")
+def disruptions(settings_path,disruption_config,disruption_sceario):
+    with open(settings_path) as f:
+        settings = json.load(f)
+    with open(disruption_config) as f:
+        config = json.load(f)
+    rng = np.random.default_rng(settings["seed"])
+    print(f"--- Using random seed for disruptions: {settings['seed']} from settings.json ---")
+    
+
+
+
     #using a random seed it should check the base disruptions
     #after checking the base disruptions it should check if there are any changes given in the input
 
