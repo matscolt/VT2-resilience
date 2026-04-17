@@ -21,8 +21,11 @@ def generate_order():
 #Create settings JSON file
 def create_setting_json(output_path: Path):
     Setting = {
-        "Sim_time [s]" :    3600
+        "Sim_time [s]" :    3600,
+        "carriers": {
+            "number of carriers": 8,
         }
+    }
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(Setting, f, indent=4) 
 
