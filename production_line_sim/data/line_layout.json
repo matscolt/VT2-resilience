@@ -1,0 +1,41 @@
+{
+  "layout_name": "default_single_path",
+  "stages": [
+    {
+      "base_station_name": "Station 1: Bottom cover",
+      "copies": 1,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 0.0
+    },
+    {
+      "base_station_name": "Station 2: Drill station",
+      "copies": 1,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 0.0
+    },
+    {
+      "base_station_name": "Station 3: Robot cell",
+      "copies": 3,
+      "branch_transport_from_previous_s": 10.0,
+      "branch_transport_to_next_s": 10.0
+    },
+    {
+      "base_station_name": "Station 4: Inspection",
+      "copies": 1,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 0.0
+    },
+    {
+      "base_station_name": "Station 5: Top cover",
+      "copies": 1,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 0.0
+    },
+    {
+      "base_station_name": "Station 6: Packaging",
+      "copies": 1,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 0.0
+    }
+  ]
+}
