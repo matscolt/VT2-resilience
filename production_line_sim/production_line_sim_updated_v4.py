@@ -1325,6 +1325,77 @@ def create_gantt_chart(
     return True
 
 
+def create_gantt_chart_no_transport(
+    operations: list[OperationRecord],
+    transport_records: list[TransportRecord],
+    output_path: Path,
+) -> bool:
+    if plt is None:
+        return False
+
+    if not operations:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.set_title("Production line Gantt chart")
+        ax.set_xlabel("Time [s]")
+        ax.set_ylabel("Stations / Transport")
+        ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
+    station_names = []
+    seen_stations = set()
+    for op in sorted(operations, key=lambda x: x.station_index):
+        if op.station_name not in seen_stations:
+            station_names.append(op.station_name)
+            seen_stations.add(op.station_name)
+
+    row_names: list[str] = []
+    for idx, station_name in enumerate(station_names):
+        row_names.append(station_name)
+
+    row_to_y = {name: idx for idx, name in enumerate(row_names)}
+    unit_colors = _unit_color_map([op.unit_id for op in operations])
+
+    fig, ax = plt.subplots(figsize=(18, 9))
+
+    for op in operations:
+        y = row_to_y[op.station_name]
+        duration = op.finish_time_s - op.start_time_s
+        color = unit_colors.get(op.unit_id)
+        ax.barh(
+            y,
+            duration,
+            left=op.start_time_s,
+            height=0.62,
+            color=color,
+            edgecolor="black",
+            linewidth=0.25,
+        )
+        if duration > 1.0:
+            ax.text(
+                op.start_time_s + duration / 2,
+                y,
+                f"{op.unit_id}-{op.variant}",
+                ha="center",
+                va="center",
+                fontsize=5,
+            )
+
+    ax.set_yticks(list(row_to_y.values()))
+    ax.set_yticklabels(list(row_to_y.keys()))
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Stations / Transport")
+    ax.set_title("Production line Gantt chart")
+    ax.grid(True, axis="x", alpha=0.3)
+    # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
+
 def create_throughput_chart(unit_summaries: list[UnitSummary], output_path: Path) -> bool:
     if plt is None:
         return False
@@ -1543,6 +1614,8 @@ def main() -> None:
     chart_notes: list[str] = []
     if not create_gantt_chart(operations, transport_records, run_output_dir / "gantt_chart.png"):
         chart_notes.append("gantt_chart.png not created because matplotlib is not installed.")
+    if not create_gantt_chart_no_transport(operations, transport_records, run_output_dir / "gantt_chart_no_transport.png"):
+        chart_notes.append("gantt_chart_no_transport.png not created because matplotlib is not installed.")
     if not create_throughput_chart(unit_summaries, run_output_dir / "throughput_chart.png"):
         chart_notes.append("throughput_chart.png not created because matplotlib is not installed.")
     if chart_notes:
