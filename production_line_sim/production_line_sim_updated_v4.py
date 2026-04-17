@@ -1348,7 +1348,6 @@ def create_gantt_chart_no_transport(
         ax.set_title("Production line Gantt chart")
         ax.set_xlabel("Time [s]")
         ax.set_ylabel("Stations / Transport")
-        ax.grid(True, axis="x", alpha=0.3)
         ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
         fig.tight_layout()
         fig.savefig(output_path, dpi=200, bbox_inches="tight")
