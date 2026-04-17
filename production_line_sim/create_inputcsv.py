@@ -29,6 +29,7 @@ def create_setting_json(output_path: Path):
 #Create disruption JSON file
 def create_disruption_json(output_path: Path):
     setting = {
+        "SEED": datetime.now().strftime("%Y%m%d%H%M%S"),
         #Stations
         "Stations": {
             "1": {
