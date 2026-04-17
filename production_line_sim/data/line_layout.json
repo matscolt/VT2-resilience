@@ -9,19 +9,19 @@
     },
     {
       "base_station_name": "Station 2: Drill station",
-      "copies": 2,
+      "copies": 1,
       "branch_transport_from_previous_s": 0.0,
       "branch_transport_to_next_s": 0.0
     },
     {
       "base_station_name": "Station 3: Robot cell",
-      "copies": 8,
+      "copies": 1,
       "branch_transport_from_previous_s": 10.0,
       "branch_transport_to_next_s": 10.0
     },
     {
       "base_station_name": "Station 4: Inspection",
-      "copies": 3,
+      "copies": 1,
       "branch_transport_from_previous_s": 0.0,
       "branch_transport_to_next_s": 0.0
     },
