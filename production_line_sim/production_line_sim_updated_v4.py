@@ -1453,6 +1453,7 @@ def save_run_metadata(
     output_path: Path,
     data_dir: Path,
     output_dir: Path,
+    total_time: float = 0.0,
     extra_payload: dict[str, Any] | None = None,
 ) -> None:
     payload = {
@@ -1460,6 +1461,7 @@ def save_run_metadata(
         "expanded_order_sequence": ordered_units,
         "data_directory": str(data_dir.resolve()),
         "output_directory": str(output_dir.resolve()),
+        "total time spend on the simulation [s]": total_time,
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
     if extra_payload:
@@ -1550,14 +1552,6 @@ def main() -> None:
     run_metadata_extra["effective_station_sequence"] = list(effective_line_layout["station_sequence"])
 
     run_output_dir = create_run_output_dir(output_root, order_text)
-    save_run_metadata(
-        order_text,
-        ordered_units,
-        run_output_dir / "run_metadata.json",
-        data_dir,
-        run_output_dir,
-        extra_payload=run_metadata_extra,
-    )
 
     produced_units, unproduced_units, material_report, production_status = determine_producible_units(
         ordered_units=ordered_units,
@@ -1648,7 +1642,17 @@ def main() -> None:
             print(f"First skipped unit due to material shortage: unit {pos} ({variant}).") 
 
     endtime = time.perf_counter() #end time of the whole execution, including setup and file writing
-    print(f"Total execution time: {endtime - starttime:.6f} seconds")
+    total_time = endtime - starttime
+    print(f"Total execution time: {total_time:.6f} seconds")
+    save_run_metadata(
+        order_text,
+        ordered_units,
+        run_output_dir / "run_metadata.json",
+        data_dir,
+        run_output_dir,
+        total_time,
+        extra_payload=run_metadata_extra,
+    )
 
 
 if __name__ == "__main__":
