@@ -485,6 +485,15 @@ def load_latest_generated_input(
         "settings_path": settings_path,
     }
 
+def disruptions(seed):
+    seed = datetime.now().strftime("%Y%m%d%H%M%S")
+    print(f"--- Setting random seed for disruptions: {seed} ---")
+    #using a random seed it should check the base disruptions
+    #after checking the base disruptions it should check if there are any changes given in the input
+
+    #then it should generate the disruption chance for each operation within the given range
+    #it should be able to also check every time a dummy phone reaches a station if there should be a disruption or not
+
 
 # -----------------------------
 # Materials
