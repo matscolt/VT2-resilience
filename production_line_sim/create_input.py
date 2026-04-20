@@ -27,7 +27,7 @@ def create_setting_json(output_path: Path):
         },
         "line_layout_file": "line_layout_single_path.json",
         "carriers": {
-            "number of carriers": 8,
+            "number of carriers": 8
         }
     }
     with output_path.open("w", encoding="utf-8") as f:

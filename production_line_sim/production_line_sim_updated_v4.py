@@ -687,6 +687,7 @@ def load_latest_generated_input(
 
     settings_data = load_json(settings_path)
     simulation_time_s = float(settings_data.get("sim_time [s]", 0.0))
+    carriers = float(settings_data.get("carriers", {}).get("number of carriers", 0.0))
 
     expanded_units: list[str] = []
     unit_release_times: list[float] = []
@@ -769,6 +770,7 @@ def load_latest_generated_input(
         "unit_release_times": unit_release_times,
         "unit_priorities": unit_priorities,
         "simulation_time_s": simulation_time_s,
+        "carriers":carriers,
         "settings_data": settings_data,
         "selected_line_layout_name": _resolve_line_layout_filename_from_settings(settings_data),
         "input_root": input_root,
@@ -1842,6 +1844,7 @@ def main() -> None:
         ordered_units = generated_input["ordered_units"]
         unit_release_times = generated_input["unit_release_times"]
         simulation_time_s = generated_input["simulation_time_s"]
+        carriers = generated_input["carriers"]
         batch_dir_for_layout = generated_input["batch_dir"]
         if selected_line_layout_name is None:
             selected_line_layout_name = generated_input.get("selected_line_layout_name")
@@ -1851,7 +1854,7 @@ def main() -> None:
             "input_orders_csv": str(generated_input["orders_csv_path"].resolve()),
             "input_settings_json": str(generated_input["settings_path"].resolve()),
             "simulation_time_seconds": simulation_time_s,
-            "max_units_in_system": MAX_UNITS_IN_SYSTEM,
+            "carriers": carriers,
             "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
         }
 
@@ -1925,7 +1928,7 @@ def main() -> None:
         station_summaries=station_summaries,
     )
 
-    kpis["max_units_in_system"] = MAX_UNITS_IN_SYSTEM
+    kpis["carriers"] = carriers
     kpis["return_to_station_1_time_seconds"] = round(RETURN_TO_STATION_1_TIME_S, 4)
 
     if simulation_time_s is not None:
@@ -1953,7 +1956,7 @@ def main() -> None:
     print(f"Run folder: {run_output_dir.resolve()}")
     if simulation_time_s is not None:
         print(f"Simulation time: {simulation_time_s} s")
-    print(f"Max units in system: {MAX_UNITS_IN_SYSTEM}")
+    print(f"Carriers: {carriers}")
     print(f"Return time to Station 1: {RETURN_TO_STATION_1_TIME_S} s")
     print(f"Line layout: {effective_line_layout.get('layout_name', 'default_single_path')}")
     if line_layout_path is not None:
