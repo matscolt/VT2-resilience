@@ -686,7 +686,7 @@ def load_latest_generated_input(
         raise FileNotFoundError(f"settings.json was not found in {batch_dir}")
 
     settings_data = load_json(settings_path)
-    simulation_time_s = float(settings_data.get("Sim_time [s]", 0.0))
+    simulation_time_s = float(settings_data.get("sim_time [s]", 0.0))
 
     expanded_units: list[str] = []
     unit_release_times: list[float] = []

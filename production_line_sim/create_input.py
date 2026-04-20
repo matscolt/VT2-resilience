@@ -25,7 +25,7 @@ def create_setting_json(output_path: Path):
         "random based disruptions": {
             "enabled" : 1
         },
-        "line_layout_file": "line_layout_single_path",
+        "line_layout_file": "line_layout_single_path.json",
         "carriers": {
             "number of carriers": 8,
         }
