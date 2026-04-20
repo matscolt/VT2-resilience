@@ -9,6 +9,7 @@ import math
 import re
 import shutil
 import time
+import sys
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -2188,6 +2189,11 @@ def main() -> None:
         help="Root folder where a new subfolder will be created for every order run",
     )
     args = parser.parse_args()
+
+    if input(">>> Did you remember to save your files? <<<\n\n>>").strip().lower() in  ("y","yes"):
+        print("\nGood!\nRunning the script!\n")
+    else:
+        sys.exit("\n ---save the files and run the script again!--- \n")
 
     data_dir: Path = args.data_dir
     input_root: Path = args.input_root
