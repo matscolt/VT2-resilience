@@ -20,8 +20,11 @@ def generate_order():
 #Create settings JSON file
 def create_setting_json(output_path: Path):
     Setting = {
-        "Sim_time [s]" :    3600,
+        "sim_time [s]" :    3600,
         "seed": datetime.now().strftime("%Y%m%d%H%M%S"),
+        "random based disruptions": {
+            "enabled" : 1
+        },
         "line_layout_file": "line_layout_single_path",
         "carriers": {
             "number of carriers": 8,
@@ -33,9 +36,6 @@ def create_setting_json(output_path: Path):
 #Create disruption JSON file
 def create_disruption_json(output_path: Path):
     setting = {   
-        "Disruptions": {
-            "Enabled" : 1
-        },
         "Stations": {
             "1": {
                 "breakdown": {
@@ -121,6 +121,9 @@ def create_disruption_json(output_path: Path):
                 }
             },
             "6": {
+                "failed inspection":{
+                "wrong assembly chance": 0.005
+                },
                 "breakdown": {
                     "Machine breakdown chance [%]": 0.05,
                     "duration [s]": 60,
