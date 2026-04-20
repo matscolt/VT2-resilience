@@ -1,5 +1,5 @@
 from __future__ import annotations
-import random
+
 import argparse
 import csv
 import heapq
@@ -102,6 +102,9 @@ RETURN_TO_STATION_1_TIME_S = 31.3
 
 INPUT_BATCH_NAME_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)$", re.IGNORECASE)
 INPUT_ORDER_CSV_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)\.csv$", re.IGNORECASE)
+LINE_LAYOUT_FILENAME = "line_layout.json"
+STATION_NAME_NUMBER_RE = re.compile(r"^\s*Station\s+(\d+)(?:\.(\d+))?\s*:\s*(.+?)\s*$", re.IGNORECASE)
+TRANSPORT_NAME_NUMBER_RE = re.compile(r"^\s*Transportation\s+(\d+)\s*$", re.IGNORECASE)
 
 
 # -----------------------------
@@ -151,6 +154,170 @@ def build_transport_lookup(
             raise ValueError(f"Missing transport time for {pair[0]} -> {pair[1]}")
 
     return lookup
+
+
+def _extract_station_name_parts(station_name: str) -> tuple[int | None, int | None, str]:
+    match = STATION_NAME_NUMBER_RE.match(str(station_name).strip())
+    if not match:
+        return None, None, str(station_name).strip()
+
+    stage_number_s, copy_number_s, label = match.groups()
+    stage_number = int(stage_number_s)
+    copy_number = int(copy_number_s) if copy_number_s is not None else None
+    return stage_number, copy_number, label.strip()
+
+
+def _make_station_instance_name(base_station_name: str, copy_index: int, total_copies: int) -> str:
+    stage_number, _, label = _extract_station_name_parts(base_station_name)
+    if total_copies <= 1:
+        return base_station_name
+    if stage_number is not None:
+        return f"Station {stage_number}.{copy_index}: {label}"
+    return f"{base_station_name}.{copy_index}"
+
+
+def _transport_stage_number_from_name(transport_name: str) -> int | None:
+    match = TRANSPORT_NAME_NUMBER_RE.match(str(transport_name).strip())
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _make_default_line_layout(process_time_data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "layout_name": "default_single_path",
+        "stages": [
+            {
+                "base_station_name": station_name,
+                "copies": 1,
+                "branch_transport_from_previous_s": 0.0,
+                "branch_transport_to_next_s": 0.0,
+            }
+            for station_name in process_time_data["station_sequence"]
+        ],
+    }
+
+
+def load_line_layout_config(data_dir: Path, process_time_data: dict[str, Any]) -> tuple[dict[str, Any], Path | None]:
+    layout_path = data_dir / LINE_LAYOUT_FILENAME
+    if layout_path.exists():
+        return load_json(layout_path), layout_path
+    return _make_default_line_layout(process_time_data), None
+
+
+def build_effective_line_layout(
+    process_time_data: dict[str, Any],
+    transport_time_data: dict[str, Any],
+    line_layout_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    base_station_sequence = list(process_time_data["station_sequence"])
+    base_transport_lookup = build_transport_lookup(base_station_sequence, transport_time_data)
+
+    if line_layout_config is None:
+        line_layout_config = _make_default_line_layout(process_time_data)
+
+    raw_stages = line_layout_config.get("stages")
+    if not isinstance(raw_stages, list) or not raw_stages:
+        raise ValueError(
+            f"{LINE_LAYOUT_FILENAME} must contain a non-empty 'stages' list."
+        )
+
+    resolved_stages: list[dict[str, Any]] = []
+    configured_base_sequence: list[str] = []
+    for stage_position, stage_entry in enumerate(raw_stages, start=1):
+        if not isinstance(stage_entry, dict):
+            raise ValueError(f"Stage entry {stage_position} in {LINE_LAYOUT_FILENAME} must be a JSON object.")
+
+        base_station_name = str(stage_entry.get("base_station_name", "")).strip()
+        if base_station_name == "":
+            raise ValueError(f"Stage entry {stage_position} in {LINE_LAYOUT_FILENAME} is missing 'base_station_name'.")
+        if base_station_name not in base_station_sequence:
+            raise ValueError(
+                f"Unknown base_station_name '{base_station_name}' in {LINE_LAYOUT_FILENAME}. Expected one of: {', '.join(base_station_sequence)}"
+            )
+
+        copies = int(stage_entry.get("copies", 1))
+        if copies <= 0:
+            raise ValueError(f"Stage '{base_station_name}' in {LINE_LAYOUT_FILENAME} must have copies >= 1.")
+
+        branch_transport_from_previous_s = float(stage_entry.get("branch_transport_from_previous_s", 0.0))
+        branch_transport_to_next_s = float(stage_entry.get("branch_transport_to_next_s", 0.0))
+
+        configured_base_sequence.append(base_station_name)
+        resolved_stages.append(
+            {
+                "stage_position": stage_position,
+                "base_station_name": base_station_name,
+                "copies": copies,
+                "branch_transport_from_previous_s": branch_transport_from_previous_s,
+                "branch_transport_to_next_s": branch_transport_to_next_s,
+            }
+        )
+
+    if configured_base_sequence != base_station_sequence:
+        raise ValueError(
+            f"{LINE_LAYOUT_FILENAME} must keep the same base station order as process_times.json. Expected: {base_station_sequence}"
+        )
+
+    station_instance_names: list[str] = []
+    station_instance_base_names: list[str] = []
+    stage_instance_indices: list[list[int]] = []
+    station_to_stage_index: list[int] = []
+
+    for stage_index, stage_entry in enumerate(resolved_stages):
+        instance_indices_for_stage: list[int] = []
+        for copy_index in range(stage_entry["copies"]):
+            instance_name = _make_station_instance_name(
+                stage_entry["base_station_name"],
+                copy_index,
+                stage_entry["copies"],
+            )
+            station_instance_names.append(instance_name)
+            station_instance_base_names.append(stage_entry["base_station_name"])
+            station_to_stage_index.append(stage_index)
+            instance_indices_for_stage.append(len(station_instance_names) - 1)
+        stage_instance_indices.append(instance_indices_for_stage)
+
+    effective_transport_lookup: dict[tuple[str, str], float] = {}
+    for stage_index in range(len(resolved_stages) - 1):
+        current_stage = resolved_stages[stage_index]
+        next_stage = resolved_stages[stage_index + 1]
+        base_transport_time_s = float(
+            base_transport_lookup[(current_stage["base_station_name"], next_stage["base_station_name"])]
+        )
+
+        current_instance_indices = stage_instance_indices[stage_index]
+        next_instance_indices = stage_instance_indices[stage_index + 1]
+
+        for from_copy_position, from_instance_index in enumerate(current_instance_indices):
+            from_station_name = station_instance_names[from_instance_index]
+            extra_outbound_s = (
+                float(current_stage["branch_transport_to_next_s"])
+                if len(current_instance_indices) > 1 and from_copy_position > 0
+                else 0.0
+            )
+
+            for to_copy_position, to_instance_index in enumerate(next_instance_indices):
+                to_station_name = station_instance_names[to_instance_index]
+                extra_inbound_s = (
+                    float(next_stage["branch_transport_from_previous_s"])
+                    if len(next_instance_indices) > 1 and to_copy_position > 0
+                    else 0.0
+                )
+                effective_transport_lookup[(from_station_name, to_station_name)] = (
+                    base_transport_time_s + extra_outbound_s + extra_inbound_s
+                )
+
+    return {
+        "layout_name": line_layout_config.get("layout_name", "custom_layout"),
+        "stages": resolved_stages,
+        "station_sequence": station_instance_names,
+        "station_instance_base_names": station_instance_base_names,
+        "stage_instance_indices": stage_instance_indices,
+        "station_to_stage_index": station_to_stage_index,
+        "transport_lookup": effective_transport_lookup,
+        "base_station_sequence": base_station_sequence,
+    }
 
 
 def _parse_input_batch_sort_key(name: str) -> tuple[int, int, int, int, int]:
@@ -318,6 +485,15 @@ def load_latest_generated_input(
         "settings_path": settings_path,
     }
 
+def disruptions(seed):
+    seed = datetime.now().strftime("%Y%m%d%H%M%S")
+    print(f"--- Setting random seed for disruptions: {seed} ---")
+    #using a random seed it should check the base disruptions
+    #after checking the base disruptions it should check if there are any changes given in the input
+
+    #then it should generate the disruption chance for each operation within the given range
+    #it should be able to also check every time a dummy phone reaches a station if there should be a disruption or not
+
 
 # -----------------------------
 # Materials
@@ -439,10 +615,6 @@ def determine_producible_units(
 
     return produced_units, unproduced_units, material_report, production_status
 
-# -----------------------------
-# Materials
-# -----------------------------
-
 
 # -----------------------------
 # Event-based simulation with FIFO queues
@@ -462,10 +634,19 @@ def run_simulation(
     unit_release_times: list[float] | None = None,
     max_units_in_system: int = MAX_UNITS_IN_SYSTEM,
     return_to_station_1_time_s: float = RETURN_TO_STATION_1_TIME_S,
+    line_layout_config: dict[str, Any] | None = None,
 ) -> tuple[list[OperationRecord], list[TransportRecord], list[UnitSummary], list[StationSummary], dict[str, float]]:
-    station_sequence = process_time_data["station_sequence"]
+    effective_line_layout = build_effective_line_layout(
+        process_time_data=process_time_data,
+        transport_time_data=transport_time_data,
+        line_layout_config=line_layout_config,
+    )
+    station_sequence = effective_line_layout["station_sequence"]
+    station_instance_base_names = effective_line_layout["station_instance_base_names"]
+    stage_instance_indices = effective_line_layout["stage_instance_indices"]
+    station_to_stage_index = effective_line_layout["station_to_stage_index"]
+    transport_lookup = effective_line_layout["transport_lookup"]
     process_times = process_time_data["process_times"]
-    transport_lookup = build_transport_lookup(station_sequence, transport_time_data)
 
     station_states: list[StationState] = [StationState(queue=deque()) for _ in station_sequence]
     operations: list[OperationRecord] = []
@@ -480,6 +661,8 @@ def run_simulation(
     event_sequence = 0
     available_system_slots = max_units_in_system
     waiting_for_system_slot: deque[tuple[int, float]] = deque()
+    projected_station_available_time_s: list[float] = [0.0] * len(station_sequence)
+
 
     def push_event(time_s: float, event_type: str, station_index: int, unit_index: int) -> None:
         nonlocal event_sequence
@@ -496,6 +679,51 @@ def run_simulation(
         )
         event_sequence += 1
 
+    def choose_station_instance_for_stage(
+        target_stage_index: int,
+        current_time_s: float,
+        unit_index: int,
+        from_station_index: int | None = None,
+    ) -> tuple[int, float, float]:
+        variant = ordered_units[unit_index]
+        best_candidate: tuple[tuple[float, float, float, int], tuple[int, float, float, float]] | None = None
+
+        for candidate_station_index in stage_instance_indices[target_stage_index]:
+            candidate_station_name = station_sequence[candidate_station_index]
+            transport_time_s = 0.0
+            if from_station_index is not None:
+                from_station_name = station_sequence[from_station_index]
+                transport_time_s = float(transport_lookup[(from_station_name, candidate_station_name)])
+
+            arrival_time_s = current_time_s + transport_time_s
+            process_time_s = float(process_times[variant][station_instance_base_names[candidate_station_index]])
+            estimated_start_time_s = max(arrival_time_s, projected_station_available_time_s[candidate_station_index])
+            estimated_finish_time_s = estimated_start_time_s + process_time_s
+
+            candidate_score = (
+                estimated_start_time_s,
+                arrival_time_s,
+                projected_station_available_time_s[candidate_station_index],
+                candidate_station_index,
+            )
+            candidate_payload = (
+                candidate_station_index,
+                transport_time_s,
+                arrival_time_s,
+                estimated_finish_time_s,
+            )
+
+            if best_candidate is None or candidate_score < best_candidate[0]:
+                best_candidate = (candidate_score, candidate_payload)
+
+        if best_candidate is None:
+            raise RuntimeError(f"No station instances found for stage {target_stage_index + 1}.")
+
+        chosen_station_index, chosen_transport_time_s, chosen_arrival_time_s, projected_finish_time_s = best_candidate[1]
+        projected_station_available_time_s[chosen_station_index] = projected_finish_time_s
+        return chosen_station_index, chosen_transport_time_s, chosen_arrival_time_s
+
+
     def release_waiting_units_into_system(current_time_s: float) -> None:
         nonlocal available_system_slots
 
@@ -506,10 +734,16 @@ def run_simulation(
 
             waiting_for_system_slot.popleft()
             available_system_slots -= 1
+            first_station_index, _, arrival_time_s = choose_station_instance_for_stage(
+                target_stage_index=0,
+                current_time_s=current_time_s,
+                unit_index=unit_index,
+                from_station_index=None,
+            )
             push_event(
-                time_s=current_time_s,
+                time_s=arrival_time_s,
                 event_type=EVENT_ARRIVAL,
-                station_index=0,
+                station_index=first_station_index,
                 unit_index=unit_index,
             )
 
@@ -524,7 +758,8 @@ def run_simulation(
         unit_id = f"U{unit_index + 1:03d}"
         variant = ordered_units[unit_index]
         station_name = station_sequence[station_index]
-        process_time_s = float(process_times[variant][station_name])
+        base_station_name = station_instance_base_names[station_index]
+        process_time_s = float(process_times[variant][base_station_name])
         wait_time_s = current_time_s - arrival_time_s
 
         operation = OperationRecord(
@@ -578,7 +813,13 @@ def run_simulation(
         if event_type == EVENT_RELEASE:
             if available_system_slots > 0:
                 available_system_slots -= 1
-                push_event(time_s, EVENT_ARRIVAL, 0, unit_index)
+                first_station_index, _, arrival_time_s = choose_station_instance_for_stage(
+                    target_stage_index=0,
+                    current_time_s=time_s,
+                    unit_index=unit_index,
+                    from_station_index=None,
+                )
+                push_event(arrival_time_s, EVENT_ARRIVAL, first_station_index, unit_index)
             else:
                 waiting_for_system_slot.append((unit_index, time_s))
             continue
@@ -610,17 +851,23 @@ def run_simulation(
             station_state.busy = False
             station_state.current_unit_index = None
 
-            if station_index < len(station_sequence) - 1:
+            current_stage_index = station_to_stage_index[station_index]
+
+            if current_stage_index < len(stage_instance_indices) - 1:
                 current_station_name = station_sequence[station_index]
-                next_station_name = station_sequence[station_index + 1]
-                transport_time_s = float(transport_lookup[(current_station_name, next_station_name)])
-                arrival_time_s = time_s + transport_time_s
+                next_station_index, transport_time_s, arrival_time_s = choose_station_instance_for_stage(
+                    target_stage_index=current_stage_index + 1,
+                    current_time_s=time_s,
+                    unit_index=unit_index,
+                    from_station_index=station_index,
+                )
+                next_station_name = station_sequence[next_station_index]
                 transport_records.append(
                     TransportRecord(
                         unit_id=f"U{unit_index + 1:03d}",
                         variant=ordered_units[unit_index],
-                        transport_index=station_index + 1,
-                        transport_name=f"Transportation {station_index + 1}",
+                        transport_index=current_stage_index + 1,
+                        transport_name=f"Transportation {current_stage_index + 1}",
                         from_station=current_station_name,
                         to_station=next_station_name,
                         start_time_s=time_s,
@@ -631,7 +878,7 @@ def run_simulation(
                 push_event(
                     time_s=arrival_time_s,
                     event_type=EVENT_ARRIVAL,
-                    station_index=station_index + 1,
+                    station_index=next_station_index,
                     unit_index=unit_index,
                 )
             else:
@@ -994,25 +1241,33 @@ def create_gantt_chart(
         plt.close(fig)
         return True
 
-    station_names = []
-    seen_stations = set()
+    station_entries: list[tuple[int, int, str]] = []
+    seen_station_names: set[str] = set()
     for op in sorted(operations, key=lambda x: x.station_index):
-        if op.station_name not in seen_stations:
-            station_names.append(op.station_name)
-            seen_stations.add(op.station_name)
+        if op.station_name in seen_station_names:
+            continue
+        stage_number, copy_number, _ = _extract_station_name_parts(op.station_name)
+        station_entries.append((stage_number or op.station_index, copy_number or 0, op.station_name))
+        seen_station_names.add(op.station_name)
 
-    transport_names = []
-    seen_transports = set()
+    transport_entries: dict[int, str] = {}
     for tr in sorted(transport_records, key=lambda x: x.transport_index):
-        if tr.transport_name not in seen_transports:
-            transport_names.append(tr.transport_name)
-            seen_transports.add(tr.transport_name)
+        transport_stage_number = _transport_stage_number_from_name(tr.transport_name)
+        if transport_stage_number is None:
+            transport_stage_number = tr.transport_index
+        transport_entries.setdefault(transport_stage_number, tr.transport_name)
+
+    stations_by_stage: defaultdict[int, list[tuple[int, str]]] = defaultdict(list)
+    for stage_number, copy_number, station_name in station_entries:
+        stations_by_stage[stage_number].append((copy_number, station_name))
 
     row_names: list[str] = []
-    for idx, station_name in enumerate(station_names):
-        row_names.append(station_name)
-        if idx < len(transport_names):
-            row_names.append(transport_names[idx])
+    all_stage_numbers = sorted(stations_by_stage.keys())
+    for stage_number in all_stage_numbers:
+        for _, station_name in sorted(stations_by_stage[stage_number], key=lambda item: item[0]):
+            row_names.append(station_name)
+        if stage_number in transport_entries:
+            row_names.append(transport_entries[stage_number])
 
     row_to_y = {name: idx for idx, name in enumerate(row_names)}
     unit_colors = _unit_color_map([op.unit_id for op in operations])
@@ -1064,6 +1319,77 @@ def create_gantt_chart(
                 ha="center",
                 va="center",
                 fontsize=4.5,
+            )
+
+    ax.set_yticks(list(row_to_y.values()))
+    ax.set_yticklabels(list(row_to_y.keys()))
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Stations / Transport")
+    ax.set_title("Production line Gantt chart")
+    ax.grid(True, axis="x", alpha=0.3)
+    # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
+
+def create_gantt_chart_no_transport(
+    operations: list[OperationRecord],
+    transport_records: list[TransportRecord],
+    output_path: Path,
+) -> bool:
+    if plt is None:
+        return False
+
+    if not operations:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.set_title("Production line Gantt chart")
+        ax.set_xlabel("Time [s]")
+        ax.set_ylabel("Stations / Transport")
+        ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
+    station_names = []
+    seen_stations = set()
+    for op in sorted(operations, key=lambda x: x.station_index):
+        if op.station_name not in seen_stations:
+            station_names.append(op.station_name)
+            seen_stations.add(op.station_name)
+
+    row_names: list[str] = []
+    for idx, station_name in enumerate(station_names):
+        row_names.append(station_name)
+
+    row_to_y = {name: idx for idx, name in enumerate(row_names)}
+    unit_colors = _unit_color_map([op.unit_id for op in operations])
+
+    fig, ax = plt.subplots(figsize=(18, 9))
+
+    for op in operations:
+        y = row_to_y[op.station_name]
+        duration = op.finish_time_s - op.start_time_s
+        color = unit_colors.get(op.unit_id)
+        ax.barh(
+            y,
+            duration,
+            left=op.start_time_s,
+            height=0.62,
+            color=color,
+            edgecolor="black",
+            linewidth=0.25,
+        )
+        if duration > 1.0:
+            ax.text(
+                op.start_time_s + duration / 2,
+                y,
+                f"{op.unit_id}-{op.variant}",
+                ha="center",
+                va="center",
+                fontsize=5,
             )
 
     ax.set_yticks(list(row_to_y.values()))
@@ -1185,6 +1511,13 @@ def main() -> None:
 
     valid_variants = set(process_time_data["process_times"].keys())
 
+    line_layout_config, line_layout_path = load_line_layout_config(data_dir, process_time_data)
+    effective_line_layout = build_effective_line_layout(
+        process_time_data=process_time_data,
+        transport_time_data=transport_time_data,
+        line_layout_config=line_layout_config,
+    )
+
     order_text: str
     ordered_units: list[str]
     unit_release_times: list[float]
@@ -1210,6 +1543,10 @@ def main() -> None:
             "max_units_in_system": MAX_UNITS_IN_SYSTEM,
             "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
         }
+
+    run_metadata_extra["line_layout_file"] = str((line_layout_path or (data_dir / LINE_LAYOUT_FILENAME)).resolve())
+    run_metadata_extra["line_layout_name"] = str(effective_line_layout.get("layout_name", "default_single_path"))
+    run_metadata_extra["effective_station_sequence"] = list(effective_line_layout["station_sequence"])
 
     run_output_dir = create_run_output_dir(output_root, order_text)
     save_run_metadata(
@@ -1258,6 +1595,7 @@ def main() -> None:
             process_time_data=process_time_data,
             transport_time_data=transport_time_data,
             unit_release_times=produced_release_times,
+            line_layout_config=line_layout_config,
         )
 
     kpis = calculate_kpis(
@@ -1273,6 +1611,9 @@ def main() -> None:
     if simulation_time_s is not None:
         kpis["simulation_time_seconds"] = round(simulation_time_s, 4)
 
+    kpis["line_layout_name"] = str(effective_line_layout.get("layout_name", "default_single_path"))
+    kpis["effective_station_count"] = len(effective_line_layout["station_sequence"])
+
     write_kpis_csv(kpis, run_output_dir / "kpi_summary.csv")
     write_operations_csv(operations, run_output_dir / "station_schedule.csv")
     write_transport_csv(transport_records, run_output_dir / "transport_schedule.csv")
@@ -1282,6 +1623,8 @@ def main() -> None:
     chart_notes: list[str] = []
     if not create_gantt_chart(operations, transport_records, run_output_dir / "gantt_chart.png"):
         chart_notes.append("gantt_chart.png not created because matplotlib is not installed.")
+    if not create_gantt_chart_no_transport(operations, transport_records, run_output_dir / "gantt_chart_no_transport.png"):
+        chart_notes.append("gantt_chart_no_transport.png not created because matplotlib is not installed.")
     if not create_throughput_chart(unit_summaries, run_output_dir / "throughput_chart.png"):
         chart_notes.append("throughput_chart.png not created because matplotlib is not installed.")
     if chart_notes:
@@ -1292,6 +1635,8 @@ def main() -> None:
         print(f"Simulation time: {simulation_time_s} s")
     print(f"Max units in system: {MAX_UNITS_IN_SYSTEM}")
     print(f"Return time to Station 1: {RETURN_TO_STATION_1_TIME_S} s")
+    print(f"Line layout: {effective_line_layout.get('layout_name', 'default_single_path')}")
+    print(f"Effective station count: {len(effective_line_layout['station_sequence'])}")
     print(f"Requested units: {len(ordered_units)}")
     print(f"Produced units: {len(produced_units)}")
     if unproduced_units:
