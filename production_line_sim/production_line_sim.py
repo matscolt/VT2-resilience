@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import numpy as np
 import argparse
 import csv
 import heapq
@@ -7,6 +7,7 @@ import json
 import math
 import re
 import time
+import sys
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -103,9 +104,12 @@ RETURN_TO_STATION_1_TIME_S = 31.3
 INPUT_BATCH_NAME_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)$", re.IGNORECASE)
 INPUT_ORDER_CSV_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)\.csv$", re.IGNORECASE)
 LINE_LAYOUT_FILENAME = "line_layout.json"
-STATION_NAME_NUMBER_RE = re.compile(r"^\s*Station\s+(\d+)(?:\.(\d+))?\s*:\s*(.+?)\s*$", re.IGNORECASE)
-TRANSPORT_NAME_NUMBER_RE = re.compile(r"^\s*Transportation\s+(\d+)\s*$", re.IGNORECASE)
-LINE_LAYOUT_FILENAME = "line_layout.json"
+LINE_LAYOUT_SETTINGS_KEYS = (
+    "line_layout_file",
+    "line_layout_filename",
+    "layout_file",
+    "layout_filename",
+)
 STATION_NAME_NUMBER_RE = re.compile(r"^\s*Station\s+(\d+)(?:\.(\d+))?\s*:\s*(.+?)\s*$", re.IGNORECASE)
 TRANSPORT_NAME_NUMBER_RE = re.compile(r"^\s*Transportation\s+(\d+)\s*$", re.IGNORECASE)
 
@@ -189,10 +193,9 @@ def _transport_stage_number_from_name(transport_name: str) -> int | None:
 def _make_default_line_layout(process_time_data: dict[str, Any]) -> dict[str, Any]:
     return {
         "layout_name": "default_single_path",
-        "stages": [
+        "station_instances": [
             {
-                "base_station_name": station_name,
-                "copies": 1,
+                "station_name": station_name,
                 "branch_transport_from_previous_s": 0.0,
                 "branch_transport_to_next_s": 0.0,
             }
@@ -201,23 +204,25 @@ def _make_default_line_layout(process_time_data: dict[str, Any]) -> dict[str, An
     }
 
 
-def load_line_layout_config(data_dir: Path, process_time_data: dict[str, Any]) -> tuple[dict[str, Any], Path | None]:
-    layout_path = data_dir / LINE_LAYOUT_FILENAME
-    if layout_path.exists():
-        return load_json(layout_path), layout_path
-    return _make_default_line_layout(process_time_data), None
+def _build_base_station_number_lookup(process_time_data: dict[str, Any]) -> dict[int, str]:
+    lookup: dict[int, str] = {}
+    for base_station_name in process_time_data["station_sequence"]:
+        stage_number, _, _ = _extract_station_name_parts(base_station_name)
+        if stage_number is None:
+            raise ValueError(
+                f"Base station name '{base_station_name}' in process_times.json must follow 'Station N: Name'."
+            )
+        lookup[stage_number] = base_station_name
+    return lookup
 
 
-def build_effective_line_layout(
+def _build_effective_line_layout_from_stage_definitions(
     process_time_data: dict[str, Any],
     transport_time_data: dict[str, Any],
-    line_layout_config: dict[str, Any] | None = None,
+    line_layout_config: dict[str, Any],
 ) -> dict[str, Any]:
     base_station_sequence = list(process_time_data["station_sequence"])
     base_transport_lookup = build_transport_lookup(base_station_sequence, transport_time_data)
-
-    if line_layout_config is None:
-        line_layout_config = _make_default_line_layout(process_time_data)
 
     raw_stages = line_layout_config.get("stages")
     if not isinstance(raw_stages, list) or not raw_stages:
@@ -323,6 +328,288 @@ def build_effective_line_layout(
     }
 
 
+def _normalize_station_instance_entries(
+    process_time_data: dict[str, Any],
+    line_layout_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    raw_entries = line_layout_config.get("station_instances")
+    if not isinstance(raw_entries, list) or not raw_entries:
+        raise ValueError(
+            "Line layout config must contain a non-empty 'station_instances' list when using the station-instance format."
+        )
+
+    base_station_by_stage_number = _build_base_station_number_lookup(process_time_data)
+    normalized_entries: list[dict[str, Any]] = []
+    seen_instance_names: set[str] = set()
+
+    for entry_index, raw_entry in enumerate(raw_entries, start=1):
+        if isinstance(raw_entry, str):
+            station_name = raw_entry.strip()
+            branch_transport_from_previous_s = 0.0
+            branch_transport_to_next_s = 0.0
+        elif isinstance(raw_entry, dict):
+            station_name = str(
+                raw_entry.get("station_name", raw_entry.get("name", raw_entry.get("station", "")))
+            ).strip()
+            branch_transport_from_previous_s = float(raw_entry.get("branch_transport_from_previous_s", 0.0))
+            branch_transport_to_next_s = float(raw_entry.get("branch_transport_to_next_s", 0.0))
+        else:
+            raise ValueError(
+                f"station_instances entry {entry_index} must be either a string or a JSON object."
+            )
+
+        if station_name == "":
+            raise ValueError(f"station_instances entry {entry_index} is missing 'station_name'.")
+        if station_name in seen_instance_names:
+            raise ValueError(f"station_instances contains duplicate station_name '{station_name}'.")
+        seen_instance_names.add(station_name)
+
+        stage_number, copy_number, label = _extract_station_name_parts(station_name)
+        if stage_number is None:
+            raise ValueError(
+                f"station_name '{station_name}' must follow the format 'Station N: Name' or 'Station N.M: Name'."
+            )
+        if stage_number not in base_station_by_stage_number:
+            raise ValueError(
+                f"station_name '{station_name}' refers to stage {stage_number}, but that stage does not exist in process_times.json."
+            )
+
+        base_station_name = base_station_by_stage_number[stage_number]
+        _, _, base_label = _extract_station_name_parts(base_station_name)
+        if label.casefold() != base_label.casefold():
+            raise ValueError(
+                f"station_name '{station_name}' does not match the base station label '{base_label}' for stage {stage_number}."
+            )
+
+        normalized_entries.append(
+            {
+                "station_name": station_name,
+                "base_station_name": base_station_name,
+                "stage_number": stage_number,
+                "copy_number": copy_number,
+                "branch_transport_from_previous_s": branch_transport_from_previous_s,
+                "branch_transport_to_next_s": branch_transport_to_next_s,
+                "declared_order": entry_index,
+            }
+        )
+
+    return normalized_entries
+
+
+def _build_effective_line_layout_from_station_instances(
+    process_time_data: dict[str, Any],
+    transport_time_data: dict[str, Any],
+    line_layout_config: dict[str, Any],
+) -> dict[str, Any]:
+    base_station_sequence = list(process_time_data["station_sequence"])
+    base_transport_lookup = build_transport_lookup(base_station_sequence, transport_time_data)
+    base_station_by_stage_number = _build_base_station_number_lookup(process_time_data)
+    normalized_entries = _normalize_station_instance_entries(process_time_data, line_layout_config)
+
+    entries_by_stage_number: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
+    for entry in normalized_entries:
+        entries_by_stage_number[int(entry["stage_number"])].append(entry)
+
+    expected_stage_numbers = list(base_station_by_stage_number.keys())
+    missing_stage_numbers = [stage_number for stage_number in expected_stage_numbers if stage_number not in entries_by_stage_number]
+    if missing_stage_numbers:
+        raise ValueError(
+            f"Line layout config is missing stage(s): {', '.join(str(stage_number) for stage_number in missing_stage_numbers)}"
+        )
+
+    unexpected_stage_numbers = [stage_number for stage_number in entries_by_stage_number if stage_number not in base_station_by_stage_number]
+    if unexpected_stage_numbers:
+        raise ValueError(
+            f"Line layout config contains unknown stage number(s): {', '.join(str(stage_number) for stage_number in sorted(unexpected_stage_numbers))}"
+        )
+
+    station_instance_names: list[str] = []
+    station_instance_base_names: list[str] = []
+    stage_instance_indices: list[list[int]] = []
+    station_to_stage_index: list[int] = []
+    stage_entries_resolved: list[dict[str, Any]] = []
+    instance_entry_by_name: dict[str, dict[str, Any]] = {}
+
+    for stage_index, base_station_name in enumerate(base_station_sequence):
+        stage_number, _, _ = _extract_station_name_parts(base_station_name)
+        if stage_number is None:
+            raise ValueError(f"Could not determine stage number for base station '{base_station_name}'.")
+
+        stage_entries = sorted(
+            entries_by_stage_number[stage_number],
+            key=lambda entry: (
+                -1 if entry["copy_number"] is None else int(entry["copy_number"]),
+                int(entry["declared_order"]),
+            ),
+        )
+
+        instance_indices_for_stage: list[int] = []
+        for entry in stage_entries:
+            station_instance_names.append(str(entry["station_name"]))
+            station_instance_base_names.append(str(entry["base_station_name"]))
+            station_to_stage_index.append(stage_index)
+            instance_indices_for_stage.append(len(station_instance_names) - 1)
+            instance_entry_by_name[str(entry["station_name"])] = entry
+
+        stage_instance_indices.append(instance_indices_for_stage)
+        stage_entries_resolved.append(
+            {
+                "stage_position": stage_index + 1,
+                "base_station_name": base_station_name,
+                "copies": len(stage_entries),
+                "station_names": [str(entry["station_name"]) for entry in stage_entries],
+            }
+        )
+
+    effective_transport_lookup: dict[tuple[str, str], float] = {}
+    for stage_index in range(len(base_station_sequence) - 1):
+        current_base_station_name = base_station_sequence[stage_index]
+        next_base_station_name = base_station_sequence[stage_index + 1]
+        base_transport_time_s = float(
+            base_transport_lookup[(current_base_station_name, next_base_station_name)]
+        )
+
+        current_instance_indices = stage_instance_indices[stage_index]
+        next_instance_indices = stage_instance_indices[stage_index + 1]
+
+        for from_instance_index in current_instance_indices:
+            from_station_name = station_instance_names[from_instance_index]
+            from_entry = instance_entry_by_name[from_station_name]
+            extra_outbound_s = float(from_entry.get("branch_transport_to_next_s", 0.0))
+
+            for to_instance_index in next_instance_indices:
+                to_station_name = station_instance_names[to_instance_index]
+                to_entry = instance_entry_by_name[to_station_name]
+                extra_inbound_s = float(to_entry.get("branch_transport_from_previous_s", 0.0))
+                effective_transport_lookup[(from_station_name, to_station_name)] = (
+                    base_transport_time_s + extra_outbound_s + extra_inbound_s
+                )
+
+    return {
+        "layout_name": line_layout_config.get("layout_name", "custom_layout"),
+        "stages": stage_entries_resolved,
+        "station_sequence": station_instance_names,
+        "station_instance_base_names": station_instance_base_names,
+        "stage_instance_indices": stage_instance_indices,
+        "station_to_stage_index": station_to_stage_index,
+        "transport_lookup": effective_transport_lookup,
+        "base_station_sequence": base_station_sequence,
+        "station_instances": normalized_entries,
+    }
+
+
+def load_line_layout_config(layout_path: Path | None, process_time_data: dict[str, Any]) -> tuple[dict[str, Any], Path | None]:
+    if layout_path is not None:
+        if not layout_path.exists():
+            raise FileNotFoundError(f"Line layout file not found: {layout_path}")
+        return load_json(layout_path), layout_path
+    return _make_default_line_layout(process_time_data), None
+
+
+def build_effective_line_layout(
+    process_time_data: dict[str, Any],
+    transport_time_data: dict[str, Any],
+    line_layout_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if line_layout_config is None:
+        line_layout_config = _make_default_line_layout(process_time_data)
+
+    if isinstance(line_layout_config.get("station_instances"), list):
+        return _build_effective_line_layout_from_station_instances(
+            process_time_data=process_time_data,
+            transport_time_data=transport_time_data,
+            line_layout_config=line_layout_config,
+        )
+
+    if isinstance(line_layout_config.get("stages"), list):
+        return _build_effective_line_layout_from_stage_definitions(
+            process_time_data=process_time_data,
+            transport_time_data=transport_time_data,
+            line_layout_config=line_layout_config,
+        )
+
+    raise ValueError(
+        "Line layout config must contain either 'station_instances' or 'stages'."
+    )
+
+
+def _resolve_line_layout_filename_from_settings(settings_data: dict[str, Any]) -> str | None:
+    for key in LINE_LAYOUT_SETTINGS_KEYS:
+        value = settings_data.get(key)
+        if isinstance(value, str) and value.strip() != "":
+            return value.strip()
+    return None
+
+
+def resolve_line_layout_path(
+    selected_layout_name: str | None,
+    input_root: Path | None,
+    batch_dir: Path | None,
+    data_dir: Path,
+) -> Path | None:
+    if selected_layout_name is None or str(selected_layout_name).strip() == "":
+        batch_default = (batch_dir / LINE_LAYOUT_FILENAME) if batch_dir is not None else None
+        if batch_default is not None and batch_default.exists():
+            return batch_default
+
+        input_default = (input_root / LINE_LAYOUT_FILENAME) if input_root is not None else None
+        if input_default is not None and input_default.exists():
+            return input_default
+
+        data_default = data_dir / LINE_LAYOUT_FILENAME
+        if data_default.exists():
+            return data_default
+        return None
+
+    candidate_text = str(selected_layout_name).strip()
+    candidate_path = Path(candidate_text)
+    if candidate_path.is_absolute():
+        if candidate_path.exists():
+            return candidate_path
+        raise FileNotFoundError(f"Selected line layout file was not found: {candidate_path}")
+
+    search_locations: list[Path] = []
+    if batch_dir is not None:
+        search_locations.extend([batch_dir, batch_dir / "layouts"])
+    if input_root is not None:
+        search_locations.extend([input_root, input_root / "layouts"])
+    search_locations.extend([data_dir, data_dir / "layouts"])
+
+    checked_paths: list[Path] = []
+    for location in search_locations:
+        resolved = location / candidate_text
+        checked_paths.append(resolved)
+        if resolved.exists():
+            return resolved
+
+    recursive_matches: list[Path] = []
+    if input_root is not None and input_root.exists():
+        recursive_matches.extend(sorted(path for path in input_root.rglob(candidate_text) if path.is_file()))
+    recursive_matches.extend(sorted(path for path in data_dir.rglob(candidate_text) if path.is_file()))
+
+    unique_matches: list[Path] = []
+    seen_match_keys: set[str] = set()
+    for match in recursive_matches:
+        match_key = str(match.resolve())
+        if match_key not in seen_match_keys:
+            unique_matches.append(match)
+            seen_match_keys.add(match_key)
+
+    if len(unique_matches) == 1:
+        return unique_matches[0]
+    if len(unique_matches) > 1:
+        raise FileNotFoundError(
+            "Multiple line layout files matched "
+            f"'{candidate_text}': {', '.join(str(path) for path in unique_matches)}. "
+            "Choose a more specific file name or path."
+        )
+
+    checked_text = ", ".join(str(path) for path in checked_paths)
+    raise FileNotFoundError(
+        f"Could not find line layout file '{candidate_text}'. Checked: {checked_text}"
+    )
+
+
 def _parse_input_batch_sort_key(name: str) -> tuple[int, int, int, int, int]:
     stem = Path(name).stem
     match = INPUT_BATCH_NAME_RE.match(stem)
@@ -399,7 +686,8 @@ def load_latest_generated_input(
         raise FileNotFoundError(f"settings.json was not found in {batch_dir}")
 
     settings_data = load_json(settings_path)
-    simulation_time_s = float(settings_data.get("Sim_time [s]", 0.0))
+    simulation_time_s = float(settings_data.get("sim_time [s]", 0.0))
+    carriers = float(settings_data.get("carriers", {}).get("number of carriers", 0.0))
 
     expanded_units: list[str] = []
     unit_release_times: list[float] = []
@@ -482,15 +770,26 @@ def load_latest_generated_input(
         "unit_release_times": unit_release_times,
         "unit_priorities": unit_priorities,
         "simulation_time_s": simulation_time_s,
+        "carriers":carriers,
+        "settings_data": settings_data,
+        "selected_line_layout_name": _resolve_line_layout_filename_from_settings(settings_data),
         "input_root": input_root,
         "batch_dir": batch_dir,
         "orders_csv_path": orders_csv_path,
         "settings_path": settings_path,
     }
 
-def disruptions(seed):
-    seed = datetime.now().strftime("%Y%m%d%H%M%S")
-    print(f"--- Setting random seed for disruptions: {seed} ---")
+def disruptions(settings_path,disruption_config,disruption_sceario):
+    with open(settings_path) as f:
+        settings = json.load(f)
+    with open(disruption_config) as f:
+        config = json.load(f)
+    rng = np.random.default_rng(settings["seed"])
+    print(f"--- Using random seed for disruptions: {settings['seed']} from settings.json ---")
+    
+
+
+
     #using a random seed it should check the base disruptions
     #after checking the base disruptions it should check if there are any changes given in the input
 
@@ -1497,12 +1796,22 @@ def main() -> None:
         help="Folder containing generated input batch folders such as orders_DD-MM_HH-MM_N",
     )
     parser.add_argument(
+        "--line-layout-file",
+        type=str,
+        help="Optional line layout file name or path. If omitted, settings.json is checked first and then line_layout.json defaults are used.",
+    )
+    parser.add_argument(
         "--output-root",
         type=Path,
         default=Path(__file__).resolve().parent / "output",
         help="Root folder where a new subfolder will be created for every order run",
     )
     args = parser.parse_args()
+
+    if input(">>> Did you remember to save your files? <<<\n\n>>").strip().lower() in  ("y","yes"):
+        print("\nGood!\nRunning the script!\n")
+    else:
+        sys.exit("\n ---save the files and run the script again!--- \n")
 
     data_dir: Path = args.data_dir
     input_root: Path = args.input_root
@@ -1517,18 +1826,13 @@ def main() -> None:
 
     valid_variants = set(process_time_data["process_times"].keys())
 
-    line_layout_config, line_layout_path = load_line_layout_config(data_dir, process_time_data)
-    effective_line_layout = build_effective_line_layout(
-        process_time_data=process_time_data,
-        transport_time_data=transport_time_data,
-        line_layout_config=line_layout_config,
-    )
-
     order_text: str
     ordered_units: list[str]
     unit_release_times: list[float]
     simulation_time_s: float | None = None
     run_metadata_extra: dict[str, Any] = {}
+    selected_line_layout_name: str | None = args.line_layout_file
+    batch_dir_for_layout: Path | None = None
 
     if args.order:
         order_text = args.order
@@ -1540,17 +1844,38 @@ def main() -> None:
         ordered_units = generated_input["ordered_units"]
         unit_release_times = generated_input["unit_release_times"]
         simulation_time_s = generated_input["simulation_time_s"]
+        carriers = generated_input["carriers"]
+        batch_dir_for_layout = generated_input["batch_dir"]
+        if selected_line_layout_name is None:
+            selected_line_layout_name = generated_input.get("selected_line_layout_name")
         run_metadata_extra = {
             "input_root": str(generated_input["input_root"].resolve()),
             "input_batch_directory": str(generated_input["batch_dir"].resolve()),
             "input_orders_csv": str(generated_input["orders_csv_path"].resolve()),
             "input_settings_json": str(generated_input["settings_path"].resolve()),
             "simulation_time_seconds": simulation_time_s,
-            "max_units_in_system": MAX_UNITS_IN_SYSTEM,
+            "carriers": carriers,
             "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
         }
 
-    run_metadata_extra["line_layout_file"] = str((line_layout_path or (data_dir / LINE_LAYOUT_FILENAME)).resolve())
+    line_layout_path_resolved = resolve_line_layout_path(
+        selected_layout_name=selected_line_layout_name,
+        input_root=input_root,
+        batch_dir=batch_dir_for_layout,
+        data_dir=data_dir,
+    )
+    line_layout_config, line_layout_path = load_line_layout_config(line_layout_path_resolved, process_time_data)
+    effective_line_layout = build_effective_line_layout(
+        process_time_data=process_time_data,
+        transport_time_data=transport_time_data,
+        line_layout_config=line_layout_config,
+    )
+
+    run_metadata_extra["line_layout_file"] = (
+        str(line_layout_path.resolve()) if line_layout_path is not None else "default_generated_layout"
+    )
+    if selected_line_layout_name:
+        run_metadata_extra["requested_line_layout_file"] = str(selected_line_layout_name)
     run_metadata_extra["line_layout_name"] = str(effective_line_layout.get("layout_name", "default_single_path"))
     run_metadata_extra["effective_station_sequence"] = list(effective_line_layout["station_sequence"])
 
@@ -1603,7 +1928,7 @@ def main() -> None:
         station_summaries=station_summaries,
     )
 
-    kpis["max_units_in_system"] = MAX_UNITS_IN_SYSTEM
+    kpis["carriers"] = carriers
     kpis["return_to_station_1_time_seconds"] = round(RETURN_TO_STATION_1_TIME_S, 4)
 
     if simulation_time_s is not None:
@@ -1631,9 +1956,11 @@ def main() -> None:
     print(f"Run folder: {run_output_dir.resolve()}")
     if simulation_time_s is not None:
         print(f"Simulation time: {simulation_time_s} s")
-    print(f"Max units in system: {MAX_UNITS_IN_SYSTEM}")
+    print(f"Carriers: {carriers}")
     print(f"Return time to Station 1: {RETURN_TO_STATION_1_TIME_S} s")
     print(f"Line layout: {effective_line_layout.get('layout_name', 'default_single_path')}")
+    if line_layout_path is not None:
+        print(f"Line layout file: {line_layout_path.resolve()}")
     print(f"Effective station count: {len(effective_line_layout['station_sequence'])}")
     print(f"Requested units: {len(ordered_units)}")
     print(f"Produced units: {len(produced_units)}")
