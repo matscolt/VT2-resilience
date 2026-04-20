@@ -1,19 +1,169 @@
-import matplotlib as plt
+import matplotlib.pyplot as plt
 import csv
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+#  +-----------------------------+
+#  | Creates plots from the data |
+#  +-----------------------------+
 
-#Creates plots from the data
+ROOTDIR = Path(__file__).parent
 
-#import data
+#find the correct order
+def find_output_folder(base_path=None, target_timestamp=None):
+    if base_path is None:
+        base_path = ROOTDIR / "output"
 
-#read csv
+    folders = []
 
-#read json
+    for name in os.listdir(base_path):
+        full_path = base_path / name   
 
-#plot functions
+        if not full_path.is_dir():
+            continue
 
-# -----------------------------
-# Charts
-# -----------------------------
+        try:
+            timestamp_str = name.split("__")[0]
+            timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+            folders.append((timestamp, full_path))
+
+        except Exception:
+            continue
+
+    if not folders:
+        raise FileNotFoundError(f"No valid output folders found in {base_path}")
+
+    folders.sort(key=lambda x: x[0])
+
+    if target_timestamp:
+        target_dt = datetime.strptime(target_timestamp, "%Y%m%d_%H%M%S")
+        closest = min(folders, key=lambda x: abs(x[0] - target_dt))
+        return closest[1]
+
+    return folders[-1][1]
+
+#import data function
+def load_data(filepath):
+    ext = os.path.splitext(filepath)[1].lower()
+
+    if ext == ".json":
+        with open(filepath, "r") as f:
+            return json.load(f)
+
+    elif ext == ".csv":
+        with open(filepath, "r", newline="") as f:
+            reader = csv.DictReader(f)
+            return list(reader)
+
+    else:
+        raise ValueError(f"Unsupported file type: {ext}")
+
+def to_float(data, keys):
+    for row in data:
+        for key in keys:
+            if key in row:
+                row[key] = float(row[key])
+    return data
+
+def load_all_data(output_folder):
+    station_data = load_data(os.path.join(output_folder, "station_schedule.csv"))
+    transport_data = load_data(os.path.join(output_folder, "transport_schedule.csv"))
+    unit_data = load_data(os.path.join(output_folder, "unit_summary.csv"))
+
+    # convert relevant columns
+    station_data = to_float(station_data, [
+        "start_time_s", "finish_time_s", "process_time_s"
+    ])
+
+    transport_data = to_float(transport_data, [
+        "start_time_s", "finish_time_s", "transport_time_s"
+    ])
+
+    unit_data = to_float(unit_data, [
+        "completion_time_s", "flow_time_s"
+    ])
+
+    return station_data, transport_data, unit_data
+
+def plot_gantt_colored(station_data):
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    units = list(set(row["unit_id"] for row in station_data))
+    colors = {u: i for i, u in enumerate(units)}
+
+    for row in station_data:
+        start = row["start_time_s"]
+        duration = row["finish_time_s"] - start
+        station = row["station_name"]
+        unit = row["unit_id"]
+
+        ax.barh(
+            y=station,
+            width=duration,
+            left=start,
+            color=plt.cm.tab20(colors[unit] % 20),
+            alpha = 0.75
+        )
+
+    ax.set_xlabel("Time [s]")
+    ax.set_title("Gantt Chart (colored by unit)")
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_flow_times(unit_data):
+    units = [row["unit_id"] for row in unit_data]
+    flow = [row["flow_time_s"] for row in unit_data]
+
+    plt.figure()
+    plt.bar(units, flow)
+    plt.xticks(rotation=90)
+    plt.ylabel("Flow time [s]")
+    plt.title("Flow time per unit")
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_station_load(station_data):
+    load = {}
+
+    for row in station_data:
+        station = row["station_name"]
+        load.setdefault(station, 0)
+        load[station] += row["process_time_s"]
+
+    stations = list(load.keys())
+    times = list(load.values())
+
+    plt.figure()
+    plt.barh(stations, times)
+    plt.xlabel("Total processing time [s]")
+    plt.title("Station workload")
+
+    plt.tight_layout()
+    plt.show()
+
+#main
+def main():
+    specific_folder = "20260420_142405__orders_20_04_13_15_1_5xFUSE0_10xFUSE1_5xFUSE2"#enter the wanted foldername in the output folder
+    specific_folder_choice = 0 #yes = 1, no = 0
+    if specific_folder_choice == 1:
+        folder = find_output_folder(target_timestamp=specific_folder)
+    else:
+        folder = find_output_folder()
+    print(f"{folder}")
+    station_data, transport_data, unit_data = load_all_data(folder)
+
+    plot_gantt_colored(station_data)
+    plot_flow_times(unit_data)
+    plot_station_load(station_data)
+
+if __name__ == "__main__":
+    main()
+
+
+"""
 def _unit_color_map(unit_ids: list[str]) -> dict[str, Any]:
     if plt is None:
         return {}
@@ -233,13 +383,4 @@ if not create_throughput_chart(unit_summaries, run_output_dir / "throughput_char
     chart_notes.append("throughput_chart.png not created because matplotlib is not installed.")
 if chart_notes:
     (run_output_dir / "charts_skipped.txt").write_text("\n".join(chart_notes), encoding="utf-8")
-
-
-
-
-#main
-def main():
-    print("this is the main function")
-
-if __name__ == "__main__":
-    main()
+"""
