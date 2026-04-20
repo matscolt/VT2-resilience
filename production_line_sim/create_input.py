@@ -22,6 +22,7 @@ def create_setting_json(output_path: Path):
     Setting = {
         "Sim_time [s]" :    3600,
         "seed": datetime.now().strftime("%Y%m%d%H%M%S"),
+        "line_layout_file": "line_layout_single_path",
         "carriers": {
             "number of carriers": 8,
         }
