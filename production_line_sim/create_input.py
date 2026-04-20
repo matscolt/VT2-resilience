@@ -32,37 +32,115 @@ def create_setting_json(output_path: Path):
 
 #Create disruption JSON file
 def create_disruption_json(output_path: Path):
-    setting = {
-        "SEED": datetime.now().strftime("%Y%m%d%H%M%S"),
-        #Stations
+    setting = {   
+        "Disruptions": {
+            "Enabled" : 1
+        },
         "Stations": {
             "1": {
-                "Machine breakdown chance [%]": 0,
-                "Machine breakdown duration [s]": 0
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10},
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std" : 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10
+                }
             },
             "2": {
-                "Machine breakdown chance [%]": 0,
-                "Machine breakdown duration [s]": 0
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10},
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std" : 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10
+                }
             },
             "3": {
-                "Machine breakdown chance [%]": 0,
-                "Machine breakdown duration [s]": 0
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10
+                },
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std" : 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10
+                }
             },
             "4": {
-                "Machine breakdown chance [%]": 0,
-                "Machine breakdown duration [s]": 0
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10
+                },
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std" : 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10
+                }
             },
             "5": {
-                "Machine breakdown chance [%]": 0,
-                "Machine breakdown duration [s]": 0
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10
+                },
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std" : 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10
+                }
             },
             "6": {
-                "Machine breakdown chance [%]": 0,
-                "Machine breakdown duration [s]": 0
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10
+                },
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std" : 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std" : 10
+                }
             }
         },
         "Material": {
-            "Broken material chance [%]": 0
+            "Broken material chance [%]": 0.15,
+            "ran out of material chance [%]": 0.01
         }
     }
 
