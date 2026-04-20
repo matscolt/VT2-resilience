@@ -1,0 +1,35 @@
+{
+  "layout_name": "robot_cell_3_parallel",
+  "station_instances": [
+    {
+      "station_name": "Station 1: Bottom cover"
+    },
+    {
+      "station_name": "Station 2: Drill station"
+    },
+    {
+      "station_name": "Station 3: Robot cell",
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 0.0
+    },
+    {
+      "station_name": "Station 3.1: Robot cell",
+      "branch_transport_from_previous_s": 10.0,
+      "branch_transport_to_next_s": 10.0
+    },
+    {
+      "station_name": "Station 3.2: Robot cell",
+      "branch_transport_from_previous_s": 10.0,
+      "branch_transport_to_next_s": 10.0
+    },
+    {
+      "station_name": "Station 4: Inspection"
+    },
+    {
+      "station_name": "Station 5: Top cover"
+    },
+    {
+      "station_name": "Station 6: Packaging"
+    }
+  ]
+}
