@@ -93,6 +93,7 @@ def load_all_data(data_folder):
     station_data = load_data(os.path.join(data_folder, "station_schedule.csv"))
     transport_data = load_data(os.path.join(data_folder, "transport_schedule.csv"))
     unit_data = load_data(os.path.join(data_folder, "unit_summary.csv"))
+    material_data = load_data(os.path.join(data_folder, "unit_summary.csv"))
 
     # convert relevant columns
     station_data = to_float(station_data, [
@@ -107,7 +108,7 @@ def load_all_data(data_folder):
         "completion_time_s", "flow_time_s"
     ])
 
-    return station_data, transport_data, unit_data
+    return station_data, transport_data, unit_data,material_data
 
 # ---------------------------
 # PLOTS
@@ -116,7 +117,7 @@ def load_all_data(data_folder):
 
 
 def plot_gantt(station_data, transport_data, graphfolder_dir):
-
+    print(">> Generating Gantt charts!")
     # ---------------------------
     # Build ordered y-axis
     # ---------------------------
@@ -259,6 +260,7 @@ def plot_gantt(station_data, transport_data, graphfolder_dir):
     print(f">> Generated {graphname2}")
     
 def plot_flow_times(unit_data,graphfolder):
+    print(">> Generating throughput time plots!")
     units = [row["unit_id"] for row in unit_data]
     flow = [float(row["active_flow_time_s"]) for row in unit_data]
     graphname = "Flow_times.png"
@@ -294,6 +296,7 @@ def plot_flow_times(unit_data,graphfolder):
     print(f">> Generated {graphname}")
 
 def plot_station_load(station_data,graphfolder):
+    print(">> Generating station plots!")
     load = {}
     graphname = "Station_operation_time.png"
 
@@ -315,7 +318,7 @@ def plot_station_load(station_data,graphfolder):
     print(f">> Generated {graphname}")
 
 #main
-def main():
+def main(starttime):
     specific_folder = "20260420_131845"#enter the wanted foldername(only the first timestamp) in the output folder
     
     specific_folder_choice = 0 #yes = 1, no = 0
@@ -334,17 +337,21 @@ def main():
     print(f"using folder: {foldername}")
 
     clear_folder(folder)
-    station_data, transport_data, unit_data = load_all_data(folder)
+    station_data, transport_data, unit_data, material_data = load_all_data(folder)
 
     graph_folder = folder / "graphs"
     graph_folder.mkdir(exist_ok=True)
+
     plot_gantt(station_data,transport_data,graph_folder)
+    print("Time spent: "+str(time.perf_counter()-starttime))
     plot_flow_times(unit_data,graph_folder)
+    print("Time spent: "+str(time.perf_counter()-starttime))
     plot_station_load(station_data,graph_folder)
+    
 
 if __name__ == "__main__":
     starttime = time.perf_counter()
-    main()
+    main(starttime)
     endtime = time.perf_counter()
     print(f"Total graph generation time: {endtime - starttime:.6f} seconds")
 
