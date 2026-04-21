@@ -25,6 +25,7 @@ except ModuleNotFoundError:
 @dataclass
 class OperationRecord:
     unit_id: str
+    order_id: str
     variant: str
     station_index: int
     station_name: str
@@ -39,6 +40,7 @@ class OperationRecord:
 @dataclass
 class TransportRecord:
     unit_id: str
+    order_id: str
     variant: str
     transport_index: int
     transport_name: str
@@ -1380,17 +1382,11 @@ def run_simulation(
             int(unit_priorities[unit_index]),
             station_queue_sequence,
         )
-        current_queue_seq = station_queue_sequence
         station_queue_sequence += 1
 
-        insert_idx = len(station_state.queue)
-        new_score = (-int(unit_priorities[unit_index]), float(arrival_time_s), current_queue_seq)
-        for idx, existing in enumerate(station_state.queue):
-            existing_score = (-int(existing[3]), float(existing[1]), int(existing[4]))
-            if new_score < existing_score:
-                insert_idx = idx
-                break
-        station_state.queue.insert(insert_idx, entry)
+        # Physical rule: once a unit has entered the line, later units may not leapfrog it
+        # on transport or at station queues. So station queues are strict FIFO by arrival.
+        station_state.queue.append(entry)
 
     def release_waiting_units_into_system(current_time_s: float) -> None:
         nonlocal available_system_slots
@@ -1532,6 +1528,7 @@ def run_simulation(
 
         operation = OperationRecord(
             unit_id=unit_id,
+            order_id=str(unit_order_ids[unit_index]),
             variant=variant,
             station_index=station_index + 1,
             station_name=station_name,
@@ -1727,6 +1724,7 @@ def run_simulation(
                 transport_records.append(
                     TransportRecord(
                         unit_id=f"U{root_indices[unit_index] + 1:03d}",
+                        order_id=str(unit_order_ids[unit_index]),
                         variant=ordered_units[unit_index],
                         transport_index=current_stage_index + 1,
                         transport_name=f"Transportation {current_stage_index + 1}",
@@ -1983,6 +1981,7 @@ def write_operations_csv(operations: list[OperationRecord], output_path: Path) -
         writer.writerow(
             [
                 "unit_id",
+                "order_id",
                 "variant",
                 "station_index",
                 "station_name",
@@ -1998,6 +1997,7 @@ def write_operations_csv(operations: list[OperationRecord], output_path: Path) -
             writer.writerow(
                 [
                     op.unit_id,
+                    op.order_id,
                     op.variant,
                     op.station_index,
                     op.station_name,
@@ -2017,6 +2017,7 @@ def write_transport_csv(transport_records: list[TransportRecord], output_path: P
         writer.writerow(
             [
                 "unit_id",
+                "order_id",
                 "variant",
                 "transport_index",
                 "transport_name",
@@ -2031,6 +2032,7 @@ def write_transport_csv(transport_records: list[TransportRecord], output_path: P
             writer.writerow(
                 [
                     tr.unit_id,
+                    tr.order_id,
                     tr.variant,
                     tr.transport_index,
                     tr.transport_name,
