@@ -258,8 +258,9 @@ def plot_gantt(station_data, transport_data, graphfolder_dir):
     
 def plot_flow_times(unit_data,graphfolder):
     units = [row["unit_id"] for row in unit_data]
-    flow = [row["flow_time_s"] for row in unit_data]
+    flow = [float(row["active_flow_time_s"]) for row in unit_data]
     graphname = "Flow_times.png"
+    print(type(flow[10]))
     avg_flow = sum(flow) / len(flow)
 
     plt.figure()
@@ -273,8 +274,8 @@ def plot_flow_times(unit_data,graphfolder):
         label=f"Average = {avg_flow:.2f} s"
     )
     plt.text(
-        x=-1,
-        y=avg_flow,
+        x=-2.5,
+        y=max(flow),
         s=f"Average: {avg_flow:.2f} s",
         va="bottom",
         ha="left",
