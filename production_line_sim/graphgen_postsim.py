@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import csv
 import json
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 #  +-----------------------------+
@@ -42,6 +43,24 @@ def find_output_folder(output_path=None, target_timestamp=None):
         return closest[1]
 
     return folders[-1][1]
+
+
+def clear_folder(folder):
+    folder_path = folder / "graphs"
+
+    if not folder_path.exists():
+        print(f">> Folder does not exist: {folder_path}")
+        return
+
+    for item in folder_path.iterdir():
+        try:
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=False)
+            else:
+                item.unlink()
+        except PermissionError:
+            print(f">> Could not delete (locked): {item}")
+    print(f"cleaned out {folder_path}")
 
 #import data function
 def load_data(filepath):
@@ -251,6 +270,14 @@ def plot_flow_times(unit_data,graphfolder):
         color="black",
         label=f"Average = {avg_flow:.2f} s"
     )
+    plt.text(
+        x=0.01,
+        y=avg_flow,
+        s=f"Average: {avg_flow:.2f} s",
+        va="bottom",
+        ha="left",
+        fontsize=9
+    )
 
     plt.xticks(rotation=90)
     plt.ylabel("Flow time [s]")
@@ -262,7 +289,7 @@ def plot_flow_times(unit_data,graphfolder):
 
 def plot_station_load(station_data,graphfolder):
     load = {}
-    graphname = "Staion_operation_time.png"
+    graphname = "Station_operation_time.png"
 
     for row in station_data:
         station = row["station_name"]
@@ -299,6 +326,7 @@ def main():
         folder = find_output_folder()
     print(f"{folder}")
 
+    clear_folder(folder)
     station_data, transport_data, unit_data = load_all_data(folder)
 
     graph_folder = folder / "graphs"
