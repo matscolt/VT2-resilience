@@ -11,14 +11,14 @@ from pathlib import Path
 ROOTDIR = Path(__file__).parent
 
 #find the correct order
-def find_output_folder(base_path=None, target_timestamp=None):
-    if base_path is None:
-        base_path = ROOTDIR / "output"
+def find_output_folder(output_path=None, target_timestamp=None):
+    if output_path is None:
+        output_path = ROOTDIR / "output"
 
     folders = []
 
-    for name in os.listdir(base_path):
-        full_path = base_path / name   
+    for name in os.listdir(output_path):
+        full_path = output_path / name   
 
         if not full_path.is_dir():
             continue
@@ -32,7 +32,7 @@ def find_output_folder(base_path=None, target_timestamp=None):
             continue
 
     if not folders:
-        raise FileNotFoundError(f"No valid output folders found in {base_path}")
+        raise FileNotFoundError(f"No valid output folders found in {output_path}")
 
     folders.sort(key=lambda x: x[0])
 
@@ -66,10 +66,10 @@ def to_float(data, keys):
                 row[key] = float(row[key])
     return data
 
-def load_all_data(output_folder):
-    station_data = load_data(os.path.join(output_folder, "station_schedule.csv"))
-    transport_data = load_data(os.path.join(output_folder, "transport_schedule.csv"))
-    unit_data = load_data(os.path.join(output_folder, "unit_summary.csv"))
+def load_all_data(data_folder):
+    station_data = load_data(os.path.join(data_folder, "station_schedule.csv"))
+    transport_data = load_data(os.path.join(data_folder, "transport_schedule.csv"))
+    unit_data = load_data(os.path.join(data_folder, "unit_summary.csv"))
 
     # convert relevant columns
     station_data = to_float(station_data, [
@@ -86,9 +86,9 @@ def load_all_data(output_folder):
 
     return station_data, transport_data, unit_data
 
-def plot_gantt_colored(station_data):
+def plot_gantt_colored(station_data, transport_data, graphfolder_dir):
     fig, ax = plt.subplots(figsize=(12, 6))
-
+    graphname = "Gantt_chart.png"
     units = list(set(row["unit_id"] for row in station_data))
     colors = {u: i for i, u in enumerate(units)}
 
@@ -105,16 +105,26 @@ def plot_gantt_colored(station_data):
             color=plt.cm.tab20(colors[unit] % 20),
             alpha = 0.75
         )
+        ax.text(
+            x=start + duration / 2,
+            y=station,
+            s=unit,
+            va="center",
+            ha="center",
+            fontsize=7,
+            color="black"
+        )
 
     ax.set_xlabel("Time [s]")
     ax.set_title("Gantt Chart (colored by unit)")
-
-    plt.tight_layout()
-    plt.show()
-
-def plot_flow_times(unit_data):
+    fig.tight_layout()
+    fig.savefig(graphfolder_dir/graphname, dpi=200, bbox_inches="tight")
+    print(f">>Generated {graphname}")
+    
+def plot_flow_times(unit_data,graphfolder):
     units = [row["unit_id"] for row in unit_data]
     flow = [row["flow_time_s"] for row in unit_data]
+    graphname = "Flow_times.png"
 
     plt.figure()
     plt.bar(units, flow)
@@ -123,10 +133,12 @@ def plot_flow_times(unit_data):
     plt.title("Flow time per unit")
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig(graphfolder/graphname, dpi=200, bbox_inches="tight")
+    print(f">>Generated {graphname}")
 
-def plot_station_load(station_data):
+def plot_station_load(station_data,graphfolder):
     load = {}
+    graphname = "Staion_operation_time.png"
 
     for row in station_data:
         station = row["station_name"]
@@ -142,7 +154,8 @@ def plot_station_load(station_data):
     plt.title("Station workload")
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig(graphfolder/graphname, dpi=200, bbox_inches="tight")
+    print(f">>Generated {graphname}")
 
 #main
 def main():
@@ -155,9 +168,11 @@ def main():
     print(f"{folder}")
     station_data, transport_data, unit_data = load_all_data(folder)
 
-    plot_gantt_colored(station_data)
-    plot_flow_times(unit_data)
-    plot_station_load(station_data)
+    graph_folder = folder / "graphs"
+    graph_folder.mkdir(exist_ok=True)
+    plot_gantt_colored(station_data,transport_data,graph_folder)
+    plot_flow_times(unit_data,graph_folder)
+    plot_station_load(station_data,graph_folder)
 
 if __name__ == "__main__":
     main()
