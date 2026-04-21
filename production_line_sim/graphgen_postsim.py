@@ -93,6 +93,7 @@ def load_all_data(data_folder):
     station_data = load_data(os.path.join(data_folder, "station_schedule.csv"))
     transport_data = load_data(os.path.join(data_folder, "transport_schedule.csv"))
     unit_data = load_data(os.path.join(data_folder, "unit_summary.csv"))
+    material_data = load_data(os.path.join(data_folder, "unit_summary.csv"))
 
     # convert relevant columns
     station_data = to_float(station_data, [
@@ -107,7 +108,7 @@ def load_all_data(data_folder):
         "completion_time_s", "flow_time_s"
     ])
 
-    return station_data, transport_data, unit_data
+    return station_data, transport_data, unit_data,material_data
 
 # ---------------------------
 # PLOTS
@@ -334,10 +335,11 @@ def main():
     print(f"using folder: {foldername}")
 
     clear_folder(folder)
-    station_data, transport_data, unit_data = load_all_data(folder)
+    station_data, transport_data, unit_data, material_data = load_all_data(folder)
 
     graph_folder = folder / "graphs"
     graph_folder.mkdir(exist_ok=True)
+    
     plot_gantt(station_data,transport_data,graph_folder)
     plot_flow_times(unit_data,graph_folder)
     plot_station_load(station_data,graph_folder)
