@@ -20,7 +20,7 @@ def generate_order():
 #Create settings JSON file
 def create_setting_json(output_path: Path):
     Setting = {
-        "sim_time [s]" :    3600,
+        "sim_time [s]" :    36000,
         "seed": datetime.now().strftime("%Y%m%d%H%M%S"),
         "random based disruptions": {
             "enabled" : 1
@@ -143,7 +143,7 @@ def create_disruption_json(output_path: Path):
         },
         "Material": {
             "Broken material chance [%]": 0.15,
-            "ran out of material chance [%]": 0.01
+            "ran out of material chance [%]": 0.00
         }
     }
 

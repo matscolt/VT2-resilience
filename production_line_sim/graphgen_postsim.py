@@ -273,7 +273,7 @@ def plot_flow_times(unit_data,graphfolder):
         label=f"Average = {avg_flow:.2f} s"
     )
     plt.text(
-        x=-0.3,
+        x=-1,
         y=avg_flow,
         s=f"Average: {avg_flow:.2f} s",
         va="bottom",
