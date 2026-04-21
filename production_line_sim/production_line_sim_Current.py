@@ -16,6 +16,11 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
+try:
+    import matplotlib.pyplot as plt
+except ModuleNotFoundError:
+    plt = None
+
 
 @dataclass
 class OperationRecord:
@@ -28,6 +33,7 @@ class OperationRecord:
     start_time_s: float
     finish_time_s: float
     process_time_s: float
+    base_process_time_s: float
     wait_time_s: float
     queue_length_on_arrival: int
 
@@ -56,6 +62,8 @@ class UnitSummary:
     completion_time_s: float
     flow_time_s: float
     active_flow_time_s: float
+    time_spent_producing: float
+    throughput_efficiency: float
     attempts: int
 
 
@@ -1377,11 +1385,17 @@ def run_simulation(
             int(unit_priorities[unit_index]),
             station_queue_sequence,
         )
+        current_queue_seq = station_queue_sequence
         station_queue_sequence += 1
 
-        # Physical rule: once a unit has entered the line, later units may not leapfrog it
-        # on transport or at station queues. So station queues are strict FIFO by arrival.
-        station_state.queue.append(entry)
+        insert_idx = len(station_state.queue)
+        new_score = (-int(unit_priorities[unit_index]), float(arrival_time_s), current_queue_seq)
+        for idx, existing in enumerate(station_state.queue):
+            existing_score = (-int(existing[3]), float(existing[1]), int(existing[4]))
+            if new_score < existing_score:
+                insert_idx = idx
+                break
+        station_state.queue.insert(insert_idx, entry)
 
     def release_waiting_units_into_system(current_time_s: float) -> None:
         nonlocal available_system_slots
@@ -1531,6 +1545,7 @@ def run_simulation(
             start_time_s=current_time_s,
             finish_time_s=current_time_s + process_time_s,
             process_time_s=process_time_s,
+            base_process_time_s=base_process_time_s,
             wait_time_s=wait_time_s,
             queue_length_on_arrival=queue_length_ahead_on_arrival,
         )
@@ -1779,16 +1794,27 @@ def run_simulation(
             if idx in unit_first_arrival and idx in unit_attempt_exit_time
         )
         variant = ordered_units[successful_attempt_index]
+        unit_id_text = f"U{root_index + 1:03d}"
+        time_spent_producing = sum(
+            float(op.base_process_time_s)
+            for op in operations
+            if op.unit_id == unit_id_text
+        )
+        throughput_efficiency = (
+            time_spent_producing / active_flow_time_s if active_flow_time_s > 0 else 0.0
+        )
         unit_summaries.append(
             UnitSummary(
-                unit_id=f"U{root_index + 1:03d}",
+                unit_id=unit_id_text,
                 order_id=str(root_order_ids[root_index]),
                 variant=variant,
                 first_arrival_time_s=first_arrival_time_s,
                 start_time_s=first_start_time_s,
                 completion_time_s=completion_time_s,
                 flow_time_s=completion_time_s - first_arrival_time_s,
-                active_flow_time_s=active_flow_time_s,
+                active_flow_time_s=float(active_flow_time_s),
+                time_spent_producing=float(time_spent_producing),
+                throughput_efficiency=float(throughput_efficiency),
                 attempts=max(int(attempt_numbers[idx]) for idx in attempt_indices),
             )
         )
@@ -1862,57 +1888,82 @@ def calculate_kpis(
     unit_summaries: list[UnitSummary],
     station_summaries: list[StationSummary],
 ) -> dict[str, float | int]:
+    def _average_cycle_time_from_completion_times(completion_times: list[float]) -> float:
+        if not completion_times:
+            return 0.0
+        if len(completion_times) == 1:
+            return float(completion_times[0])
+        completion_times_sorted = sorted(float(value) for value in completion_times)
+        intervals = [
+            completion_times_sorted[i] - completion_times_sorted[i - 1]
+            for i in range(1, len(completion_times_sorted))
+        ]
+        return float(mean(intervals)) if intervals else 0.0
+
+    def _average_variant_cycle_time_from_global_sequence(unit_rows: list[UnitSummary], variant: str) -> float:
+        ordered_rows = sorted(unit_rows, key=lambda u: float(u.completion_time_s))
+        variant_intervals: list[float] = []
+        previous_row: UnitSummary | None = None
+        for row in ordered_rows:
+            if previous_row is not None and str(previous_row.variant) == variant and str(row.variant) == variant:
+                variant_intervals.append(float(row.completion_time_s) - float(previous_row.completion_time_s))
+            previous_row = row
+        if variant_intervals:
+            return float(mean(variant_intervals))
+
+        variant_rows = [row for row in ordered_rows if str(row.variant) == variant]
+        if len(variant_rows) == 1:
+            return float(variant_rows[0].completion_time_s)
+        return 0.0
+
     if not unit_summaries:
         return {
             "total_units_ordered": 0,
             "makespan_seconds": 0.0,
             "average_cycle_time_seconds": 0.0,
-            "cycle_time_from_1_over_throughput_seconds": math.inf,
-            "throughput_units_per_second": 0.0,
-            "throughput_units_per_hour": 0.0,
-            "average_flow_time_seconds": 0.0,
+            "cycle_time_from_1_over_throughput_rate_seconds": math.inf,
+            "throughput_rate_per_second": 0.0,
+            "throughput_rate_per_hour": 0.0,
+            "average_throughput_time_seconds": 0.0,
+            "average_active_throughput_time_seconds": 0.0,
+            "average_throughput_efficiency": 0.0,
             "total_wait_time_seconds": 0.0,
         }
 
-    completion_times = [u.completion_time_s for u in unit_summaries]
-    makespan_s = max(completion_times)
+    completion_times = [float(u.completion_time_s) for u in unit_summaries]
+    makespan_s = max(completion_times) if completion_times else 0.0
     total_units = len(unit_summaries)
-    throughput_rate_units_per_s = total_units / makespan_s if makespan_s > 0 else 0.0
-    throughput_rate_units_per_h = throughput_rate_units_per_s * 3600.0
-
-    if len(completion_times) > 1:
-        completion_times_sorted = sorted(completion_times)
-        intervals = [
-            completion_times_sorted[i] - completion_times_sorted[i - 1]
-            for i in range(1, len(completion_times_sorted))
-        ]
-        average_cycle_time_s = mean(intervals)
-    else:
-        average_cycle_time_s = makespan_s
-
+    throughput_rate_per_s = total_units / makespan_s if makespan_s > 0 else 0.0
+    throughput_rate_per_h = throughput_rate_per_s * 3600.0
+    average_cycle_time_s = _average_cycle_time_from_completion_times(completion_times)
     cycle_time_from_inverse_throughput_s = (
-        1.0 / throughput_rate_units_per_s if throughput_rate_units_per_s > 0 else math.inf
+        1.0 / throughput_rate_per_s if throughput_rate_per_s > 0 else math.inf
     )
 
-    average_flow_time_s = mean(u.flow_time_s for u in unit_summaries)
-    average_active_flow_time_s = mean(u.active_flow_time_s for u in unit_summaries)
-    total_wait_time_s = sum(op.wait_time_s for op in operations)
+    average_throughput_time_s = mean(float(u.flow_time_s) for u in unit_summaries)
+    average_active_throughput_time_s = mean(float(u.active_flow_time_s) for u in unit_summaries)
+    average_throughput_efficiency = mean(float(u.throughput_efficiency) for u in unit_summaries)
+    total_wait_time_s = sum(float(op.wait_time_s) for op in operations)
 
     kpis: dict[str, float | int] = {
         "total_units_ordered": total_units,
         "makespan_seconds": round(makespan_s, 4),
         "average_cycle_time_seconds": round(average_cycle_time_s, 4),
-        "cycle_time_from_1_over_throughput_seconds": round(
+        "cycle_time_from_1_over_throughput_rate_seconds": round(
             cycle_time_from_inverse_throughput_s, 4
-        )
-        if math.isfinite(cycle_time_from_inverse_throughput_s)
-        else math.inf,
-        "throughput_units_per_second": round(throughput_rate_units_per_s, 6),
-        "throughput_units_per_hour": round(throughput_rate_units_per_h, 4),
-        "average_flow_time_seconds": round(average_flow_time_s, 4),
-        "average_active_flow_time_seconds": round(average_active_flow_time_s, 4),
+        ) if math.isfinite(cycle_time_from_inverse_throughput_s) else math.inf,
+        "throughput_rate_per_second": round(throughput_rate_per_s, 6),
+        "throughput_rate_per_hour": round(throughput_rate_per_h, 4),
+        "average_throughput_time_seconds": round(average_throughput_time_s, 4),
+        "average_active_throughput_time_seconds": round(average_active_throughput_time_s, 4),
+        "average_throughput_efficiency": round(average_throughput_efficiency, 6),
         "total_wait_time_seconds": round(total_wait_time_s, 4),
     }
+
+    for variant in sorted({str(u.variant) for u in unit_summaries}):
+        kpis[f"average_cycle_time_seconds_{variant.lower()}"] = round(
+            _average_variant_cycle_time_from_global_sequence(unit_summaries, variant), 4
+        )
 
     for summary in station_summaries:
         safe_key = re.sub(r"[^A-Za-z0-9]+", "_", summary.station_name).strip("_").lower()
@@ -1923,6 +1974,15 @@ def calculate_kpis(
         kpis[f"max_queue_{safe_key}"] = summary.max_queue_length
         kpis[f"average_queue_{safe_key}"] = round(summary.average_queue_length, 6)
         kpis[f"average_wait_{safe_key}_seconds"] = round(summary.average_wait_time_s, 4)
+
+        station_ops = [op for op in operations if op.station_name == summary.station_name]
+        station_disruption_time_s = sum(
+            max(0.0, float(op.process_time_s) - float(op.base_process_time_s))
+            for op in station_ops
+        )
+        availability = 1.0 - (station_disruption_time_s / makespan_s) if makespan_s > 0 else 1.0
+        availability = max(0.0, min(1.0, availability))
+        kpis[f"availability_{safe_key}"] = round(availability, 6)
 
     ordered_mix = Counter(ordered_units)
     for variant, qty in sorted(ordered_mix.items()):
@@ -1984,6 +2044,7 @@ def write_operations_csv(operations: list[OperationRecord], output_path: Path) -
                 "start_time_s",
                 "finish_time_s",
                 "process_time_s",
+                "base_process_time_s",
                 "wait_time_s",
                 "queue_length_on_arrival",
             ]
@@ -2000,6 +2061,7 @@ def write_operations_csv(operations: list[OperationRecord], output_path: Path) -
                     round(op.start_time_s, 4),
                     round(op.finish_time_s, 4),
                     round(op.process_time_s, 4),
+                    round(op.base_process_time_s, 4),
                     round(op.wait_time_s, 4),
                     op.queue_length_on_arrival,
                 ]
@@ -2053,6 +2115,8 @@ def write_unit_summary_csv(unit_summaries: list[UnitSummary], output_path: Path)
                 "completion_time_s",
                 "flow_time_s",
                 "active_flow_time_s",
+                "time_spent_producing",
+                "throughput_efficiency",
                 "Attempts",
             ]
         )
@@ -2066,7 +2130,9 @@ def write_unit_summary_csv(unit_summaries: list[UnitSummary], output_path: Path)
                     round(summary.start_time_s, 4),
                     round(summary.completion_time_s, 4),
                     round(summary.flow_time_s, 4),
-                    round(summary.active_flow_time_s, 4),
+                    float(round(summary.active_flow_time_s, 4)),
+                    round(summary.time_spent_producing, 4),
+                    round(summary.throughput_efficiency, 6),
                     int(summary.attempts),
                 ]
             )
@@ -2117,6 +2183,221 @@ def write_station_summary_csv(
 def save_json(payload: dict[str, Any], output_path: Path) -> None:
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
+
+
+# -----------------------------
+# Charts
+# -----------------------------
+def _unit_color_map(unit_ids: list[str]) -> dict[str, Any]:
+    if plt is None:
+        return {}
+    cmap = plt.get_cmap("tab20")
+    sorted_unit_ids = sorted(unit_ids)
+    return {unit_id: cmap(i % cmap.N) for i, unit_id in enumerate(sorted_unit_ids)}
+
+
+def create_gantt_chart(
+    operations: list[OperationRecord],
+    transport_records: list[TransportRecord],
+    output_path: Path,
+) -> bool:
+    if plt is None:
+        return False
+
+    if not operations:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.set_title("Production line Gantt chart")
+        ax.set_xlabel("Time [s]")
+        ax.set_ylabel("Stations / Transport")
+        ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
+    station_entries: list[tuple[int, int, str]] = []
+    seen_station_names: set[str] = set()
+    for op in sorted(operations, key=lambda x: x.station_index):
+        if op.station_name in seen_station_names:
+            continue
+        stage_number, copy_number, _ = _extract_station_name_parts(op.station_name)
+        station_entries.append((stage_number or op.station_index, copy_number or 0, op.station_name))
+        seen_station_names.add(op.station_name)
+
+    transport_entries: dict[int, str] = {}
+    for tr in sorted(transport_records, key=lambda x: x.transport_index):
+        transport_stage_number = _transport_stage_number_from_name(tr.transport_name)
+        if transport_stage_number is None:
+            transport_stage_number = tr.transport_index
+        transport_entries.setdefault(transport_stage_number, tr.transport_name)
+
+    stations_by_stage: defaultdict[int, list[tuple[int, str]]] = defaultdict(list)
+    for stage_number, copy_number, station_name in station_entries:
+        stations_by_stage[stage_number].append((copy_number, station_name))
+
+    row_names: list[str] = []
+    all_stage_numbers = sorted(stations_by_stage.keys())
+    for stage_number in all_stage_numbers:
+        for _, station_name in sorted(stations_by_stage[stage_number], key=lambda item: item[0]):
+            row_names.append(station_name)
+        if stage_number in transport_entries:
+            row_names.append(transport_entries[stage_number])
+
+    row_to_y = {name: idx for idx, name in enumerate(row_names)}
+    unit_colors = _unit_color_map([op.unit_id for op in operations])
+
+    fig, ax = plt.subplots(figsize=(18, 9))
+
+    for op in operations:
+        y = row_to_y[op.station_name]
+        duration = op.finish_time_s - op.start_time_s
+        color = unit_colors.get(op.unit_id)
+        ax.barh(
+            y,
+            duration,
+            left=op.start_time_s,
+            height=0.62,
+            color=color,
+            edgecolor="black",
+            linewidth=0.25,
+        )
+        if duration > 1.0:
+            ax.text(
+                op.start_time_s + duration / 2,
+                y,
+                f"{op.unit_id}-{op.variant}",
+                ha="center",
+                va="center",
+                fontsize=5,
+            )
+
+    for tr in transport_records:
+        y = row_to_y[tr.transport_name]
+        duration = tr.finish_time_s - tr.start_time_s
+        color = unit_colors.get(tr.unit_id)
+        ax.barh(
+            y,
+            duration,
+            left=tr.start_time_s,
+            height=0.42,
+            color=color,
+            edgecolor="black",
+            linewidth=0.25,
+            alpha=0.65,
+        )
+        if duration > 1.0:
+            ax.text(
+                tr.start_time_s + duration / 2,
+                y,
+                f"{tr.unit_id}-{tr.variant}",
+                ha="center",
+                va="center",
+                fontsize=4.5,
+            )
+
+    ax.set_yticks(list(row_to_y.values()))
+    ax.set_yticklabels(list(row_to_y.keys()))
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Stations / Transport")
+    ax.set_title("Production line Gantt chart")
+    ax.grid(True, axis="x", alpha=0.3)
+    # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
+
+def create_gantt_chart_no_transport(
+    operations: list[OperationRecord],
+    transport_records: list[TransportRecord],
+    output_path: Path,
+) -> bool:
+    if plt is None:
+        return False
+
+    if not operations:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.set_title("Production line Gantt chart")
+        ax.set_xlabel("Time [s]")
+        ax.set_ylabel("Stations / Transport")
+        ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
+    station_names = []
+    seen_stations = set()
+    for op in sorted(operations, key=lambda x: x.station_index):
+        if op.station_name not in seen_stations:
+            station_names.append(op.station_name)
+            seen_stations.add(op.station_name)
+
+    row_names: list[str] = []
+    for idx, station_name in enumerate(station_names):
+        row_names.append(station_name)
+
+    row_to_y = {name: idx for idx, name in enumerate(row_names)}
+    unit_colors = _unit_color_map([op.unit_id for op in operations])
+
+    fig, ax = plt.subplots(figsize=(18, 9))
+
+    for op in operations:
+        y = row_to_y[op.station_name]
+        duration = op.finish_time_s - op.start_time_s
+        color = unit_colors.get(op.unit_id)
+        ax.barh(
+            y,
+            duration,
+            left=op.start_time_s,
+            height=0.62,
+            color=color,
+            edgecolor="black",
+            linewidth=0.25,
+        )
+        if duration > 1.0:
+            ax.text(
+                op.start_time_s + duration / 2,
+                y,
+                f"{op.unit_id}-{op.variant}",
+                ha="center",
+                va="center",
+                fontsize=5,
+            )
+
+    ax.set_yticks(list(row_to_y.values()))
+    ax.set_yticklabels(list(row_to_y.keys()))
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Stations / Transport")
+    ax.set_title("Production line Gantt chart")
+    ax.grid(True, axis="x", alpha=0.3)
+    # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
+
+def create_throughput_chart(unit_summaries: list[UnitSummary], output_path: Path) -> bool:
+    if plt is None:
+        return False
+
+    completion_times = sorted(u.completion_time_s for u in unit_summaries)
+    x = [0.0] + completion_times
+    y = [0] + list(range(1, len(completion_times) + 1))
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.step(x, y, where="post")
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Completed units")
+    ax.set_title("Cumulative completed phones over time")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
 
 # -----------------------------
 # Run metadata / output folders
@@ -2195,7 +2476,7 @@ def main() -> None:
         help="Root folder where a new subfolder will be created for every order run",
     )
     args = parser.parse_args()
-    
+
     data_dir: Path = args.data_dir
     input_root: Path = args.input_root
     output_root: Path = args.output_root
@@ -2396,7 +2677,56 @@ def main() -> None:
     for key, value in sorted(simulation_details.get("disruption_counts", {}).items()):
         kpis[f"disruption_{key}"] = value
 
+    operations_no_disruptions: list[OperationRecord] = operations
+    unit_summaries_no_disruptions: list[UnitSummary] = unit_summaries
+    station_summaries_no_disruptions: list[StationSummary] = station_summaries
+    completed_good_variants_no_disruptions: list[str] = completed_good_variants
+
+    if disruptions_enabled:
+        (
+            operations_no_disruptions,
+            _transport_records_no_disruptions,
+            unit_summaries_no_disruptions,
+            station_summaries_no_disruptions,
+            _,
+            simulation_details_no_disruptions,
+        ) = run_simulation(
+            ordered_units=ordered_units,
+            process_time_data=process_time_data,
+            transport_time_data=transport_time_data,
+            unit_release_times=unit_release_times,
+            unit_priorities=unit_priorities,
+            unit_order_ids=unit_order_ids,
+            max_units_in_system=carriers,
+            line_layout_config=line_layout_config,
+            bom_data=bom_data,
+            material_stock_data=material_stock_data,
+            disruptions_enabled=False,
+            disruption_config=None,
+            disruption_seed=None,
+            simulation_time_s=simulation_time_s,
+        )
+        completed_good_variants_no_disruptions = list(
+            simulation_details_no_disruptions.get("completed_good_variants", [])
+        )
+
+    kpis_no_disruptions = calculate_kpis(
+        ordered_units=completed_good_variants_no_disruptions,
+        operations=operations_no_disruptions,
+        unit_summaries=unit_summaries_no_disruptions,
+        station_summaries=station_summaries_no_disruptions,
+    )
+    kpis_no_disruptions["carriers"] = carriers
+    kpis_no_disruptions["return_to_station_1_time_seconds"] = round(RETURN_TO_STATION_1_TIME_S, 4)
+    kpis_no_disruptions["disruptions_enabled"] = 0
+    if simulation_time_s is not None:
+        kpis_no_disruptions["simulation_time_seconds"] = round(simulation_time_s, 4)
+    kpis_no_disruptions["line_layout_name"] = str(effective_line_layout.get("layout_name", "default_single_path"))
+    kpis_no_disruptions["effective_station_count"] = len(effective_line_layout["station_sequence"])
+    kpis_no_disruptions["completed_good_units"] = len(completed_good_variants_no_disruptions)
+
     write_kpis_csv(kpis, run_output_dir / "kpi_summary.csv")
+    write_kpis_csv(kpis_no_disruptions, run_output_dir / "kpi_summary_without_disruptions.csv")
     write_operations_csv(operations, run_output_dir / "station_schedule.csv")
     write_transport_csv(transport_records, run_output_dir / "transport_schedule.csv")
     write_unit_summary_csv(unit_summaries, run_output_dir / "unit_summary.csv")
