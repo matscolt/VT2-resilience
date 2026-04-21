@@ -239,9 +239,19 @@ def plot_flow_times(unit_data,graphfolder):
     units = [row["unit_id"] for row in unit_data]
     flow = [row["flow_time_s"] for row in unit_data]
     graphname = "Flow_times.png"
+    avg_flow = sum(flow) / len(flow)
 
     plt.figure()
     plt.bar(units, flow)
+
+    plt.axhline(
+        y=avg_flow,
+        linestyle=":",
+        linewidth=1,
+        color="black",
+        label=f"Average = {avg_flow:.2f} s"
+    )
+
     plt.xticks(rotation=90)
     plt.ylabel("Flow time [s]")
     plt.title("Flow time per unit")
