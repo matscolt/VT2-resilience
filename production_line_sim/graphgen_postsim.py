@@ -59,6 +59,7 @@ def load_data(filepath):
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 
+#convert the data to a float 
 def to_float(data, keys):
     for row in data:
         for key in keys:
@@ -86,40 +87,147 @@ def load_all_data(data_folder):
 
     return station_data, transport_data, unit_data
 
-def plot_gantt_colored(station_data, transport_data, graphfolder_dir):
-    fig, ax = plt.subplots(figsize=(12, 6))
-    graphname = "Gantt_chart.png"
+def plot_gantt(station_data, transport_data, graphfolder_dir):
+
+    # ---------------------------
+    # Build ordered y-axis
+    # ---------------------------
+    stations = sorted(set(
+        (int(row["station_index"]), row["station_name"])
+        for row in station_data
+    ))
+
+    transports = sorted(set(
+        (int(row["transport_index"]), row["transport_name"])
+        for row in transport_data
+    ))
+
+    # Interleave: S1, T1, S2, T2, ...
+    y_labels_full = []
+    for i in range(len(stations)):
+        y_labels_full.append(stations[i][1])
+        if i < len(transports):
+            y_labels_full.append(transports[i][1])
+
+    y_pos_full = {label: i for i, label in enumerate(y_labels_full)}
+
+    # Station-only
+    y_labels_station = [s[1] for s in stations]
+    y_pos_station = {label: i for i, label in enumerate(y_labels_station)}
+
+    # Colors
     units = list(set(row["unit_id"] for row in station_data))
     colors = {u: i for i, u in enumerate(units)}
 
+    # ===========================
+    # Stations only
+    # ===========================
+    fig1, ax1 = plt.subplots(figsize=(12, 6))
+    graphname = "Gantt_chart_stations.png"
     for row in station_data:
         start = row["start_time_s"]
         duration = row["finish_time_s"] - start
-        station = row["station_name"]
+        y = y_pos_station[row["station_name"]]
         unit = row["unit_id"]
 
-        ax.barh(
-            y=station,
+        ax1.barh(
+            y=y,
             width=duration,
             left=start,
             color=plt.cm.tab20(colors[unit] % 20),
-            alpha = 0.75
-        )
-        ax.text(
-            x=start + duration / 2,
-            y=station,
-            s=unit,
-            va="center",
-            ha="center",
-            fontsize=7,
-            color="black"
+            edgecolor="black",
+            linewidth=0.5,
+            alpha=0.75
         )
 
-    ax.set_xlabel("Time [s]")
-    ax.set_title("Gantt Chart (colored by unit)")
-    fig.tight_layout()
-    fig.savefig(graphfolder_dir/graphname, dpi=200, bbox_inches="tight")
-    print(f">>Generated {graphname}")
+        ax1.text(
+            start + duration / 2,
+            y,
+            unit,
+            ha="center",
+            va="center",
+            fontsize=7
+        )
+
+    ax1.set_yticks(range(len(y_labels_station)))
+    ax1.set_yticklabels(y_labels_station)
+    ax1.set_xlabel("Time [s]")
+    ax1.set_title("Gantt Chart (Stations only)")
+
+    fig1.tight_layout()
+    fig1.savefig(graphfolder_dir / graphname, dpi=200)
+    plt.close(fig1)
+
+    print(f">> Generated {graphname}")
+
+    # ===========================
+    # Stations + Transport
+    # ===========================
+    fig2, ax2 = plt.subplots(figsize=(14, 7))
+    graphname2 = "Gantt_chart_with_transport.png"
+    # --- Stations ---
+    for row in station_data:
+        start = row["start_time_s"]
+        duration = row["finish_time_s"] - start
+        y = y_pos_full[row["station_name"]]
+        unit = row["unit_id"]
+
+        ax2.barh(
+            y=y,
+            width=duration,
+            left=start,
+            color=plt.cm.tab20(colors[unit] % 20),
+            edgecolor="black",
+            linewidth=0.5,
+            alpha=0.75
+        )
+
+        ax2.text(
+            start + duration / 2,
+            y,
+            unit,
+            ha="center",
+            va="center",
+            fontsize=7
+        )
+
+    # --- Transport (correct row!) ---
+    for row in transport_data:
+        start = row["start_time_s"]
+        duration = row["finish_time_s"] - start
+        y = y_pos_full[row["transport_name"]]
+        unit = row["unit_id"]
+
+        ax2.barh(
+            y=y,
+            width=duration,
+            left=start,
+            color=plt.cm.tab20(colors[unit] % 20),
+            edgecolor="black",
+            linewidth=0.5,
+            alpha=0.75
+        )
+
+        ax2.text(
+            start + duration / 2,
+            y,
+            unit,
+            ha="center",
+            va="center",
+            fontsize=6
+        )
+
+    ax2.set_yticks(range(len(y_labels_full)))
+    ax2.set_yticklabels(y_labels_full)
+    ax2.set_xlabel("Time [s]")
+    ax2.set_title("Gantt Chart (Stations + Transport)")
+    ax2.grid(True, axis="x", linestyle="--", alpha=0.5)
+
+    fig2.tight_layout()
+    fig2.savefig(graphfolder_dir / graphname2, dpi=200)
+    plt.close(fig2)
+
+    print(f">> Generated {graphname2}")
     
 def plot_flow_times(unit_data,graphfolder):
     units = [row["unit_id"] for row in unit_data]
@@ -170,7 +278,7 @@ def main():
 
     graph_folder = folder / "graphs"
     graph_folder.mkdir(exist_ok=True)
-    plot_gantt_colored(station_data,transport_data,graph_folder)
+    plot_gantt(station_data,transport_data,graph_folder)
     plot_flow_times(unit_data,graph_folder)
     plot_station_load(station_data,graph_folder)
 
