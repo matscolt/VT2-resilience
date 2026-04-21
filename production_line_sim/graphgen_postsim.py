@@ -180,6 +180,7 @@ def plot_gantt(station_data, transport_data, graphfolder_dir):
     ax1.set_yticklabels(y_labels_station)
     ax1.set_xlabel("Time [s]")
     ax1.set_title("Gantt Chart (Stations only)")
+    ax1.grid(True, axis="x", linestyle="--", alpha=0.5)
 
     fig1.tight_layout()
     fig1.savefig(graphfolder_dir / graphname, dpi=200)
