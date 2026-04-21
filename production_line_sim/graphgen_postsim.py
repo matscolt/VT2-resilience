@@ -3,6 +3,7 @@ import csv
 import json
 import os
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 #  +-----------------------------+
@@ -261,7 +262,6 @@ def plot_flow_times(unit_data,graphfolder):
     units = [row["unit_id"] for row in unit_data]
     flow = [float(row["active_flow_time_s"]) for row in unit_data]
     graphname = "Flow_times.png"
-    print(type(flow[10]))
     avg_flow = sum(flow) / len(flow)
 
     plt.figure()
@@ -274,16 +274,18 @@ def plot_flow_times(unit_data,graphfolder):
         color="black",
         label=f"Average = {avg_flow:.2f} s"
     )
-    plt.text(
-        x=-2.5,
-        y=max(flow),
-        s=f"Average: {avg_flow:.2f} s",
-        va="bottom",
-        ha="left",
-        fontsize=9
-    )
+    
+    plt.legend(loc="upper left")
 
-    plt.xticks(rotation=90)
+    max_labels = 30
+    n_units = len(units)
+    step = max(1, n_units // max_labels)
+
+    plt.xticks(
+        ticks=range(0, n_units, step),
+        labels=units[::step],
+        rotation=90
+    )
     plt.ylabel("Flow time [s]")
     plt.title("Flow time per unit")
 
@@ -314,7 +316,7 @@ def plot_station_load(station_data,graphfolder):
 
 #main
 def main():
-    specific_folder = "20260420_142405"#enter the wanted foldername(only the first timestamp) in the output folder
+    specific_folder = "20260420_131845"#enter the wanted foldername(only the first timestamp) in the output folder
     
     specific_folder_choice = 0 #yes = 1, no = 0
     
@@ -341,7 +343,10 @@ def main():
     plot_station_load(station_data,graph_folder)
 
 if __name__ == "__main__":
+    starttime = time.perf_counter()
     main()
+    endtime = time.perf_counter()
+    print(f"Total graph generation time: {endtime - starttime:.6f} seconds")
 
 
 """
