@@ -16,11 +16,6 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-try:
-    import matplotlib.pyplot as plt
-except ModuleNotFoundError:
-    plt = None
-
 
 @dataclass
 class OperationRecord:
