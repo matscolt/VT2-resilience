@@ -60,7 +60,9 @@ def clear_folder(folder):
                 item.unlink()
         except PermissionError:
             print(f">> Could not delete (locked): {item}")
-    print(f"cleaned out {folder_path}")
+    folder = str(folder).split("\\")[-1].split("__")[0]
+    print(f"cleaned out {folder}/graph")
+
 
 #import data function
 def load_data(filepath):
@@ -271,7 +273,7 @@ def plot_flow_times(unit_data,graphfolder):
         label=f"Average = {avg_flow:.2f} s"
     )
     plt.text(
-        x=0.01,
+        x=-0.3,
         y=avg_flow,
         s=f"Average: {avg_flow:.2f} s",
         va="bottom",
@@ -324,7 +326,8 @@ def main():
             folder = find_output_folder()
     else:
         folder = find_output_folder()
-    print(f"{folder}")
+    foldername = str(folder).split("\\")[-1].split("__")[0]
+    print(f"using folder: {foldername}")
 
     clear_folder(folder)
     station_data, transport_data, unit_data = load_all_data(folder)
