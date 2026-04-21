@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import numpy as np
 import argparse
 import csv
@@ -6,8 +7,8 @@ import heapq
 import json
 import math
 import re
+import shutil
 import time
-import sys
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -51,11 +52,14 @@ class TransportRecord:
 @dataclass
 class UnitSummary:
     unit_id: str
+    order_id: str
     variant: str
     first_arrival_time_s: float
     start_time_s: float
     completion_time_s: float
     flow_time_s: float
+    active_flow_time_s: float
+    attempts: int
 
 
 @dataclass
@@ -75,7 +79,7 @@ class StationSummary:
 
 @dataclass
 class StationState:
-    queue: deque[tuple[int, float, int]]
+    queue: list[tuple[int, float, int, int, int]]
     busy: bool = False
     current_unit_index: int | None = None
     busy_time_s: float = 0.0
@@ -104,6 +108,7 @@ RETURN_TO_STATION_1_TIME_S = 31.3
 INPUT_BATCH_NAME_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)$", re.IGNORECASE)
 INPUT_ORDER_CSV_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)\.csv$", re.IGNORECASE)
 LINE_LAYOUT_FILENAME = "line_layout.json"
+DISRUPTION_FILENAME = "disruption.json"
 LINE_LAYOUT_SETTINGS_KEYS = (
     "line_layout_file",
     "line_layout_filename",
@@ -112,6 +117,14 @@ LINE_LAYOUT_SETTINGS_KEYS = (
 )
 STATION_NAME_NUMBER_RE = re.compile(r"^\s*Station\s+(\d+)(?:\.(\d+))?\s*:\s*(.+?)\s*$", re.IGNORECASE)
 TRANSPORT_NAME_NUMBER_RE = re.compile(r"^\s*Transportation\s+(\d+)\s*$", re.IGNORECASE)
+
+MATERIAL_STAGE_TO_MATERIAL = {
+    1: ["Bottom cover"],
+    3: ["Fuse", "PCB"],
+    5: ["Top cover"],
+}
+INSPECTION_STAGE_NUMBER = 6
+BROKEN_MATERIAL_EXTRA_TIME_DEFAULT_S = 30.0
 
 
 # -----------------------------
@@ -686,12 +699,13 @@ def load_latest_generated_input(
         raise FileNotFoundError(f"settings.json was not found in {batch_dir}")
 
     settings_data = load_json(settings_path)
-    simulation_time_s = float(settings_data.get("sim_time [s]", 0.0))
-    carriers = float(settings_data.get("carriers", {}).get("number of carriers", 0.0))
+    simulation_time_s = float(settings_data.get("sim_time [s]", settings_data.get("Sim_time [s]", 0.0)))
+    carriers = int(float(settings_data.get("carriers", {}).get("number of carriers", MAX_UNITS_IN_SYSTEM)))
 
     expanded_units: list[str] = []
     unit_release_times: list[float] = []
     unit_priorities: list[int] = []
+    unit_order_ids: list[str] = []
     order_rows: list[dict[str, Any]] = []
 
     with orders_csv_path.open("r", encoding="utf-8-sig", newline="") as f:
@@ -742,7 +756,6 @@ def load_latest_generated_input(
                 }
             )
 
-    # Earlier orders are released earlier. For equal release time, higher priority is released first.
     order_rows.sort(key=lambda row: (row["order_time_s"], -row["priority"], row["row_index"], str(row["order_id"])))
 
     for row in order_rows:
@@ -756,6 +769,7 @@ def load_latest_generated_input(
                 expanded_units.append(variant)
                 unit_release_times.append(float(row["order_time_s"]))
                 unit_priorities.append(int(row["priority"]))
+                unit_order_ids.append(str(row["order_id"]))
 
     batch_name = batch_dir.name
     order_text = batch_name
@@ -769,8 +783,9 @@ def load_latest_generated_input(
         "ordered_units": expanded_units,
         "unit_release_times": unit_release_times,
         "unit_priorities": unit_priorities,
+        "unit_order_ids": unit_order_ids,
         "simulation_time_s": simulation_time_s,
-        "carriers":carriers,
+        "carriers": carriers,
         "settings_data": settings_data,
         "selected_line_layout_name": _resolve_line_layout_filename_from_settings(settings_data),
         "input_root": input_root,
@@ -779,22 +794,252 @@ def load_latest_generated_input(
         "settings_path": settings_path,
     }
 
-def disruptions(settings_path,disruption_config,disruption_sceario):
-    with open(settings_path) as f:
-        settings = json.load(f)
-    with open(disruption_config) as f:
-        config = json.load(f)
-    rng = np.random.default_rng(settings["seed"])
-    print(f"--- Using random seed for disruptions: {settings['seed']} from settings.json ---")
-    
+
+def _normalize_probability(value: Any) -> float:
+    try:
+        probability = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if probability < 0.0:
+        return 0.0
+    if probability > 1.0:
+        probability = probability / 100.0
+    return min(1.0, probability)
 
 
+def _seed_to_rng(seed_value: Any) -> np.random.Generator:
+    if seed_value is None:
+        return np.random.default_rng()
+    seed_text = str(seed_value).strip()
+    if seed_text.isdigit():
+        return np.random.default_rng(int(seed_text))
+    return np.random.default_rng(abs(hash(seed_text)) % (2**32))
 
-    #using a random seed it should check the base disruptions
-    #after checking the base disruptions it should check if there are any changes given in the input
 
-    #then it should generate the disruption chance for each operation within the given range
-    #it should be able to also check every time a dummy phone reaches a station if there should be a disruption or not
+def _sample_linear_from_range(
+    rng: np.random.Generator,
+    range_values: Any,
+    default_value: float = 0.0,
+) -> tuple[float, float]:
+    if isinstance(range_values, (list, tuple)) and len(range_values) >= 2:
+        low = float(range_values[0])
+        high = float(range_values[1])
+        draw = float(rng.random())
+        return low + (high - low) * draw, draw
+    return float(default_value), 0.0
+
+
+def _settings_random_disruptions_enabled(settings_data: dict[str, Any]) -> bool:
+    raw_settings = settings_data.get("random based disruptions", {})
+    if isinstance(raw_settings, dict):
+        return int(raw_settings.get("enabled", 0)) == 1
+    return False
+
+
+def _broken_material_extra_time_s(disruption_config: dict[str, Any] | None) -> float:
+    if not isinstance(disruption_config, dict):
+        return BROKEN_MATERIAL_EXTRA_TIME_DEFAULT_S
+    material_config = disruption_config.get("Material", {})
+    if not isinstance(material_config, dict):
+        return BROKEN_MATERIAL_EXTRA_TIME_DEFAULT_S
+    raw_value = material_config.get("broken material extra time [s]", BROKEN_MATERIAL_EXTRA_TIME_DEFAULT_S)
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        return BROKEN_MATERIAL_EXTRA_TIME_DEFAULT_S
+
+
+def resolve_disruption_path(input_root: Path | None, batch_dir: Path | None) -> Path | None:
+    candidates: list[Path] = []
+    if batch_dir is not None:
+        candidates.append(batch_dir / DISRUPTION_FILENAME)
+    if input_root is not None:
+        candidates.append(input_root / DISRUPTION_FILENAME)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def copy_file_if_exists(source_path: Path | None, target_path: Path) -> bool:
+    if source_path is None or not source_path.exists():
+        return False
+    shutil.copy2(source_path, target_path)
+    return True
+
+
+def build_material_report(
+    requested_units: list[str],
+    consumed_units: list[str],
+    bom_data: dict[str, Any],
+    material_stock_data: dict[str, Any],
+    extra_material_consumed: dict[str, int] | None = None,
+    actual_material_consumed: dict[str, int] | None = None,
+) -> dict[str, dict[str, int]]:
+    initial_stock = {
+        material: int(qty)
+        for material, qty in material_stock_data["materials_in_stock"].items()
+    }
+    requested_requirements = calculate_material_requirements(requested_units, bom_data)
+    consumed_requirements = calculate_material_requirements(consumed_units, bom_data)
+    extra_material_consumed = {str(k): int(v) for k, v in (extra_material_consumed or {}).items()}
+    actual_material_consumed = {str(k): int(v) for k, v in (actual_material_consumed or {}).items()}
+
+    all_materials = sorted(
+        set(initial_stock.keys())
+        | set(requested_requirements.keys())
+        | set(consumed_requirements.keys())
+        | set(extra_material_consumed.keys())
+        | set(actual_material_consumed.keys())
+    )
+
+    material_report: dict[str, dict[str, int]] = {}
+    for material in all_materials:
+        available = int(initial_stock.get(material, 0))
+        requested = int(requested_requirements.get(material, 0))
+        if actual_material_consumed:
+            consumed = int(actual_material_consumed.get(material, 0))
+        else:
+            consumed = int(consumed_requirements.get(material, 0)) + int(extra_material_consumed.get(material, 0))
+        remaining = max(0, available - consumed)
+        unmet = max(0, requested - available)
+        material_report[material] = {
+            "requested_for_full_order": requested,
+            "available_at_start": available,
+            "consumed_for_produced_units": consumed,
+            "remaining_after_run": remaining,
+            "unmet_for_full_order": unmet,
+        }
+    return material_report
+
+
+def _materials_relevant_for_stage(variant: str, stage_number: int, bom_data: dict[str, Any]) -> list[str]:
+    material_names = MATERIAL_STAGE_TO_MATERIAL.get(int(stage_number))
+    if material_names is None:
+        return []
+    if isinstance(material_names, str):
+        material_names = [material_names]
+    variant_bom = bom_data.get("bom_units_per_phone", {}).get(variant, {})
+    return [
+        str(material_name)
+        for material_name in material_names
+        if int(variant_bom.get(str(material_name), 0)) > 0
+    ]
+
+
+def evaluate_operation_disruptions(
+    stage_number: int,
+    station_name: str,
+    variant: str,
+    base_process_time_s: float,
+    disruption_config: dict[str, Any] | None,
+    rng: np.random.Generator | None,
+    bom_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "stage_number": int(stage_number),
+        "station_name": station_name,
+        "base_process_time_s": float(base_process_time_s),
+        "effective_process_time_s": float(base_process_time_s),
+        "triggered_disruption_type": None,
+        "breakdown_triggered": False,
+        "breakdown_added_time_s": 0.0,
+        "breakdown_random": None,
+        "breakdown_duration_random": None,
+        "efficiency_loss_triggered": False,
+        "efficiency_drop_percent": 0.0,
+        "efficiency_multiplier": 1.0,
+        "efficiency_random": None,
+        "terminal_failure_type": None,
+        "terminal_failure_material": None,
+        "material_broken_triggered": False,
+        "material_broken_random": None,
+        "material_broken_added_time_s": 0.0,
+        "material_broken_extra_material_name": None,
+        "material_broken_extra_material_qty": 0,
+        "material_ran_out_triggered": False,
+        "material_ran_out_random": None,
+        "inspection_failed_triggered": False,
+        "inspection_random": None,
+    }
+
+    if disruption_config is None or rng is None:
+        return result
+
+    stations_config = disruption_config.get("Stations", {})
+    station_config = stations_config.get(str(stage_number), {}) if isinstance(stations_config, dict) else {}
+
+    breakdown_config = station_config.get("breakdown", {}) if isinstance(station_config, dict) else {}
+    breakdown_probability = _normalize_probability(breakdown_config.get("Machine breakdown chance [%]", 0.0))
+    breakdown_random = float(rng.random())
+    result["breakdown_random"] = breakdown_random
+    if breakdown_random <= breakdown_probability:
+        breakdown_added_time_s, breakdown_duration_random = _sample_linear_from_range(
+            rng,
+            breakdown_config.get("range"),
+            default_value=breakdown_config.get("duration [s]", 0.0),
+        )
+        result["triggered_disruption_type"] = "breakdown"
+        result["breakdown_triggered"] = True
+        result["breakdown_added_time_s"] = float(breakdown_added_time_s)
+        result["breakdown_duration_random"] = float(breakdown_duration_random)
+        result["effective_process_time_s"] = float(base_process_time_s) + float(result["breakdown_added_time_s"])
+        return result
+
+    efficiency_config = station_config.get("efficiency loss", {}) if isinstance(station_config, dict) else {}
+    efficiency_probability = _normalize_probability(efficiency_config.get("efficiency drop chance [%]", 0.0))
+    efficiency_random = float(rng.random())
+    result["efficiency_random"] = efficiency_random
+    if efficiency_random <= efficiency_probability:
+        efficiency_drop_percent = float(efficiency_config.get("efficiency drop [%]", 0.0))
+        effective_speed_fraction = max(1e-9, 1.0 - (efficiency_drop_percent / 100.0))
+        result["triggered_disruption_type"] = "efficiency_loss"
+        result["efficiency_loss_triggered"] = True
+        result["efficiency_drop_percent"] = efficiency_drop_percent
+        result["efficiency_multiplier"] = 1.0 / effective_speed_fraction
+        result["effective_process_time_s"] = float(base_process_time_s) * float(result["efficiency_multiplier"])
+        return result
+
+    if bom_data is not None:
+        materials_config = disruption_config.get("Material", {})
+        relevant_materials = _materials_relevant_for_stage(variant, stage_number, bom_data)
+        if relevant_materials:
+            selected_material = str(relevant_materials[int(rng.integers(0, len(relevant_materials)))])
+            broken_probability = _normalize_probability(materials_config.get("Broken material chance [%]", 0.0))
+            broken_random = float(rng.random())
+            result["material_broken_random"] = broken_random
+            if broken_random <= broken_probability:
+                result["triggered_disruption_type"] = "broken_material"
+                result["material_broken_triggered"] = True
+                result["terminal_failure_material"] = selected_material
+                result["material_broken_extra_material_name"] = selected_material
+                result["material_broken_extra_material_qty"] = 1
+                result["material_broken_added_time_s"] = float(_broken_material_extra_time_s(disruption_config))
+                result["effective_process_time_s"] = float(base_process_time_s) + float(result["material_broken_added_time_s"])
+                return result
+
+            ran_out_probability = _normalize_probability(materials_config.get("ran out of material chance [%]", 0.0))
+            ran_out_random = float(rng.random())
+            result["material_ran_out_random"] = ran_out_random
+            if ran_out_random <= ran_out_probability:
+                result["triggered_disruption_type"] = "ran_out_of_material"
+                result["material_ran_out_triggered"] = True
+                result["terminal_failure_type"] = "ran_out_of_material"
+                result["terminal_failure_material"] = selected_material
+                return result
+
+    if int(stage_number) == INSPECTION_STAGE_NUMBER:
+        inspection_config = station_config.get("failed inspection", {}) if isinstance(station_config, dict) else {}
+        inspection_probability = _normalize_probability(inspection_config.get("wrong assembly chance", 0.0))
+        inspection_random = float(rng.random())
+        result["inspection_random"] = inspection_random
+        if inspection_random <= inspection_probability:
+            result["triggered_disruption_type"] = "failed_inspection"
+            result["inspection_failed_triggered"] = True
+            result["terminal_failure_type"] = "failed_inspection"
+            return result
+
+    return result
 
 
 # -----------------------------
@@ -934,10 +1179,18 @@ def run_simulation(
     process_time_data: dict[str, Any],
     transport_time_data: dict[str, Any],
     unit_release_times: list[float] | None = None,
+    unit_priorities: list[int] | None = None,
+    unit_order_ids: list[str] | None = None,
     max_units_in_system: int = MAX_UNITS_IN_SYSTEM,
     return_to_station_1_time_s: float = RETURN_TO_STATION_1_TIME_S,
     line_layout_config: dict[str, Any] | None = None,
-) -> tuple[list[OperationRecord], list[TransportRecord], list[UnitSummary], list[StationSummary], dict[str, float]]:
+    bom_data: dict[str, Any] | None = None,
+    material_stock_data: dict[str, Any] | None = None,
+    disruptions_enabled: bool = False,
+    disruption_config: dict[str, Any] | None = None,
+    disruption_seed: Any | None = None,
+    simulation_time_s: float | None = None,
+) -> tuple[list[OperationRecord], list[TransportRecord], list[UnitSummary], list[StationSummary], dict[str, float], dict[str, Any]]:
     effective_line_layout = build_effective_line_layout(
         process_time_data=process_time_data,
         transport_time_data=transport_time_data,
@@ -950,28 +1203,88 @@ def run_simulation(
     transport_lookup = effective_line_layout["transport_lookup"]
     process_times = process_time_data["process_times"]
 
-    station_states: list[StationState] = [StationState(queue=deque()) for _ in station_sequence]
+    ordered_units = list(ordered_units)
+    initial_requested_unit_count = len(ordered_units)
+
+    if unit_release_times is None:
+        unit_release_times = [0.0] * len(ordered_units)
+    else:
+        unit_release_times = [float(value) for value in unit_release_times]
+
+    if unit_priorities is None:
+        unit_priorities = [1] * len(ordered_units)
+    else:
+        unit_priorities = [max(1, int(value)) for value in unit_priorities]
+
+    if unit_order_ids is None:
+        unit_order_ids = ["manual"] * len(ordered_units)
+    else:
+        unit_order_ids = [str(value) for value in unit_order_ids]
+
+    if len(unit_release_times) != len(ordered_units):
+        raise ValueError("unit_release_times must have the same length as ordered_units")
+    if len(unit_priorities) != len(ordered_units):
+        raise ValueError("unit_priorities must have the same length as ordered_units")
+    if len(unit_order_ids) != len(ordered_units):
+        raise ValueError("unit_order_ids must have the same length as ordered_units")
+    if max_units_in_system <= 0:
+        raise ValueError("max_units_in_system must be greater than 0")
+    if return_to_station_1_time_s < 0:
+        raise ValueError("return_to_station_1_time_s cannot be negative")
+
+    rng = _seed_to_rng(disruption_seed) if disruptions_enabled else None
+
+    station_states: list[StationState] = [StationState(queue=[]) for _ in station_sequence]
     operations: list[OperationRecord] = []
     operation_lookup: dict[tuple[int, int], OperationRecord] = {}
+    operation_disruption_lookup: dict[tuple[int, int], dict[str, Any]] = {}
     transport_records: list[TransportRecord] = []
 
     unit_first_arrival: dict[int, float] = {}
     unit_first_start: dict[int, float] = {}
     unit_completion: dict[int, float] = {}
+    unit_attempt_exit_time: dict[int, float] = {}
 
     event_queue: list[tuple[float, int, int, str, int, int]] = []
     event_sequence = 0
     available_system_slots = max_units_in_system
-    waiting_for_system_slot: deque[tuple[int, float]] = deque()
+    waiting_for_system_slot: list[tuple[int, float, int, bool, int]] = []
     projected_station_available_time_s: list[float] = [0.0] * len(station_sequence)
+    waiting_queue_sequence = 0
+    station_queue_sequence = 0
 
+    root_indices: list[int] = list(range(initial_requested_unit_count))
+    attempt_numbers: list[int] = [1] * initial_requested_unit_count
+    root_to_attempt_indices: defaultdict[int, list[int]] = defaultdict(list)
+    root_order_ids: list[str] = list(unit_order_ids)
+    for unit_index in range(initial_requested_unit_count):
+        root_to_attempt_indices[unit_index].append(unit_index)
+
+    replacement_variants_created: list[str] = []
+    extra_material_consumed: defaultdict[str, int] = defaultdict(int)
+    actual_material_consumed: defaultdict[str, int] = defaultdict(int)
+    disruption_event_log: list[dict[str, Any]] = []
+    disruption_counts: Counter[str] = Counter()
+    root_successful_attempt_index: dict[int, int] = {}
+    root_failed_without_replacement: dict[int, dict[str, Any]] = {}
+
+    remaining_station_material_stock: dict[str, int] = {}
+    if material_stock_data is not None:
+        remaining_station_material_stock = {
+            material: int(qty)
+            for material, qty in material_stock_data["materials_in_stock"].items()
+        }
+
+    stop_requested = False
+    stop_time_s: float | None = None
+    stop_reason: dict[str, Any] | None = None
 
     def push_event(time_s: float, event_type: str, station_index: int, unit_index: int) -> None:
         nonlocal event_sequence
         heapq.heappush(
             event_queue,
             (
-                time_s,
+                float(time_s),
                 EVENT_PRIORITY[event_type],
                 event_sequence,
                 event_type,
@@ -1025,16 +1338,67 @@ def run_simulation(
         projected_station_available_time_s[chosen_station_index] = projected_finish_time_s
         return chosen_station_index, chosen_transport_time_s, chosen_arrival_time_s
 
+    def _enqueue_waiting_unit(unit_index: int, requested_release_time_s: float, prioritize_front: bool = False) -> None:
+        nonlocal waiting_queue_sequence
+        waiting_for_system_slot.append(
+            (
+                unit_index,
+                float(requested_release_time_s),
+                int(unit_priorities[unit_index]),
+                bool(prioritize_front),
+                waiting_queue_sequence,
+            )
+        )
+        waiting_queue_sequence += 1
+
+    def _pop_best_waiting_unit(current_time_s: float) -> tuple[int, float] | None:
+        best_index: int | None = None
+        best_score: tuple[int, int, float, int] | None = None
+        for idx, (unit_index, requested_release_time_s, priority_value, prioritize_front, queue_seq) in enumerate(waiting_for_system_slot):
+            if requested_release_time_s > current_time_s:
+                continue
+            score = (-int(priority_value), -int(bool(prioritize_front)), float(requested_release_time_s), int(queue_seq))
+            if best_score is None or score < best_score:
+                best_score = score
+                best_index = idx
+        if best_index is None:
+            return None
+        unit_index, requested_release_time_s, _, _, _ = waiting_for_system_slot.pop(best_index)
+        return unit_index, requested_release_time_s
+
+    def _enqueue_station_queue(
+        station_state: StationState,
+        unit_index: int,
+        arrival_time_s: float,
+        queue_length_ahead_on_arrival: int,
+    ) -> None:
+        nonlocal station_queue_sequence
+        entry = (
+            unit_index,
+            float(arrival_time_s),
+            int(queue_length_ahead_on_arrival),
+            int(unit_priorities[unit_index]),
+            station_queue_sequence,
+        )
+        current_queue_seq = station_queue_sequence
+        station_queue_sequence += 1
+
+        insert_idx = len(station_state.queue)
+        new_score = (-int(unit_priorities[unit_index]), float(arrival_time_s), current_queue_seq)
+        for idx, existing in enumerate(station_state.queue):
+            existing_score = (-int(existing[3]), float(existing[1]), int(existing[4]))
+            if new_score < existing_score:
+                insert_idx = idx
+                break
+        station_state.queue.insert(insert_idx, entry)
 
     def release_waiting_units_into_system(current_time_s: float) -> None:
         nonlocal available_system_slots
-
-        while available_system_slots > 0 and waiting_for_system_slot:
-            unit_index, requested_release_time_s = waiting_for_system_slot[0]
-            if requested_release_time_s > current_time_s:
+        while available_system_slots > 0 and waiting_for_system_slot and not stop_requested:
+            waiting_item = _pop_best_waiting_unit(current_time_s)
+            if waiting_item is None:
                 break
-
-            waiting_for_system_slot.popleft()
+            unit_index, _requested_release_time_s = waiting_item
             available_system_slots -= 1
             first_station_index, _, arrival_time_s = choose_station_instance_for_stage(
                 target_stage_index=0,
@@ -1042,26 +1406,128 @@ def run_simulation(
                 unit_index=unit_index,
                 from_station_index=None,
             )
-            push_event(
-                time_s=arrival_time_s,
-                event_type=EVENT_ARRIVAL,
-                station_index=first_station_index,
-                unit_index=unit_index,
-            )
+            push_event(arrival_time_s, EVENT_ARRIVAL, first_station_index, unit_index)
+
+    def _stage_material_requirements(variant: str, stage_number: int) -> dict[str, int]:
+        if bom_data is None:
+            return {}
+        material_names = MATERIAL_STAGE_TO_MATERIAL.get(int(stage_number))
+        if material_names is None:
+            return {}
+        if isinstance(material_names, str):
+            material_names = [material_names]
+        variant_bom = bom_data.get("bom_units_per_phone", {}).get(variant, {})
+        requirements: dict[str, int] = {}
+        for material_name in material_names:
+            qty = int(variant_bom.get(str(material_name), 0))
+            if qty > 0:
+                requirements[str(material_name)] = qty
+        return requirements
+
+    def try_allocate_replacement_unit(
+        failed_unit_index: int,
+        current_time_s: float,
+        prioritize_next_queue: bool = False,
+    ) -> tuple[int | None, list[dict[str, Any]]]:
+        if bom_data is None:
+            return None, []
+
+        root_index = root_indices[failed_unit_index]
+        variant = ordered_units[failed_unit_index]
+        variant_bom = {material: int(qty) for material, qty in bom_data["bom_units_per_phone"][variant].items()}
+        shortages: list[dict[str, Any]] = []
+        for material, needed in variant_bom.items():
+            available = int(remaining_station_material_stock.get(material, 0))
+            if available < needed:
+                shortages.append(
+                    {
+                        "material": material,
+                        "needed": needed,
+                        "available": available,
+                        "missing": needed - available,
+                    }
+                )
+
+        if shortages:
+            return None, shortages
+
+        new_unit_index = len(ordered_units)
+        ordered_units.append(variant)
+        unit_release_times.append(float(current_time_s))
+        unit_priorities.append(int(unit_priorities[failed_unit_index]))
+        unit_order_ids.append(str(unit_order_ids[failed_unit_index]))
+        root_indices.append(root_index)
+        attempt_numbers.append(int(attempt_numbers[failed_unit_index]) + 1)
+        root_to_attempt_indices[root_index].append(new_unit_index)
+        replacement_variants_created.append(variant)
+        _enqueue_waiting_unit(new_unit_index, current_time_s, prioritize_front=prioritize_next_queue)
+        return new_unit_index, []
 
     def try_start_next(station_index: int, current_time_s: float) -> None:
+        nonlocal stop_requested, stop_time_s, stop_reason
         station_state = station_states[station_index]
-        if station_state.busy or not station_state.queue:
+        if stop_requested or station_state.busy or not station_state.queue:
             return
 
         _update_queue_area(station_state, current_time_s)
-        unit_index, arrival_time_s, queue_length_ahead_on_arrival = station_state.queue.popleft()
+        unit_index, arrival_time_s, queue_length_ahead_on_arrival, _priority_value, _queue_seq = station_state.queue.pop(0)
 
-        unit_id = f"U{unit_index + 1:03d}"
+        root_index = root_indices[unit_index]
+        unit_id = f"U{root_index + 1:03d}"
         variant = ordered_units[unit_index]
         station_name = station_sequence[station_index]
         base_station_name = station_instance_base_names[station_index]
-        process_time_s = float(process_times[variant][base_station_name])
+        stage_number, _, _ = _extract_station_name_parts(base_station_name)
+        if stage_number is None:
+            stage_number = int(station_index + 1)
+
+        base_process_time_s = float(process_times[variant][base_station_name])
+        disruption_result = evaluate_operation_disruptions(
+            stage_number=stage_number,
+            station_name=station_name,
+            variant=variant,
+            base_process_time_s=base_process_time_s,
+            disruption_config=disruption_config if disruptions_enabled else None,
+            rng=rng,
+            bom_data=bom_data,
+        )
+
+        stage_material_requirements = _stage_material_requirements(variant, int(stage_number))
+        broken_extra_material_name = str(disruption_result.get("material_broken_extra_material_name") or "").strip()
+        broken_extra_material_qty = int(disruption_result.get("material_broken_extra_material_qty", 0) or 0)
+
+        total_material_requirements = dict(stage_material_requirements)
+        if broken_extra_material_name and broken_extra_material_qty > 0:
+            total_material_requirements[broken_extra_material_name] = int(total_material_requirements.get(broken_extra_material_name, 0)) + broken_extra_material_qty
+
+        for material, needed in total_material_requirements.items():
+            available = int(remaining_station_material_stock.get(material, 0))
+            if available < int(needed):
+                stop_requested = True
+                stop_time_s = float(current_time_s)
+                stop_reason = {
+                    "type": "material_stockout_at_station",
+                    "time_s": float(current_time_s),
+                    "unit_id": unit_id,
+                    "order_id": str(unit_order_ids[unit_index]),
+                    "variant": variant,
+                    "station_name": station_name,
+                    "stage_number": int(stage_number),
+                    "material": material,
+                    "needed": int(needed),
+                    "available": int(available),
+                }
+                disruption_counts["material_stockout_stop_events"] += 1
+                return
+
+        for material, needed in total_material_requirements.items():
+            remaining_station_material_stock[material] = int(remaining_station_material_stock.get(material, 0)) - int(needed)
+            actual_material_consumed[material] += int(needed)
+            if material == broken_extra_material_name and broken_extra_material_qty > 0:
+                extra_material_consumed[material] += broken_extra_material_qty
+                disruption_counts["broken_material_extra_items_consumed"] += broken_extra_material_qty
+
+        process_time_s = float(disruption_result["effective_process_time_s"])
         wait_time_s = current_time_s - arrival_time_s
 
         operation = OperationRecord(
@@ -1078,6 +1544,35 @@ def run_simulation(
         )
         operations.append(operation)
         operation_lookup[(station_index, unit_index)] = operation
+        operation_disruption_lookup[(station_index, unit_index)] = disruption_result
+
+        if disruptions_enabled and disruption_result.get("triggered_disruption_type") is not None:
+            disruption_event_log.append(
+                {
+                    "event": "operation_disruption",
+                    "disruption_timestamp_s": float(current_time_s),
+                    "unit_id": unit_id,
+                    "order_id": str(unit_order_ids[unit_index]),
+                    "root_unit_id": f"U{root_index + 1:03d}",
+                    "attempt": int(attempt_numbers[unit_index]),
+                    "priority": int(unit_priorities[unit_index]),
+                    "variant": variant,
+                    "station_name": station_name,
+                    "base_station_name": base_station_name,
+                    "stage_number": int(stage_number),
+                    **disruption_result,
+                }
+            )
+            if disruption_result["breakdown_triggered"]:
+                disruption_counts["breakdown_events"] += 1
+            if disruption_result["efficiency_loss_triggered"]:
+                disruption_counts["efficiency_loss_events"] += 1
+            if disruption_result["material_broken_triggered"]:
+                disruption_counts["broken_material_events"] += 1
+            if disruption_result["material_ran_out_triggered"]:
+                disruption_counts["ran_out_material_events"] += 1
+            if disruption_result["inspection_failed_triggered"]:
+                disruption_counts["failed_inspection_events"] += 1
 
         station_state.busy = True
         station_state.current_unit_index = unit_index
@@ -1086,30 +1581,34 @@ def run_simulation(
         if station_state.first_start_time_s is None:
             station_state.first_start_time_s = current_time_s
 
+        projected_station_available_time_s[station_index] = max(
+            projected_station_available_time_s[station_index],
+            current_time_s + process_time_s,
+        )
+
         if unit_index not in unit_first_start:
             unit_first_start[unit_index] = current_time_s
 
-        push_event(
-            time_s=current_time_s + process_time_s,
-            event_type=EVENT_FINISH,
-            station_index=station_index,
-            unit_index=unit_index,
-        )
+        push_event(current_time_s + process_time_s, EVENT_FINISH, station_index, unit_index)
 
-    if unit_release_times is None:
-        unit_release_times = [0.0] * len(ordered_units)
-    if len(unit_release_times) != len(ordered_units):
-        raise ValueError("unit_release_times must have the same length as ordered_units")
-    if max_units_in_system <= 0:
-        raise ValueError("max_units_in_system must be greater than 0")
-    if return_to_station_1_time_s < 0:
-        raise ValueError("return_to_station_1_time_s cannot be negative")
-
-    for unit_index in range(len(ordered_units)):
+    for unit_index in range(initial_requested_unit_count):
         push_event(float(unit_release_times[unit_index]), EVENT_RELEASE, -1, unit_index)
 
     while event_queue:
         time_s, _, _, event_type, station_index, unit_index = heapq.heappop(event_queue)
+
+        if simulation_time_s is not None and time_s > float(simulation_time_s):
+            stop_requested = True
+            stop_time_s = float(simulation_time_s)
+            stop_reason = {
+                "type": "simulation_time_limit",
+                "time_s": float(simulation_time_s),
+            }
+            break
+
+        if stop_requested:
+            break
+
         station_state = station_states[station_index] if station_index >= 0 else None
 
         if event_type == EVENT_RELEASE:
@@ -1123,7 +1622,8 @@ def run_simulation(
                 )
                 push_event(arrival_time_s, EVENT_ARRIVAL, first_station_index, unit_index)
             else:
-                waiting_for_system_slot.append((unit_index, time_s))
+                prioritize_front = bool(attempt_numbers[unit_index] > 1)
+                _enqueue_waiting_unit(unit_index, time_s, prioritize_front=prioritize_front)
             continue
 
         if event_type == EVENT_CART_RETURN:
@@ -1134,7 +1634,7 @@ def run_simulation(
         if event_type == EVENT_ARRIVAL:
             _update_queue_area(station_state, time_s)
             queue_length_ahead_on_arrival = len(station_state.queue)
-            station_state.queue.append((unit_index, time_s, queue_length_ahead_on_arrival))
+            _enqueue_station_queue(station_state, unit_index, time_s, queue_length_ahead_on_arrival)
             station_state.max_queue_length = max(station_state.max_queue_length, len(station_state.queue))
             unit_first_arrival.setdefault(unit_index, time_s)
             try_start_next(station_index, time_s)
@@ -1147,14 +1647,74 @@ def run_simulation(
                     f"but it is currently processing {station_state.current_unit_index}."
                 )
 
-            operation = operation_lookup[(station_index, unit_index)]
-            operation.finish_time_s = time_s
             station_state.last_finish_time_s = time_s
             station_state.busy = False
             station_state.current_unit_index = None
 
-            current_stage_index = station_to_stage_index[station_index]
+            disruption_result = operation_disruption_lookup.get((station_index, unit_index), {})
+            terminal_failure_type = disruption_result.get("terminal_failure_type")
 
+            if terminal_failure_type is not None:
+                unit_attempt_exit_time[unit_index] = float(time_s)
+                replacement_unit_index: int | None = None
+                replacement_shortages: list[dict[str, Any]] = []
+                if terminal_failure_type == "failed_inspection":
+                    replacement_unit_index, replacement_shortages = try_allocate_replacement_unit(
+                        unit_index,
+                        time_s,
+                        prioritize_next_queue=True,
+                    )
+                    if replacement_unit_index is None:
+                        root_failed_without_replacement[root_indices[unit_index]] = {
+                            "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                            "order_id": str(root_order_ids[root_indices[unit_index]]),
+                            "variant": ordered_units[unit_index],
+                            "failed_attempt_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                            "failed_attempt_number": int(attempt_numbers[unit_index]),
+                            "failure_type": terminal_failure_type,
+                            "station_name": station_sequence[station_index],
+                            "shortages_for_replacement": replacement_shortages,
+                        }
+                        disruption_counts["unreplaced_failed_units"] += 1
+                    else:
+                        disruption_counts["replacement_units_created"] += 1
+                else:
+                    root_failed_without_replacement[root_indices[unit_index]] = {
+                        "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                        "order_id": str(root_order_ids[root_indices[unit_index]]),
+                        "variant": ordered_units[unit_index],
+                        "failed_attempt_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                        "failed_attempt_number": int(attempt_numbers[unit_index]),
+                        "failure_type": terminal_failure_type,
+                        "station_name": station_sequence[station_index],
+                        "shortages_for_replacement": [],
+                    }
+                    disruption_counts["unreplaced_failed_units"] += 1
+
+                disruption_event_log.append(
+                    {
+                        "event": "unit_scrapped_and_released_for_retry" if replacement_unit_index is not None else "unit_scrapped_without_retry",
+                        "disruption_timestamp_s": float(time_s),
+                        "unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                        "order_id": str(root_order_ids[root_indices[unit_index]]),
+                        "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                        "attempt": int(attempt_numbers[unit_index]),
+                        "variant": ordered_units[unit_index],
+                        "station_name": station_sequence[station_index],
+                        "failure_type": terminal_failure_type,
+                        "failure_material": disruption_result.get("terminal_failure_material"),
+                        "replacement_unit_id": f"U{root_indices[unit_index] + 1:03d}" if replacement_unit_index is not None else None,
+                        "replacement_attempt_number": int(attempt_numbers[replacement_unit_index]) if replacement_unit_index is not None else None,
+                        "replacement_release_time_s": float(time_s) if replacement_unit_index is not None else None,
+                        "replacement_shortages": replacement_shortages,
+                    }
+                )
+
+                push_event(time_s + return_to_station_1_time_s, EVENT_CART_RETURN, -1, unit_index)
+                try_start_next(station_index, time_s)
+                continue
+
+            current_stage_index = station_to_stage_index[station_index]
             if current_stage_index < len(stage_instance_indices) - 1:
                 current_station_name = station_sequence[station_index]
                 next_station_index, transport_time_s, arrival_time_s = choose_station_instance_for_stage(
@@ -1166,7 +1726,7 @@ def run_simulation(
                 next_station_name = station_sequence[next_station_index]
                 transport_records.append(
                     TransportRecord(
-                        unit_id=f"U{unit_index + 1:03d}",
+                        unit_id=f"U{root_indices[unit_index] + 1:03d}",
                         variant=ordered_units[unit_index],
                         transport_index=current_stage_index + 1,
                         transport_name=f"Transportation {current_stage_index + 1}",
@@ -1177,50 +1737,70 @@ def run_simulation(
                         transport_time_s=transport_time_s,
                     )
                 )
-                push_event(
-                    time_s=arrival_time_s,
-                    event_type=EVENT_ARRIVAL,
-                    station_index=next_station_index,
-                    unit_index=unit_index,
-                )
+                push_event(arrival_time_s, EVENT_ARRIVAL, next_station_index, unit_index)
             else:
-                unit_completion[unit_index] = time_s
-                push_event(
-                    time_s=time_s + return_to_station_1_time_s,
-                    event_type=EVENT_CART_RETURN,
-                    station_index=-1,
-                    unit_index=unit_index,
-                )
+                unit_completion[unit_index] = float(time_s)
+                unit_attempt_exit_time[unit_index] = float(time_s)
+                root_successful_attempt_index[root_indices[unit_index]] = unit_index
+                push_event(time_s + return_to_station_1_time_s, EVENT_CART_RETURN, -1, unit_index)
 
             try_start_next(station_index, time_s)
             continue
 
         raise RuntimeError(f"Unknown event type: {event_type}")
 
-    if ordered_units:
-        makespan_s = max(unit_completion.values()) if unit_completion else 0.0
+    if stop_requested and stop_time_s is not None:
+        for op in operations:
+            if op.finish_time_s > float(stop_time_s) and op.start_time_s < float(stop_time_s):
+                op.finish_time_s = float(stop_time_s)
+                op.process_time_s = max(0.0, float(stop_time_s) - op.start_time_s)
+
+    if root_successful_attempt_index:
+        if stop_requested and stop_time_s is not None:
+            makespan_s = float(stop_time_s)
+        else:
+            makespan_s = max(unit_completion.values()) if unit_completion else 0.0
     else:
-        makespan_s = 0.0
+        makespan_s = float(stop_time_s or 0.0)
 
     for station_state in station_states:
         _update_queue_area(station_state, makespan_s)
 
     unit_summaries: list[UnitSummary] = []
-    for unit_index, variant in enumerate(ordered_units):
-        unit_id = f"U{unit_index + 1:03d}"
-        first_arrival = unit_first_arrival.get(unit_index, 0.0)
-        first_start = unit_first_start.get(unit_index, 0.0)
-        completion = unit_completion.get(unit_index, first_start)
+    completed_good_variants: list[str] = []
+    completed_root_positions: list[int] = []
+    for root_index in range(initial_requested_unit_count):
+        successful_attempt_index = root_successful_attempt_index.get(root_index)
+        if successful_attempt_index is None:
+            continue
+
+        attempt_indices = root_to_attempt_indices[root_index]
+        arrival_candidates = [unit_first_arrival[idx] for idx in attempt_indices if idx in unit_first_arrival]
+        start_candidates = [unit_first_start[idx] for idx in attempt_indices if idx in unit_first_start]
+        completion_time_s = float(unit_completion[successful_attempt_index])
+        first_arrival_time_s = min(arrival_candidates) if arrival_candidates else float(unit_release_times[root_index])
+        first_start_time_s = min(start_candidates) if start_candidates else first_arrival_time_s
+        active_flow_time_s = sum(
+            float(unit_attempt_exit_time[idx]) - float(unit_first_arrival[idx])
+            for idx in attempt_indices
+            if idx in unit_first_arrival and idx in unit_attempt_exit_time
+        )
+        variant = ordered_units[successful_attempt_index]
         unit_summaries.append(
             UnitSummary(
-                unit_id=unit_id,
+                unit_id=f"U{root_index + 1:03d}",
+                order_id=str(root_order_ids[root_index]),
                 variant=variant,
-                first_arrival_time_s=first_arrival,
-                start_time_s=first_start,
-                completion_time_s=completion,
-                flow_time_s=completion - first_arrival,
+                first_arrival_time_s=first_arrival_time_s,
+                start_time_s=first_start_time_s,
+                completion_time_s=completion_time_s,
+                flow_time_s=completion_time_s - first_arrival_time_s,
+                active_flow_time_s=active_flow_time_s,
+                attempts=max(int(attempt_numbers[idx]) for idx in attempt_indices),
             )
         )
+        completed_good_variants.append(variant)
+        completed_root_positions.append(root_index + 1)
 
     station_summaries: list[StationSummary] = []
     for idx, station_name in enumerate(station_sequence):
@@ -1256,7 +1836,28 @@ def run_simulation(
         for summary in station_summaries
     }
 
-    return operations, transport_records, unit_summaries, station_summaries, station_available_time
+    simulation_details = {
+        "completed_good_variants": completed_good_variants,
+        "completed_root_positions": completed_root_positions,
+        "completed_good_unit_count": len(completed_good_variants),
+        "replacement_units_created": list(replacement_variants_created),
+        "replacement_units_created_count": len(replacement_variants_created),
+        "extra_material_consumed": dict(extra_material_consumed),
+        "actual_material_consumed": dict(actual_material_consumed),
+        "remaining_stock_after_run": dict(remaining_station_material_stock),
+        "disruption_event_log": disruption_event_log,
+        "disruption_counts": dict(disruption_counts),
+        "root_failed_without_replacement": list(root_failed_without_replacement.values()),
+        "unrecoverable_root_count": len(root_failed_without_replacement),
+        "disruptions_enabled": bool(disruptions_enabled),
+        "stopped_due_to_sim_time_limit": bool(stop_reason and stop_reason.get("type") == "simulation_time_limit"),
+        "stopped_due_to_material_shortage": bool(stop_reason and stop_reason.get("type") == "material_stockout_at_station"),
+        "stop_reason": stop_reason,
+        "stop_time_s": stop_time_s,
+        "unit_order_ids": list(root_order_ids),
+    }
+
+    return operations, transport_records, unit_summaries, station_summaries, station_available_time, simulation_details
 
 
 # -----------------------------
@@ -1301,6 +1902,7 @@ def calculate_kpis(
     )
 
     average_flow_time_s = mean(u.flow_time_s for u in unit_summaries)
+    average_active_flow_time_s = mean(u.active_flow_time_s for u in unit_summaries)
     total_wait_time_s = sum(op.wait_time_s for op in operations)
 
     kpis: dict[str, float | int] = {
@@ -1315,6 +1917,7 @@ def calculate_kpis(
         "throughput_units_per_second": round(throughput_rate_units_per_s, 6),
         "throughput_units_per_hour": round(throughput_rate_units_per_h, 4),
         "average_flow_time_seconds": round(average_flow_time_s, 4),
+        "average_active_flow_time_seconds": round(average_active_flow_time_s, 4),
         "total_wait_time_seconds": round(total_wait_time_s, 4),
     }
 
@@ -1446,22 +2049,28 @@ def write_unit_summary_csv(unit_summaries: list[UnitSummary], output_path: Path)
         writer.writerow(
             [
                 "unit_id",
+                "orderID",
                 "variant",
                 "first_arrival_time_s",
                 "start_time_s",
                 "completion_time_s",
                 "flow_time_s",
+                "active_flow_time_s",
+                "Attempts",
             ]
         )
         for summary in unit_summaries:
             writer.writerow(
                 [
                     summary.unit_id,
+                    summary.order_id,
                     summary.variant,
                     round(summary.first_arrival_time_s, 4),
                     round(summary.start_time_s, 4),
                     round(summary.completion_time_s, 4),
                     round(summary.flow_time_s, 4),
+                    round(summary.active_flow_time_s, 4),
+                    int(summary.attempts),
                 ]
             )
 
@@ -1588,7 +2197,6 @@ def create_gantt_chart(
             color=color,
             edgecolor="black",
             linewidth=0.25,
-            alpha=0.65,
         )
         if duration > 1.0:
             ax.text(
@@ -1684,7 +2292,6 @@ def create_gantt_chart_no_transport(
             color=color,
             edgecolor="black",
             linewidth=0.25,
-            alpha=0.65,
         )
         if duration > 1.0:
             ax.text(
@@ -1701,6 +2308,7 @@ def create_gantt_chart_no_transport(
     ax.set_xlabel("Time [s]")
     ax.set_ylabel("Stations / Transport")
     ax.set_title("Production line Gantt chart")
+    ax.grid(True, axis="x", alpha=0.3)
     # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
     fig.tight_layout()
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
@@ -1755,7 +2363,6 @@ def save_run_metadata(
     output_path: Path,
     data_dir: Path,
     output_dir: Path,
-    total_time: float = 0.0,
     extra_payload: dict[str, Any] | None = None,
 ) -> None:
     payload = {
@@ -1763,7 +2370,6 @@ def save_run_metadata(
         "expanded_order_sequence": ordered_units,
         "data_directory": str(data_dir.resolve()),
         "output_directory": str(output_dir.resolve()),
-        "total time spend on the simulation [s]": total_time,
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
     if extra_payload:
@@ -1808,16 +2414,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if input(">>> Did you remember to save your files? <<<\n\n>>").strip().lower() in  ("y","yes"):
-        print("\nGood!\nRunning the script!\n")
-    else:
-        sys.exit("\n ---save the files and run the script again!--- \n")
-
     data_dir: Path = args.data_dir
     input_root: Path = args.input_root
     output_root: Path = args.output_root
 
-    starttime = time.perf_counter() #start time of the whole execution, including setup and file writing
+    starttime = time.perf_counter()
 
     process_time_data = load_json(data_dir / "process_times.json")
     transport_time_data = load_json(data_dir / "transport_times.json")
@@ -1829,22 +2430,33 @@ def main() -> None:
     order_text: str
     ordered_units: list[str]
     unit_release_times: list[float]
+    unit_priorities: list[int]
+    unit_order_ids: list[str]
     simulation_time_s: float | None = None
+    carriers = MAX_UNITS_IN_SYSTEM
     run_metadata_extra: dict[str, Any] = {}
     selected_line_layout_name: str | None = args.line_layout_file
     batch_dir_for_layout: Path | None = None
+    settings_path: Path | None = None
+    settings_data: dict[str, Any] = {}
 
     if args.order:
         order_text = args.order
         ordered_units = parse_order(order_text, valid_variants)
         unit_release_times = [0.0] * len(ordered_units)
+        unit_priorities = [1] * len(ordered_units)
+        unit_order_ids = ["manual"] * len(ordered_units)
     else:
         generated_input = load_latest_generated_input(input_root, valid_variants)
         order_text = generated_input["order_text"]
         ordered_units = generated_input["ordered_units"]
         unit_release_times = generated_input["unit_release_times"]
+        unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
+        unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
         simulation_time_s = generated_input["simulation_time_s"]
-        carriers = generated_input["carriers"]
+        carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))
+        settings_data = generated_input.get("settings_data", {})
+        settings_path = generated_input.get("settings_path")
         batch_dir_for_layout = generated_input["batch_dir"]
         if selected_line_layout_name is None:
             selected_line_layout_name = generated_input.get("selected_line_layout_name")
@@ -1856,6 +2468,8 @@ def main() -> None:
             "simulation_time_seconds": simulation_time_s,
             "carriers": carriers,
             "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
+            "unit_priorities": list(unit_priorities),
+            "unit_order_ids": list(unit_order_ids),
         }
 
     line_layout_path_resolved = resolve_line_layout_path(
@@ -1871,6 +2485,17 @@ def main() -> None:
         line_layout_config=line_layout_config,
     )
 
+    disruption_path = resolve_disruption_path(input_root=input_root, batch_dir=batch_dir_for_layout)
+    disruptions_enabled = _settings_random_disruptions_enabled(settings_data)
+    disruption_seed = settings_data.get("seed")
+    disruption_config: dict[str, Any] | None = None
+    if disruptions_enabled:
+        if disruption_path is None or not disruption_path.exists():
+            raise FileNotFoundError(
+                "random based disruptions are enabled in settings.json, but disruption.json was not found in the input batch."
+            )
+        disruption_config = load_json(disruption_path)
+
     run_metadata_extra["line_layout_file"] = (
         str(line_layout_path.resolve()) if line_layout_path is not None else "default_generated_layout"
     )
@@ -1878,51 +2503,96 @@ def main() -> None:
         run_metadata_extra["requested_line_layout_file"] = str(selected_line_layout_name)
     run_metadata_extra["line_layout_name"] = str(effective_line_layout.get("layout_name", "default_single_path"))
     run_metadata_extra["effective_station_sequence"] = list(effective_line_layout["station_sequence"])
+    run_metadata_extra["disruptions_enabled"] = bool(disruptions_enabled)
+    run_metadata_extra["disruption_seed"] = str(disruption_seed) if disruption_seed is not None else None
+    if disruption_path is not None:
+        run_metadata_extra["input_disruption_json"] = str(disruption_path.resolve())
 
     run_output_dir = create_run_output_dir(output_root, order_text)
 
-    produced_units, unproduced_units, material_report, production_status = determine_producible_units(
-        ordered_units=ordered_units,
-        bom_data=bom_data,
-        material_stock_data=material_stock_data,
+    copy_file_if_exists(settings_path, run_output_dir / "settings_used.json")
+    copy_file_if_exists(disruption_path, run_output_dir / "disruption_used.json")
+
+    save_run_metadata(
+        order_text,
+        ordered_units,
+        run_output_dir / "run_metadata.json",
+        data_dir,
+        run_output_dir,
+        extra_payload=run_metadata_extra,
     )
-
-    production_status["max_units_in_system"] = MAX_UNITS_IN_SYSTEM
-    production_status["return_to_station_1_time_seconds"] = RETURN_TO_STATION_1_TIME_S
-
-    if simulation_time_s is not None:
-        production_status["simulation_time_seconds"] = simulation_time_s
-        production_status["requested_units_with_order_time_at_or_before_sim_time"] = len(ordered_units)
-
-    write_material_report_csv(material_report, run_output_dir / "material_report.csv")
-    save_json(production_status, run_output_dir / "production_status.json")
 
     operations: list[OperationRecord] = []
     transport_records: list[TransportRecord] = []
     unit_summaries: list[UnitSummary] = []
     station_summaries: list[StationSummary] = []
 
-    if produced_units:
-        produced_unit_positions = production_status.get("produced_unit_positions", [])
-        if produced_unit_positions:
-            produced_release_times = [
-                unit_release_times[position - 1]
-                for position in produced_unit_positions
-                if 1 <= int(position) <= len(unit_release_times)
-            ]
-        else:
-            produced_release_times = unit_release_times[: len(produced_units)]
+    operations, transport_records, unit_summaries, station_summaries, _, simulation_details = run_simulation(
+        ordered_units=ordered_units,
+        process_time_data=process_time_data,
+        transport_time_data=transport_time_data,
+        unit_release_times=unit_release_times,
+        unit_priorities=unit_priorities,
+        unit_order_ids=unit_order_ids,
+        max_units_in_system=carriers,
+        line_layout_config=line_layout_config,
+        bom_data=bom_data,
+        material_stock_data=material_stock_data,
+        disruptions_enabled=disruptions_enabled,
+        disruption_config=disruption_config,
+        disruption_seed=disruption_seed,
+        simulation_time_s=simulation_time_s,
+    )
 
-        operations, transport_records, unit_summaries, station_summaries, _ = run_simulation(
-            ordered_units=produced_units,
-            process_time_data=process_time_data,
-            transport_time_data=transport_time_data,
-            unit_release_times=produced_release_times,
-            line_layout_config=line_layout_config,
-        )
+    completed_good_variants = list(simulation_details.get("completed_good_variants", []))
+    completed_root_positions = list(simulation_details.get("completed_root_positions", []))
+    completed_order_ids = [unit_order_ids[pos - 1] for pos in completed_root_positions if 1 <= int(pos) <= len(unit_order_ids)]
+
+    material_report = build_material_report(
+        requested_units=ordered_units,
+        consumed_units=completed_good_variants,
+        bom_data=bom_data,
+        material_stock_data=material_stock_data,
+        extra_material_consumed=simulation_details.get("extra_material_consumed", {}),
+        actual_material_consumed=simulation_details.get("actual_material_consumed", {}),
+    )
+
+    completed_root_position_set = set(int(pos) for pos in completed_root_positions)
+    unproduced_positions = [idx + 1 for idx in range(len(ordered_units)) if (idx + 1) not in completed_root_position_set]
+    unproduced_units = [ordered_units[idx - 1] for idx in unproduced_positions]
+
+    production_status: dict[str, Any] = {
+        "requested_unit_count": len(ordered_units),
+        "produced_unit_count": len(completed_good_variants),
+        "unproduced_unit_count": len(unproduced_units),
+        "produced_mix": dict(Counter(completed_good_variants)),
+        "unproduced_mix": dict(Counter(unproduced_units)),
+        "produced_unit_positions": completed_root_positions,
+        "unproduced_unit_positions": unproduced_positions,
+        "completed_order_ids": completed_order_ids,
+        "carriers": carriers,
+        "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
+        "disruptions_enabled": bool(disruptions_enabled),
+        "disruption_seed": str(disruption_seed) if disruption_seed is not None else None,
+        "simulation_time_seconds": simulation_time_s,
+        "replacement_units_created": list(simulation_details.get("replacement_units_created", [])),
+        "replacement_units_created_count": int(simulation_details.get("replacement_units_created_count", 0)),
+        "extra_material_consumed_due_to_disruptions": dict(simulation_details.get("extra_material_consumed", {})),
+        "remaining_stock_after_run": dict(simulation_details.get("remaining_stock_after_run", {})),
+        "units_lost_due_to_disruptions_without_replacement": int(simulation_details.get("unrecoverable_root_count", 0)),
+        "root_failures_without_replacement": list(simulation_details.get("root_failed_without_replacement", [])),
+        "disruption_counts": dict(simulation_details.get("disruption_counts", {})),
+        "stop_reason": simulation_details.get("stop_reason"),
+        "stopped_due_to_sim_time_limit": bool(simulation_details.get("stopped_due_to_sim_time_limit", False)),
+        "stopped_due_to_material_shortage": bool(simulation_details.get("stopped_due_to_material_shortage", False)),
+        "status": "complete" if len(unproduced_units) == 0 else "partial_or_stopped",
+    }
+
+    write_material_report_csv(material_report, run_output_dir / "material_report.csv")
+    save_json(production_status, run_output_dir / "production_status.json")
 
     kpis = calculate_kpis(
-        ordered_units=produced_units,
+        ordered_units=completed_good_variants,
         operations=operations,
         unit_summaries=unit_summaries,
         station_summaries=station_summaries,
@@ -1930,12 +2600,19 @@ def main() -> None:
 
     kpis["carriers"] = carriers
     kpis["return_to_station_1_time_seconds"] = round(RETURN_TO_STATION_1_TIME_S, 4)
-
+    kpis["disruptions_enabled"] = int(disruptions_enabled)
+    if disruption_seed is not None:
+        kpis["disruption_seed"] = str(disruption_seed)
     if simulation_time_s is not None:
         kpis["simulation_time_seconds"] = round(simulation_time_s, 4)
-
     kpis["line_layout_name"] = str(effective_line_layout.get("layout_name", "default_single_path"))
     kpis["effective_station_count"] = len(effective_line_layout["station_sequence"])
+    kpis["completed_good_units"] = len(completed_good_variants)
+    if simulation_details.get("stop_reason"):
+        kpis["stopped_due_to_sim_time_limit"] = int(bool(simulation_details.get("stopped_due_to_sim_time_limit", False)))
+        kpis["stopped_due_to_material_shortage"] = int(bool(simulation_details.get("stopped_due_to_material_shortage", False)))
+    for key, value in sorted(simulation_details.get("disruption_counts", {}).items()):
+        kpis[f"disruption_{key}"] = value
 
     write_kpis_csv(kpis, run_output_dir / "kpi_summary.csv")
     write_operations_csv(operations, run_output_dir / "station_schedule.csv")
@@ -1943,15 +2620,18 @@ def main() -> None:
     write_unit_summary_csv(unit_summaries, run_output_dir / "unit_summary.csv")
     write_station_summary_csv(station_summaries, run_output_dir / "station_summary.csv")
 
-    chart_notes: list[str] = []
-    if not create_gantt_chart(operations, transport_records, run_output_dir / "gantt_chart.png"):
-        chart_notes.append("gantt_chart.png not created because matplotlib is not installed.")
-    if not create_gantt_chart_no_transport(operations, transport_records, run_output_dir / "gantt_chart_no_transport.png"):
-        chart_notes.append("gantt_chart_no_transport.png not created because matplotlib is not installed.")
-    if not create_throughput_chart(unit_summaries, run_output_dir / "throughput_chart.png"):
-        chart_notes.append("throughput_chart.png not created because matplotlib is not installed.")
-    if chart_notes:
-        (run_output_dir / "charts_skipped.txt").write_text("\n".join(chart_notes), encoding="utf-8")
+    if disruptions_enabled or simulation_details.get("disruption_event_log"):
+        save_json(
+            {
+                "disruptions_enabled": bool(disruptions_enabled),
+                "seed": str(disruption_seed) if disruption_seed is not None else None,
+                "broken_material_extra_time_seconds": _broken_material_extra_time_s(disruption_config),
+                "disruption_counts": dict(simulation_details.get("disruption_counts", {})),
+                "stop_reason": simulation_details.get("stop_reason"),
+                "events": list(simulation_details.get("disruption_event_log", [])),
+            },
+            run_output_dir / "disruption_summary.json",
+        )
 
     print(f"Run folder: {run_output_dir.resolve()}")
     if simulation_time_s is not None:
@@ -1961,30 +2641,20 @@ def main() -> None:
     print(f"Line layout: {effective_line_layout.get('layout_name', 'default_single_path')}")
     if line_layout_path is not None:
         print(f"Line layout file: {line_layout_path.resolve()}")
+    print(f"Disruptions enabled: {int(disruptions_enabled)}")
+    if disruptions_enabled and disruption_path is not None:
+        print(f"Disruption file: {disruption_path.resolve()}")
     print(f"Effective station count: {len(effective_line_layout['station_sequence'])}")
     print(f"Requested units: {len(ordered_units)}")
-    print(f"Produced units: {len(produced_units)}")
-    if unproduced_units:
-        print(f"Unproduced units: {len(unproduced_units)}")
-        if production_status.get("shortage_reason"):
-            pos = production_status["shortage_reason"]["unit_position"]
-            variant = production_status["shortage_reason"]["variant"]
-            print(f"First skipped unit due to material shortage: unit {pos} ({variant}).") 
+    print(f"Completed good units: {len(completed_good_variants)}")
+    if simulation_details.get("stop_reason"):
+        print(f"Stop reason: {simulation_details['stop_reason']}")
+    if simulation_details.get("unrecoverable_root_count", 0):
+        print(f"Units lost due to disruptions without replacement: {simulation_details['unrecoverable_root_count']}")
 
-    endtime = time.perf_counter() #end time of the whole execution, including setup and file writing
-    total_time = endtime - starttime
-    print(f"Total execution time: {total_time:.6f} seconds")
-    save_run_metadata(
-        order_text,
-        ordered_units,
-        run_output_dir / "run_metadata.json",
-        data_dir,
-        run_output_dir,
-        total_time,
-        extra_payload=run_metadata_extra,
-    )
+    endtime = time.perf_counter()
+    print(f"Total execution time: {endtime - starttime:.6f} seconds")
 
 
 if __name__ == "__main__":
     main()
-    
