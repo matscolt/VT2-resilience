@@ -87,6 +87,12 @@ def load_all_data(data_folder):
 
     return station_data, transport_data, unit_data
 
+# ---------------------------
+# PLOTS
+# ---------------------------
+
+
+
 def plot_gantt(station_data, transport_data, graphfolder_dir):
 
     # ---------------------------
@@ -191,7 +197,7 @@ def plot_gantt(station_data, transport_data, graphfolder_dir):
             fontsize=7
         )
 
-    # --- Transport (correct row!) ---
+    # --- Transport ---
     for row in transport_data:
         start = row["start_time_s"]
         duration = row["finish_time_s"] - start
@@ -242,7 +248,7 @@ def plot_flow_times(unit_data,graphfolder):
 
     plt.tight_layout()
     plt.savefig(graphfolder/graphname, dpi=200, bbox_inches="tight")
-    print(f">>Generated {graphname}")
+    print(f">> Generated {graphname}")
 
 def plot_station_load(station_data,graphfolder):
     load = {}
@@ -263,17 +269,26 @@ def plot_station_load(station_data,graphfolder):
 
     plt.tight_layout()
     plt.savefig(graphfolder/graphname, dpi=200, bbox_inches="tight")
-    print(f">>Generated {graphname}")
+    print(f">> Generated {graphname}")
 
 #main
 def main():
-    specific_folder = "20260420_142405__orders_20_04_13_15_1_5xFUSE0_10xFUSE1_5xFUSE2"#enter the wanted foldername in the output folder
+    specific_folder = "20260420_142405"#enter the wanted foldername(only the first timestamp) in the output folder
+    
     specific_folder_choice = 0 #yes = 1, no = 0
+    
     if specific_folder_choice == 1:
-        folder = find_output_folder(target_timestamp=specific_folder)
+        try:
+            folder = find_output_folder(target_timestamp=specific_folder)
+            print(f">> Using selected folder: {folder}")
+        except Exception as e:
+            print(f">> Warning: Could not find requested folder ({e})")
+            print(">> Falling back to newest folder instead.")
+            folder = find_output_folder()
     else:
         folder = find_output_folder()
     print(f"{folder}")
+
     station_data, transport_data, unit_data = load_all_data(folder)
 
     graph_folder = folder / "graphs"
