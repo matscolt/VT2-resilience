@@ -2590,7 +2590,8 @@ def main() -> None:
     unit_summaries: list[UnitSummary] = []
     station_summaries: list[StationSummary] = []
 
-    print(">> Running sim")
+    sim_no_dtimestart = time.perf_counter()
+    print(">> Running sim without disruptions")
     operations, transport_records, unit_summaries, station_summaries, _, simulation_details = run_simulation(
         ordered_units=ordered_units,
         process_time_data=process_time_data,
@@ -2607,7 +2608,9 @@ def main() -> None:
         disruption_seed=disruption_seed,
         simulation_time_s=simulation_time_s,
     )
-    print(">> Done running sim")
+    print(">> Done running sim without disruptions")
+    sim_no_dtimeend = time.perf_counter()
+    print(f"Simulation without disruptions time: {sim_no_dtimeend - sim_no_dtimestart:.6f} seconds")
 
     completed_good_variants = list(simulation_details.get("completed_good_variants", []))
     completed_root_positions = list(simulation_details.get("completed_root_positions", []))
@@ -2685,6 +2688,7 @@ def main() -> None:
     completed_good_variants_no_disruptions: list[str] = completed_good_variants
 
     if disruptions_enabled:
+        sim_with_dtimestart = time.perf_counter()
         (
             operations_no_disruptions,
             _transport_records_no_disruptions,
@@ -2708,6 +2712,9 @@ def main() -> None:
             disruption_seed=None,
             simulation_time_s=simulation_time_s,
         )
+        print(">> Done running sim with disruptions")
+        sim_with_dtimeend = time.perf_counter()
+        print(f"Simulation with disruptions time: {sim_with_dtimeend - sim_with_dtimestart:.6f} seconds")
         completed_good_variants_no_disruptions = list(
             simulation_details_no_disruptions.get("completed_good_variants", [])
         )
