@@ -312,8 +312,8 @@ def plot_station_utilization(station_data, graphfolder):
     times = [float(row["utilization_active_window"]) * 100 for row in station_data]
 
     # 2) Farvelogik (justér thresholds efter behov)
-    lower = 20
-    higher = 85
+    lower = 40
+    higher = 80
 
     def color_for(u):
         if u < lower:
@@ -350,8 +350,8 @@ def plot_station_utilization(station_data, graphfolder):
     # 6) Legend (forklar farverne)
     legend_handles = [
         mpatches.Patch(color="#2ca02c", label=f"Low (<{lower}%)"),
-        mpatches.Patch(color="#fceb31", label=f"High ({lower}–{higher}%)"),
-        mpatches.Patch(color="#d62728", label=f"very high (≥{higher}%)"),
+        mpatches.Patch(color="#fceb31", label=f"Medium ({lower}–{higher}%)"),
+        mpatches.Patch(color="#d62728", label=f"High (≥{higher}%)"),
     ]
     ax.legend(handles=legend_handles, loc="lower right")
 
