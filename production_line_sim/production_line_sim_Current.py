@@ -2590,6 +2590,7 @@ def main() -> None:
     unit_summaries: list[UnitSummary] = []
     station_summaries: list[StationSummary] = []
 
+    print(">> Running sim")
     operations, transport_records, unit_summaries, station_summaries, _, simulation_details = run_simulation(
         ordered_units=ordered_units,
         process_time_data=process_time_data,
@@ -2606,6 +2607,7 @@ def main() -> None:
         disruption_seed=disruption_seed,
         simulation_time_s=simulation_time_s,
     )
+    print(">> Done running sim")
 
     completed_good_variants = list(simulation_details.get("completed_good_variants", []))
     completed_root_positions = list(simulation_details.get("completed_root_positions", []))
