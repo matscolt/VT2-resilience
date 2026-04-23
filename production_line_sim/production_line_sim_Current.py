@@ -1321,6 +1321,13 @@ def run_simulation(
     stop_requested = False
     stop_time_s: float | None = None
     stop_reason: dict[str, Any] | None = None
+    material_stop_cutoff_unit_index: int | None = None
+
+    def _unit_blocked_by_material_stop(unit_index: int) -> bool:
+        return (
+            material_stop_cutoff_unit_index is not None
+            and int(unit_index) >= int(material_stop_cutoff_unit_index)
+        )
 
     def push_event(time_s: float, event_type: str, station_index: int, unit_index: int) -> None:
         nonlocal event_sequence
@@ -1398,6 +1405,8 @@ def run_simulation(
         best_index: int | None = None
         best_score: tuple[int, int, float, int] | None = None
         for idx, (unit_index, requested_release_time_s, priority_value, prioritize_front, queue_seq) in enumerate(waiting_for_system_slot):
+            if _unit_blocked_by_material_stop(unit_index):
+                continue
             if requested_release_time_s > current_time_s:
                 continue
             score = (-int(priority_value), -int(bool(prioritize_front)), float(requested_release_time_s), int(queue_seq))
@@ -1507,7 +1516,7 @@ def run_simulation(
         return new_unit_index, []
 
     def try_start_next(station_index: int, current_time_s: float) -> None:
-        nonlocal stop_requested, stop_time_s, stop_reason
+        nonlocal stop_requested, stop_time_s, stop_reason, material_stop_cutoff_unit_index
         station_state = station_states[station_index]
         if stop_requested or station_state.busy or not station_state.queue:
             return
@@ -1546,21 +1555,41 @@ def run_simulation(
         for material, needed in total_material_requirements.items():
             available = int(remaining_station_material_stock.get(material, 0))
             if available < int(needed):
-                stop_requested = True
-                stop_time_s = float(current_time_s)
-                stop_reason = {
-                    "type": "material_stockout_at_station",
-                    "time_s": float(current_time_s),
-                    "unit_id": unit_id,
-                    "order_id": str(unit_order_ids[unit_index]),
-                    "variant": variant,
+                if material_stop_cutoff_unit_index is None or int(unit_index) < int(material_stop_cutoff_unit_index):
+                    material_stop_cutoff_unit_index = int(unit_index)
+                    stop_time_s = float(current_time_s)
+                    stop_reason = {
+                        "type": "material_stockout_at_station",
+                        "time_s": float(current_time_s),
+                        "unit_id": unit_id,
+                        "order_id": str(unit_order_ids[unit_index]),
+                        "variant": variant,
+                        "station_name": station_name,
+                        "stage_number": int(stage_number),
+                        "material": material,
+                        "needed": int(needed),
+                        "available": int(available),
+                    }
+                    disruption_counts["material_stockout_stop_events"] += 1
+                unit_attempt_exit_time[unit_index] = float(current_time_s)
+                root_failed_without_replacement[root_indices[unit_index]] = {
+                    "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                    "order_id": str(root_order_ids[root_indices[unit_index]]),
+                    "variant": ordered_units[unit_index],
+                    "failed_attempt_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                    "failed_attempt_number": int(attempt_numbers[unit_index]),
+                    "failure_type": "material_stockout_at_station",
                     "station_name": station_name,
-                    "stage_number": int(stage_number),
-                    "material": material,
-                    "needed": int(needed),
-                    "available": int(available),
+                    "shortages_for_replacement": [
+                        {
+                            "material": material,
+                            "needed": int(needed),
+                            "available": int(available),
+                            "missing": int(needed) - int(available),
+                        }
+                    ],
                 }
-                disruption_counts["material_stockout_stop_events"] += 1
+                push_event(current_time_s + return_to_station_1_time_s, EVENT_CART_RETURN, -1, unit_index)
                 return
 
         for material, needed in total_material_requirements.items():
@@ -1659,6 +1688,8 @@ def run_simulation(
         station_state = station_states[station_index] if station_index >= 0 else None
 
         if event_type == EVENT_RELEASE:
+            if _unit_blocked_by_material_stop(unit_index):
+                continue
             if available_system_slots > 0:
                 available_system_slots -= 1
                 first_station_index, _, arrival_time_s = choose_station_instance_for_stage(
@@ -1679,6 +1710,10 @@ def run_simulation(
             continue
 
         if event_type == EVENT_ARRIVAL:
+            if _unit_blocked_by_material_stop(unit_index):
+                unit_attempt_exit_time[unit_index] = float(time_s)
+                push_event(time_s + return_to_station_1_time_s, EVENT_CART_RETURN, -1, unit_index)
+                continue
             _update_queue_area(station_state, time_s)
             queue_length_ahead_on_arrival = len(station_state.queue)
             _enqueue_station_queue(station_state, unit_index, time_s, queue_length_ahead_on_arrival)
@@ -1697,6 +1732,12 @@ def run_simulation(
             station_state.last_finish_time_s = time_s
             station_state.busy = False
             station_state.current_unit_index = None
+
+            if _unit_blocked_by_material_stop(unit_index):
+                unit_attempt_exit_time[unit_index] = float(time_s)
+                push_event(time_s + return_to_station_1_time_s, EVENT_CART_RETURN, -1, unit_index)
+                try_start_next(station_index, time_s)
+                continue
 
             disruption_result = operation_disruption_lookup.get((station_index, unit_index), {})
             terminal_failure_type = disruption_result.get("terminal_failure_type")
