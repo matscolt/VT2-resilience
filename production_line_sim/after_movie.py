@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""after_movie.py
+"""after_movie_top_left.py
 
-Interactive + fast after-movie renderer for a production line simulation.
+This is a cleaned + complete version of your after_movie script, updated to support
+OPTION A: entering coordinates as TOP-LEFT corners for queue slots and production subbox,
+while the renderer internally converts them to CENTER coordinates (so icons + text remain centered).
 
-Folder tree:
+Key idea:
+- You enter TOP-LEFT coords for subboxes (queue_slots_tl, process_pos_tl)
+- We convert: center = (x_tl + SUBBOX_W/2, y_tl + SUBBOX_H/2)
+
+Folder tree (unchanged):
 production_line_sim/
-  after_movie.py
+  after_movie_top_left.py
   data/Layouts/
     1_LAYOUT.png
     carrier.png
     carrier_loading.png
   output/
-    yyyymmdd_hhmmss.../
+    <run_folder>/
       station_schedule.csv
       transport_schedule.csv
       movie/
@@ -21,22 +27,16 @@ production_line_sim/
         frames/
           1.png
           2.png
-          ...
-
-New in this version:
-- Terminal progress bar updated every 2% (no spam; uses carriage return).
-- No per-frame pandas filtering/sorting; uses event-driven state updates.
-- MP4 writer uses macro_block_size=1 to avoid 1080->1088 resizing warning.
-- MP4 writer is closed in a finally-block so the MP4 is finalized even if you interrupt.
 
 MP4 backend (Windows):
   pip install imageio[ffmpeg]
 (or) pip install imageio[pyav]
 
 Run:
-  python after_movie.py
-  python after_movie.py render
-  python after_movie.py render --run yyyymmdd_hhmmss
+  python after_movie_top_left.py
+  python after_movie_top_left.py render
+  python after_movie_top_left.py render --run <run_folder>
+
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 # ----------------------------
-# Paths (match your tree)
+# Paths
 # ----------------------------
 ROOTDIR = Path(__file__).resolve().parent
 LAYOUTDIR = ROOTDIR / "data" / "Layouts"
@@ -84,6 +84,7 @@ TIME_LABEL_COLOR = (255, 255, 255, 255)
 DISRUPTION_TEXT_COLOR = (255, 80, 80, 255)
 DISRUPTION_PREFIX = "DISR"
 
+# Loading bar shown above the production icon (visual bar in the video)
 BAR_W = 50
 BAR_H = 8
 BAR_GAP = 6
@@ -93,69 +94,87 @@ BAR_FILL_COLOR = (0, 200, 0, 255)
 
 
 # ----------------------------
+# OPTION A: TOP-LEFT -> CENTER conversion
+# ----------------------------
+# Measure one queue/production subbox in the layout PNG and set these values.
+# If the icons look offset, adjust SUBBOX_W/H.
+SUBBOX_W = 71
+SUBBOX_H = 83
+
+
+def tl_to_center(xy_tl: Tuple[int, int], w: int = SUBBOX_W, h: int = SUBBOX_H) -> Tuple[float, float]:
+    """Convert a top-left point of a rectangle to its center point."""
+    x, y = xy_tl
+    return (x + w / 2.0, y + h / 2.0)
+
+
+# ----------------------------
 # Station geometry
-# queue_slots order: bottom -> top (lowest on screen first)
+# You now enter TOP-LEFT coordinates for each queue slot and production subbox.
+# center_pos should stay as a true station-center (for transport endpoints).
+# queue_slots_tl order: bottom -> top (lowest on screen first)
 # ----------------------------
 
 @dataclass(frozen=True)
 class StationGeom:
     station_name_in_csv: str
-    queue_slots: List[Tuple[int, int]]
-    process_pos: Tuple[int, int]
+    queue_slots_tl: List[Tuple[int, int]]
+    process_pos_tl: Tuple[int, int]
     center_pos: Tuple[int, int]
     label_pos: Optional[Tuple[int, int]] = None
 
 
+# Example: swap these to your measured TOP-LEFT coordinates.
 STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
     1: StationGeom(
         station_name_in_csv="Station 1: Bottom cover",
-        queue_slots=[(450, 851), (521, 851), (592, 851),
-                    (450, 768), (521, 768), (592, 768), (663, 768)],
-        process_pos=(663, 851),
+        queue_slots_tl=[(414, 809), (485, 809), (556, 809),
+                        (414, 726), (485, 726), (556, 726), (627, 726)],
+        process_pos_tl=(627, 809),
         center_pos=(555, 809),
         label_pos=(375, 920),
     ),
     2: StationGeom(
         station_name_in_csv="Station 2: Drill station",
-        queue_slots=[(823, 851), (894, 851), (981, 851),
-                    (823, 768), (894, 768), (981, 768), (1068, 768)],
-        process_pos=(1068, 851),
+        queue_slots_tl=[(787, 809), (858, 809), (945, 809),
+                        (787, 726), (858, 726), (945, 726), (1032, 726)],
+        process_pos_tl=(1032, 809),
         center_pos=(945, 809),
         label_pos=(820, 920),
     ),
     3: StationGeom(
         station_name_in_csv="Station 3: Robot cell",
-        queue_slots=[(1713, 834),
-                    (1713, 751), (1784, 751),
-                    (1713, 668), (1784, 668),
-                    (1713, 567), (1784, 567)],
-        process_pos=(1784, 834),
+        queue_slots_tl=[(1677, 792),
+                        (1677, 709), (1748, 709),
+                        (1677, 626), (1748, 626),
+                        (1677, 525), (1748, 525)],
+        process_pos_tl=(1748, 792),
         center_pos=(1748, 691),
         label_pos=(1600, 430),
     ),
     4: StationGeom(
         station_name_in_csv="Station 4: Inspection",
-        queue_slots=[(1174, 652), (1245, 652), (1316, 652),
-                    (1174, 559), (1245, 559), (1316, 559), (1387, 559)],
-        process_pos=(1387, 652),
+        queue_slots_tl=[(1138, 610), (1209, 610), (1280, 610),
+                        (1138, 517), (1209, 517), (1280, 517), (1351, 517)],
+        process_pos_tl=(1351, 610),
         center_pos=(1280, 600),
         label_pos=(1180, 430),
     ),
     5: StationGeom(
         station_name_in_csv="Station 5: Top cover",
-        queue_slots=[(681, 651), (752, 651), (823, 651),
-                    (681, 568), (752, 568), (823, 568), (894, 568)],
-        process_pos=(894, 651),
+        queue_slots_tl=[(645, 609), (716, 609), (787, 609),
+                        (645, 526), (716, 526), (787, 526), (858, 526)],
+        process_pos_tl=(858, 609),
         center_pos=(787, 609),
         label_pos=(700, 430),
     ),
     6: StationGeom(
         station_name_in_csv="Station 6: Packaging",
-        queue_slots=[(181, 460),
-                    (181, 377), (252, 377),
-                    (181, 294), (252, 294),
-                    (181, 211), (252, 211)],
-        process_pos=(252, 460),
+        queue_slots_tl=[(145, 418),
+                        (145, 335), (216, 335),
+                        (145, 252), (216, 252),
+                        (145, 169), (216, 169)],
+        process_pos_tl=(216, 418),
         center_pos=(216, 335),
         label_pos=(130, 120),
     ),
@@ -288,7 +307,6 @@ def prompt_int(prompt: str, default: int) -> int:
 # ----------------------------
 
 def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 70) -> int:
-    """Update a single-line progress bar at 2% intervals. Returns next_pct threshold."""
     if total_frames <= 0:
         return next_pct
 
@@ -296,17 +314,12 @@ def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width:
     if pct < next_pct and frame_idx != total_frames:
         return next_pct
 
-    # clamp
     pct = min(100, max(0, pct))
-
     filled = int(round((pct / 100) * bar_width))
     bar = "#" * filled + "-" * (bar_width - filled)
     msg = f"Rendering: [{bar}] {pct:3d}%  ({frame_idx}/{total_frames})"
-
-    # carriage return overwrite (no spam)
     print("\r" + msg, end="", flush=True)
 
-    # next threshold every 2%
     if pct >= 100:
         return 101
     return next_pct + 2
@@ -534,16 +547,6 @@ def prepare_data(order_dir: Path) -> Prepared:
 # Rendering
 # ----------------------------
 
-def print_mp4_backend_help(mp4_path: Path):
-    print("\nMP4 writing failed.")
-    print(f"Target file was: {mp4_path}")
-    print("To enable MP4 output, install one backend:")
-    print("  pip install imageio[ffmpeg]")
-    print("or")
-    print("  pip install imageio[pyav]")
-    print("Frames are still saved as PNGs.")
-
-
 def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: float = SIM_SECONDS_PER_FRAME):
     order_dir = order_dir.resolve()
     if not order_dir.exists():
@@ -574,11 +577,10 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
         import imageio.v2 as imageio
         writer = imageio.get_writer(str(mp4_path), fps=fps, macro_block_size=1)
     except Exception as e:
+        writer = None
         print("WARNING: Could not create MP4 writer. Frames will still be saved.")
         print("Reason:", e)
-        print_mp4_backend_help(mp4_path)
 
-    # Progress calculation
     total_frames = int(np.floor(prepared.t_end / sim_seconds_per_frame)) + 1
     next_pct = 0
 
@@ -587,7 +589,7 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
 
     try:
         while frame_idx < total_frames:
-            # ---- advance station states by events up to time t ----
+            # --- advance station states ---
             for idx, geom in STATION_GEOMETRY_BY_INDEX.items():
                 # arrivals
                 arr_list = prepared.arrivals.get(idx, [])
@@ -596,7 +598,7 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                     queues[idx].append(u)
                     arr_ptr[idx] += 1
 
-                # starts: remove from queue and add to processing
+                # starts
                 start_list = prepared.starts.get(idx, [])
                 while start_ptr[idx] < len(start_list) and start_list[start_ptr[idx]][0] <= t:
                     _, pr = start_list[start_ptr[idx]]
@@ -605,11 +607,11 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                     active_proc[idx].append(pr)
                     start_ptr[idx] += 1
 
-                # remove finished processing
+                # remove finished
                 if active_proc[idx]:
                     active_proc[idx] = [pr for pr in active_proc[idx] if pr.finish > t]
 
-            # ---- advance transport state ----
+            # --- advance transport state ---
             tr_list = prepared.transports
             while tr_ptr < len(tr_list) and tr_list[tr_ptr].start <= t:
                 active_tr.append(tr_list[tr_ptr])
@@ -617,21 +619,22 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
             if active_tr:
                 active_tr = [tr for tr in active_tr if tr.finish > t]
 
-            # ---- draw frame ----
+            # --- draw frame ---
             frame = background.copy()
             draw = ImageDraw.Draw(frame)
 
-            # Stations
             for idx, geom in STATION_GEOMETRY_BY_INDEX.items():
-                # queue
+                # queue: convert TL->CENTER
                 q = queues[idx]
-                for i, u in enumerate(q[:len(geom.queue_slots)]):
-                    paste_icon_with_centered_text(frame, carrier_icon, geom.queue_slots[i], u, font)
+                for i, u in enumerate(q[:len(geom.queue_slots_tl)]):
+                    center_xy = tl_to_center(geom.queue_slots_tl[i])
+                    paste_icon_with_centered_text(frame, carrier_icon, center_xy, u, font)
 
-                # processing
+                # processing: convert TL->CENTER
                 for k, pr in enumerate(active_proc[idx]):
+                    base_center = tl_to_center(geom.process_pos_tl)
                     offset = k * (CARRIER_SIZE_PX * 0.35)
-                    center = (geom.process_pos[0] + offset, geom.process_pos[1])
+                    center = (base_center[0] + offset, base_center[1])
 
                     if pr.disruption_end > pr.start and pr.start <= t < pr.disruption_end:
                         remaining = max(pr.disruption_end - t, 0.0)
@@ -648,7 +651,7 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                         draw_loading_bar(frame, center, progress)
                         paste_icon_with_centered_text(frame, production_icon, center, pr.unit_id, font)
 
-            # Transports
+            # transports use station center_pos as before
             for tr in active_tr:
                 from_geom = prepared.station_name_to_geom.get(tr.from_name)
                 to_geom = prepared.station_name_to_geom.get(tr.to_name)
@@ -669,41 +672,32 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                 y = y0 + alpha * (y1 - y0)
                 paste_icon_with_centered_text(frame, carrier_icon, (x, y), tr.unit_id, font)
 
-            # Time label
             if DRAW_TIME_LABEL:
                 draw.text(TIME_LABEL_POS, f"t = {t:7.2f} s", fill=TIME_LABEL_COLOR, font=font)
 
-            # Save frame
             frame_path = frames_dir / f"{frame_idx + 1}.png"
             frame.save(frame_path)
 
-            # MP4 append
             if writer is not None:
                 writer.append_data(np.asarray(frame))
 
             frame_idx += 1
             t += sim_seconds_per_frame
 
-            # Progress update every 2%
             next_pct = progress_update(frame_idx, total_frames, next_pct)
 
     finally:
-        # finalize mp4
         if writer is not None:
             try:
                 writer.close()
             except Exception:
                 pass
-
-        # finish progress line
-        print()  # newline after carriage-return progress
+        print()  # newline after progress bar
 
     print(f"Rendered {frame_idx} frames")
     print(f"Frames saved in: {frames_dir}")
     if writer is not None:
         print(f"MP4 saved to:    {mp4_path}")
-    else:
-        print("MP4 not created (missing backend).")
 
 
 # ----------------------------
@@ -711,11 +705,10 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
 # ----------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="After-movie renderer")
+    parser = argparse.ArgumentParser(description="After-movie renderer (top-left coords)")
     sub = parser.add_subparsers(dest="cmd", required=False)
 
-    p_pick = sub.add_parser("pick-coords", help="Click on the layout image to print pixel coordinates")
-    p_pick.add_argument("--image", default=str(BACKGROUND_PNG), help="Path to layout PNG")
+    sub.add_parser("pick-coords", help="Click on the layout image to print pixel coordinates")
 
     p_render = sub.add_parser("render", help="Render MP4 + PNG frames")
     p_render.add_argument("--run", default=None, help="Run folder name inside ./output")
@@ -740,14 +733,11 @@ def main():
         return
 
     if args.cmd == "pick-coords":
-        pick_coords_interactive(Path(args.image))
+        pick_coords_interactive(BACKGROUND_PNG)
         return
 
     if args.cmd == "render":
-        if args.run is None:
-            order_dir = prompt_for_run_folder(OUTPUTDIR)
-        else:
-            order_dir = OUTPUTDIR / args.run
+        order_dir = prompt_for_run_folder(OUTPUTDIR) if args.run is None else (OUTPUTDIR / args.run)
         fps = args.fps if args.fps is not None else FPS
         spf = args.sim_seconds_per_frame if args.sim_seconds_per_frame is not None else SIM_SECONDS_PER_FRAME
         clear_folder(order_dir)
