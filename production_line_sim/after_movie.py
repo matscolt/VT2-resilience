@@ -3,9 +3,9 @@
 
 """after_movie.py
 
-✅ Interactive + fast after-movie renderer for a production line simulation.
+Interactive + fast after-movie renderer for a production line simulation.
 
-Your folder tree:
+Folder tree:
 production_line_sim/
   after_movie.py
   data/Layouts/
@@ -23,14 +23,11 @@ production_line_sim/
           2.png
           ...
 
-What changed vs your last run:
-- FIX for the KeyboardInterrupt hang: removed per-frame pandas sort/filter loops.
-  We now use an event-driven simulation of queues/process/transport states.
-  This makes rendering scale much better with many units/frames.
-- MP4 creation:
-  - If ffmpeg backend is installed, MP4 is written.
-  - Writer is closed in a finally-block so the MP4 is finalized even if you Ctrl+C.
-  - macro_block_size=1 avoids resizing warning (1920x1080 -> 1920x1088).
+New in this version:
+- Terminal progress bar updated every 2% (no spam; uses carriage return).
+- No per-frame pandas filtering/sorting; uses event-driven state updates.
+- MP4 writer uses macro_block_size=1 to avoid 1080->1088 resizing warning.
+- MP4 writer is closed in a finally-block so the MP4 is finalized even if you interrupt.
 
 MP4 backend (Windows):
   pip install imageio[ffmpeg]
@@ -38,11 +35,7 @@ MP4 backend (Windows):
 
 Run:
   python after_movie.py
-    (interactive prompts)
-
   python after_movie.py render
-    (prompts for missing args)
-
   python after_movie.py render --run yyyymmdd_hhmmss
 """
 
@@ -80,10 +73,8 @@ FPS = 30
 SIM_SECONDS_PER_FRAME = 0.5
 
 CARRIER_SIZE_PX = 63
-PRODUCTION_ICON_SIZE_PX = 40
 
 FONT_SIZE = 12
-TIME_FONT_SIZE = 24
 TEXT_COLOR = (0, 0, 0, 255)
 
 DRAW_TIME_LABEL = True
@@ -103,7 +94,6 @@ BAR_FILL_COLOR = (0, 200, 0, 255)
 
 # ----------------------------
 # Station geometry
-# NOTE: first-pass center coordinates from your provided layout PNG.
 # queue_slots order: bottom -> top (lowest on screen first)
 # ----------------------------
 
@@ -230,7 +220,7 @@ def clear_folder(folder):
 
 
 # ----------------------------
-# Prompt helpers (interactive)
+# Prompt helpers
 # ----------------------------
 
 def prompt_menu() -> str:
@@ -294,6 +284,35 @@ def prompt_int(prompt: str, default: int) -> int:
 
 
 # ----------------------------
+# Terminal progress bar (2% steps)
+# ----------------------------
+
+def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 40) -> int:
+    """Update a single-line progress bar at 2% intervals. Returns next_pct threshold."""
+    if total_frames <= 0:
+        return next_pct
+
+    pct = int((frame_idx / total_frames) * 100)
+    if pct < next_pct and frame_idx != total_frames:
+        return next_pct
+
+    # clamp
+    pct = min(100, max(0, pct))
+
+    filled = int(round((pct / 100) * bar_width))
+    bar = "#" * filled + "-" * (bar_width - filled)
+    msg = f"Rendering: [{bar}] {pct:3d}%  ({frame_idx}/{total_frames})"
+
+    # carriage return overwrite (no spam)
+    print("\r" + msg, end="", flush=True)
+
+    # next threshold every 2%
+    if pct >= 100:
+        return 101
+    return next_pct + 2
+
+
+# ----------------------------
 # Drawing helpers
 # ----------------------------
 
@@ -345,7 +364,7 @@ def draw_loading_bar(frame_rgba: Image.Image, center_xy: Tuple[float, float], pr
     cx, cy = center_xy
 
     x0 = int(round(cx - BAR_W / 2))
-    y0 = int(round(cy - PRODUCTION_ICON_SIZE_PX / 2 - BAR_GAP - BAR_H))
+    y0 = int(round(cy - CARRIER_SIZE_PX / 2 - BAR_GAP - BAR_H))
     x1 = x0 + BAR_W
     y1 = y0 + BAR_H
 
@@ -380,7 +399,7 @@ def pick_coords_interactive(image_path: Path):
 
 
 # ----------------------------
-# Data preparation
+# Data preparation (event lists)
 # ----------------------------
 
 @dataclass
@@ -405,19 +424,14 @@ class TransportRecord:
 @dataclass
 class Prepared:
     t_end: float
-    # per station: arrivals and starts sorted
     arrivals: Dict[int, List[Tuple[float, str]]]
     starts: Dict[int, List[Tuple[float, ProcRecord]]]
-    finishes: Dict[int, List[Tuple[float, str]]]
-    # transports sorted by start
     transports: List[TransportRecord]
-    # name mappings
     station_name_to_index: Dict[str, int]
     station_name_to_geom: Dict[str, StationGeom]
 
 
 def disruption_and_processing_times_row(row: pd.Series) -> Tuple[float, float, float, float, float]:
-    """Return (start, finish, disruption, proc_start, proc_dur)."""
     ts = float(row["start_time_s"])
     tf = float(row["finish_time_s"])
     total = max(tf - ts, 0.0)
@@ -451,11 +465,9 @@ def prepare_data(order_dir: Path) -> Prepared:
     if mt:
         raise ValueError(f"transport_schedule.csv missing columns: {sorted(mt)}")
 
-    # Standardize unit_id to string for rendering and stable ordering
     station_df["unit_id"] = station_df["unit_id"].astype(str)
     transport_df["unit_id"] = transport_df["unit_id"].astype(str)
 
-    # station name -> index
     station_name_to_index = (
         station_df[["station_name", "station_index"]]
         .drop_duplicates()
@@ -469,10 +481,7 @@ def prepare_data(order_dir: Path) -> Prepared:
 
     arrivals: Dict[int, List[Tuple[float, str]]] = {k: [] for k in STATION_GEOMETRY_BY_INDEX.keys()}
     starts: Dict[int, List[Tuple[float, ProcRecord]]] = {k: [] for k in STATION_GEOMETRY_BY_INDEX.keys()}
-    finishes: Dict[int, List[Tuple[float, str]]] = {k: [] for k in STATION_GEOMETRY_BY_INDEX.keys()}
 
-    # Build per-station event lists
-    # Sort by arrival/start to ensure stable queue visualization
     station_df = station_df.sort_values(["station_index", "arrival_time_s", "start_time_s", "unit_id"]).reset_index(drop=True)
 
     for _, row in station_df.iterrows():
@@ -482,7 +491,6 @@ def prepare_data(order_dir: Path) -> Prepared:
         ts, tf, disruption, proc_start, proc_dur = disruption_and_processing_times_row(row)
 
         arrivals.setdefault(idx, []).append((arr_t, unit_id))
-
         pr = ProcRecord(
             unit_id=unit_id,
             start=ts,
@@ -492,35 +500,30 @@ def prepare_data(order_dir: Path) -> Prepared:
             proc_dur=proc_dur,
         )
         starts.setdefault(idx, []).append((ts, pr))
-        finishes.setdefault(idx, []).append((tf, unit_id))
 
-    # Sort lists
     for idx in arrivals:
         arrivals[idx].sort(key=lambda x: (x[0], x[1]))
         starts[idx].sort(key=lambda x: (x[0], x[1].unit_id))
-        finishes[idx].sort(key=lambda x: (x[0], x[1]))
 
-    # Transports
-    # if transport_time_s missing, derive
     if "transport_time_s" not in transport_df.columns:
         transport_df["transport_time_s"] = transport_df["finish_time_s"] - transport_df["start_time_s"]
 
     transport_df = transport_df.sort_values(["start_time_s", "unit_id"]).reset_index(drop=True)
-    transports: List[TransportRecord] = []
-    for _, r in transport_df.iterrows():
-        transports.append(TransportRecord(
+    transports: List[TransportRecord] = [
+        TransportRecord(
             unit_id=str(r["unit_id"]),
             start=float(r["start_time_s"]),
             finish=float(r["finish_time_s"]),
             from_name=str(r["from_station"]),
             to_name=str(r["to_station"]),
-        ))
+        )
+        for _, r in transport_df.iterrows()
+    ]
 
     return Prepared(
         t_end=t_end,
         arrivals=arrivals,
         starts=starts,
-        finishes=finishes,
         transports=transports,
         station_name_to_index=station_name_to_index,
         station_name_to_geom=station_name_to_geom,
@@ -528,7 +531,7 @@ def prepare_data(order_dir: Path) -> Prepared:
 
 
 # ----------------------------
-# Rendering (event-driven)
+# Rendering
 # ----------------------------
 
 def print_mp4_backend_help(mp4_path: Path):
@@ -538,7 +541,7 @@ def print_mp4_backend_help(mp4_path: Path):
     print("  pip install imageio[ffmpeg]")
     print("or")
     print("  pip install imageio[pyav]")
-    print("Frames are still saved as PNGs and can be converted with ffmpeg.")
+    print("Frames are still saved as PNGs.")
 
 
 def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: float = SIM_SECONDS_PER_FRAME):
@@ -554,14 +557,11 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
     carrier_icon = Image.open(CARRIER_PNG).convert("RGBA").resize((CARRIER_SIZE_PX, CARRIER_SIZE_PX), Image.Resampling.LANCZOS)
     production_icon = Image.open(CARRIER_PNG).convert("RGBA").resize((CARRIER_SIZE_PX, CARRIER_SIZE_PX), Image.Resampling.LANCZOS)
     font = load_font_calibri_prefer(FONT_SIZE)
-    timefont = load_font_calibri_prefer(TIME_FONT_SIZE)
 
     # Per-station pointers + state
     arr_ptr = {idx: 0 for idx in STATION_GEOMETRY_BY_INDEX.keys()}
     start_ptr = {idx: 0 for idx in STATION_GEOMETRY_BY_INDEX.keys()}
-    # visible queue content (unit_ids)
     queues: Dict[int, List[str]] = {idx: [] for idx in STATION_GEOMETRY_BY_INDEX.keys()}
-    # active processing records
     active_proc: Dict[int, List[ProcRecord]] = {idx: [] for idx in STATION_GEOMETRY_BY_INDEX.keys()}
 
     # Transport pointers/state
@@ -572,18 +572,21 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
     writer = None
     try:
         import imageio.v2 as imageio
-        # macro_block_size=1 avoids 1080->1088 resizing warning.
         writer = imageio.get_writer(str(mp4_path), fps=fps, macro_block_size=1)
     except Exception as e:
         print("WARNING: Could not create MP4 writer. Frames will still be saved.")
         print("Reason:", e)
         print_mp4_backend_help(mp4_path)
 
+    # Progress calculation
+    total_frames = int(np.floor(prepared.t_end / sim_seconds_per_frame)) + 1
+    next_pct = 0
+
     t = 0.0
     frame_idx = 0
 
     try:
-        while t <= prepared.t_end + 1e-9:
+        while frame_idx < total_frames:
             # ---- advance station states by events up to time t ----
             for idx, geom in STATION_GEOMETRY_BY_INDEX.items():
                 # arrivals
@@ -597,7 +600,6 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                 start_list = prepared.starts.get(idx, [])
                 while start_ptr[idx] < len(start_list) and start_list[start_ptr[idx]][0] <= t:
                     _, pr = start_list[start_ptr[idx]]
-                    # remove that unit from queue if present
                     if pr.unit_id in queues[idx]:
                         queues[idx].remove(pr.unit_id)
                     active_proc[idx].append(pr)
@@ -608,8 +610,9 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                     active_proc[idx] = [pr for pr in active_proc[idx] if pr.finish > t]
 
             # ---- advance transport state ----
-            while tr_ptr < len(prepared.transports) and prepared.transports[tr_ptr].start <= t:
-                active_tr.append(prepared.transports[tr_ptr])
+            tr_list = prepared.transports
+            while tr_ptr < len(tr_list) and tr_list[tr_ptr].start <= t:
+                active_tr.append(tr_list[tr_ptr])
                 tr_ptr += 1
             if active_tr:
                 active_tr = [tr for tr in active_tr if tr.finish > t]
@@ -618,17 +621,16 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
             frame = background.copy()
             draw = ImageDraw.Draw(frame)
 
-            # Stations: draw queue + processing
+            # Stations
             for idx, geom in STATION_GEOMETRY_BY_INDEX.items():
-                # queue (bottom->top slots)
+                # queue
                 q = queues[idx]
-                # show first N in the visible queue order
                 for i, u in enumerate(q[:len(geom.queue_slots)]):
                     paste_icon_with_centered_text(frame, carrier_icon, geom.queue_slots[i], u, font)
 
-                # processing: can be multiple, draw with slight offset
+                # processing
                 for k, pr in enumerate(active_proc[idx]):
-                    offset = k * (PRODUCTION_ICON_SIZE_PX * 0.35)
+                    offset = k * (CARRIER_SIZE_PX * 0.35)
                     center = (geom.process_pos[0] + offset, geom.process_pos[1])
 
                     if pr.disruption_end > pr.start and pr.start <= t < pr.disruption_end:
@@ -637,7 +639,6 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                         draw.text(label_pos, f"{DISRUPTION_PREFIX} {remaining:0.1f}s", fill=DISRUPTION_TEXT_COLOR, font=font)
                         paste_icon_with_centered_text(frame, production_icon, center, pr.unit_id, font)
                     else:
-                        # loading bar runs for the "normal" part
                         if t < pr.proc_start:
                             progress = 0.0
                         elif pr.proc_dur <= 1e-9:
@@ -647,9 +648,8 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                         draw_loading_bar(frame, center, progress)
                         paste_icon_with_centered_text(frame, production_icon, center, pr.unit_id, font)
 
-            # Transports: draw moving carriers
+            # Transports
             for tr in active_tr:
-                # resolve geometries
                 from_geom = prepared.station_name_to_geom.get(tr.from_name)
                 to_geom = prepared.station_name_to_geom.get(tr.to_name)
 
@@ -671,26 +671,32 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
 
             # Time label
             if DRAW_TIME_LABEL:
-                draw.text(TIME_LABEL_POS, f"t = {t:7.2f} s", fill=TIME_LABEL_COLOR, font=timefont)
+                draw.text(TIME_LABEL_POS, f"t = {t:7.2f} s", fill=TIME_LABEL_COLOR, font=font)
 
-            # Save frame PNG
+            # Save frame
             frame_path = frames_dir / f"{frame_idx + 1}.png"
             frame.save(frame_path)
 
-            # Append to MP4
+            # MP4 append
             if writer is not None:
                 writer.append_data(np.asarray(frame))
 
             frame_idx += 1
             t += sim_seconds_per_frame
 
+            # Progress update every 2%
+            next_pct = progress_update(frame_idx, total_frames, next_pct)
+
     finally:
-        # Ensure MP4 is finalized even if user interrupts
+        # finalize mp4
         if writer is not None:
             try:
                 writer.close()
             except Exception:
                 pass
+
+        # finish progress line
+        print()  # newline after carriage-return progress
 
     print(f"Rendered {frame_idx} frames")
     print(f"Frames saved in: {frames_dir}")
@@ -719,7 +725,6 @@ def main():
 
     args = parser.parse_args()
 
-    # No subcommand -> interactive
     if args.cmd is None:
         cmd = prompt_menu()
         if cmd == "quit":
@@ -727,7 +732,6 @@ def main():
         if cmd == "pick-coords":
             pick_coords_interactive(BACKGROUND_PNG)
             return
-        # render
         order_dir = prompt_for_run_folder(OUTPUTDIR)
         fps = prompt_int("FPS", FPS)
         spf = prompt_float("Simulation seconds per frame", SIM_SECONDS_PER_FRAME)
@@ -744,7 +748,6 @@ def main():
             order_dir = prompt_for_run_folder(OUTPUTDIR)
         else:
             order_dir = OUTPUTDIR / args.run
-
         fps = args.fps if args.fps is not None else FPS
         spf = args.sim_seconds_per_frame if args.sim_seconds_per_frame is not None else SIM_SECONDS_PER_FRAME
         clear_folder(order_dir)
