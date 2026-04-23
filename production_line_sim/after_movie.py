@@ -49,7 +49,17 @@ from PIL import Image, ImageDraw, ImageFont
 # ----------------------------
 # Configuration (edit this)
 # ----------------------------
-ROOTDIR = Path(__file__).parent
+ROOTDIR   = Path(__file__).resolve().parent
+LAYOUTDIR = ROOTDIR / "data" / "Layouts"
+OUTPUTDIR = ROOTDIR / "output"
+
+BACKGROUND_PNG = LAYOUTDIR / "1_LAYOUT.png"
+CARRIER_PNG    = LAYOUTDIR / "carrier.png"
+# Use this as production icon (your “unit with bar” look)
+PRODUCTION_ICON_PNG = LAYOUTDIR / "carrier_loading.png"
+
+STATION_SCHEDULE_CSV   = "station_schedule.csv"
+TRANSPORT_SCHEDULE_CSV = "transport_schedule.csv"
 
 #find the correct order
 def find_output_folder(output_path=None, target_timestamp=None):
@@ -87,10 +97,10 @@ def find_output_folder(output_path=None, target_timestamp=None):
 picturefolder = "data/Layouts"
 BACKGROUND_PNG = os.path.join(picturefolder, "1_LAYOUT.png")
 CARRIER_PNG = os.path.join(picturefolder, "carrier.png")
+PRODUCTION_ICON_PNG = os.path.join(picturefolder, "carrier_loading.png")
 
 DEFAULT_OUTPUT_MP4 = "production_line_after_movie.mp4"
 
-PRODUCTION_ICON_PNG = "image.png"
 
 STATION_SCHEDULE_CSV = "station_schedule.csv"
 TRANSPORT_SCHEDULE_CSV = "transport_schedule.csv"
@@ -146,68 +156,64 @@ class StationGeom:
     center_pos: Tuple[int, int]
 
 
-STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
-    # IMPORTANT:
-    # Replace the placeholder coordinates below with your real pixel coordinates.
-    #
-    # The station_name_in_csv must match EXACTLY the station_name/from_station/to_station fields in your CSV.
-    #
-    # Example names from your sample:
-    # "Station 1: Bottom cover"
-    # "Station 2: Drill station"
-    #
+STATION_GEOMETRY_BY_INDEX = {
     1: StationGeom(
         station_name_in_csv="Station 1: Bottom cover",
-        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
-        process_pos=(0, 0),            # <-- fill
-        center_pos=(0, 0),             # <-- fill
+        # bottom row (except production), then top row
+        queue_slots=[(449, 851), (520, 851), (591, 851),
+                    (449, 768), (520, 768), (591, 768), (662, 768)],
+        process_pos=(662, 851),
+        center_pos=(555, 809),
     ),
+
     2: StationGeom(
         station_name_in_csv="Station 2: Drill station",
-        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
-        process_pos=(0, 0),            # <-- fill
-        center_pos=(0, 0),             # <-- fill
+        queue_slots=[(823, 851), (894, 851), (981, 851),
+                    (823, 768), (894, 768), (981, 768), (1068, 768)],
+        process_pos=(1068, 851),
+        center_pos=(945, 809),
     ),
+
     3: StationGeom(
         station_name_in_csv="Station 3: Top cover",
-        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
-        process_pos=(0, 0),            # <-- fill
-        center_pos=(0, 0),             # <-- fill
+        queue_slots=[(681, 651), (752, 651), (823, 651),
+                    (681, 568), (752, 568), (823, 568), (894, 568)],
+        process_pos=(894, 651),
+        center_pos=(787, 609),
     ),
+
     4: StationGeom(
         station_name_in_csv="Station 4: Inspection",
-        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
-        process_pos=(0, 0),            # <-- fill
-        center_pos=(0, 0),             # <-- fill
+        queue_slots=[(1174, 652), (1245, 652), (1316, 652),
+                    (1174, 559), (1245, 559), (1316, 559), (1387, 559)],
+        process_pos=(1387, 652),
+        center_pos=(1280, 600),
     ),
-    4: StationGeom(
-        station_name_in_csv="Station 4: Inspection",
-        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
-        process_pos=(0, 0),            # <-- fill
-        center_pos=(0, 0),             # <-- fill
-    ),
+
     5: StationGeom(
         station_name_in_csv="Station 5: Robot cell",
-        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
-        process_pos=(0, 0),            # <-- fill
-        center_pos=(0, 0),             # <-- fill
+        # vertical station: bottom → top
+        queue_slots=[(1713, 834),
+                    (1713, 751), (1784, 751),
+                    (1713, 668), (1784, 668),
+                    (1713, 567), (1784, 567)],
+        process_pos=(1784, 834),
+        center_pos=(1748, 691),
     ),
-    5: StationGeom(
-        station_name_in_csv="Station 5: Robot cell",
-        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
-        process_pos=(0, 0),            # <-- fill
-        center_pos=(0, 0),             # <-- fill
-    ),
+
     6: StationGeom(
         station_name_in_csv="Station 6: Packaging",
-        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
-        process_pos=(0, 0),            # <-- fill
-        center_pos=(0, 0),             # <-- fill
+        # vertical station: bottom → top
+        queue_slots=[(181, 460),
+                    (181, 377), (252, 377),
+                    (181, 294), (252, 294),
+                    (181, 211), (252, 211)],
+        process_pos=(252, 460),
+        center_pos=(216, 335),
     ),
 }
 
 
-#
 # ----------------------------
 # Helpers
 # ----------------------------
@@ -321,9 +327,9 @@ class Schedules:
     t_end: float
 
 
-def load_schedules() -> Schedules:
-    station_df = pd.read_csv(STATION_SCHEDULE_CSV)
-    transport_df = pd.read_csv(TRANSPORT_SCHEDULE_CSV)
+def load_schedules(order_dir) -> Schedules:
+    station_df = pd.read_csv(order_dir / STATION_SCHEDULE_CSV)
+    transport_df = pd.read_csv(order_dir / TRANSPORT_SCHEDULE_CSV)
 
     needed_station = {"unit_id", "station_index", "station_name", "arrival_time_s", "start_time_s", "finish_time_s"}
     needed_transport = {"unit_id", "from_station", "to_station", "start_time_s", "finish_time_s", "transport_time_s"}
