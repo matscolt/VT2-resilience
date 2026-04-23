@@ -84,6 +84,7 @@ CARRIER_SIZE_PX = 28
 PRODUCTION_ICON_SIZE_PX = 40
 
 FONT_SIZE = 12
+TIME_FONT_SIZE = 24
 TEXT_COLOR = (0, 0, 0, 255)
 
 DRAW_TIME_LABEL = True
@@ -555,6 +556,7 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
     prod_icon_path = PRODUCTION_ICON_PNG if PRODUCTION_ICON_PNG.exists() else CARRIER_PNG
     production_icon = Image.open(prod_icon_path).convert("RGBA").resize((PRODUCTION_ICON_SIZE_PX, PRODUCTION_ICON_SIZE_PX), Image.Resampling.LANCZOS)
     font = load_font_calibri_prefer(FONT_SIZE)
+    timefont = load_font_calibri_prefer(TIME_FONT_SIZE)
 
     # Per-station pointers + state
     arr_ptr = {idx: 0 for idx in STATION_GEOMETRY_BY_INDEX.keys()}
@@ -671,7 +673,7 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
 
             # Time label
             if DRAW_TIME_LABEL:
-                draw.text(TIME_LABEL_POS, f"t = {t:7.2f} s", fill=TIME_LABEL_COLOR, font=font)
+                draw.text(TIME_LABEL_POS, f"t = {t:7.2f} s", fill=TIME_LABEL_COLOR, font=timefont)
 
             # Save frame PNG
             frame_path = frames_dir / f"{frame_idx + 1}.png"
