@@ -119,9 +119,9 @@ class StationGeom:
 STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
     1: StationGeom(
         station_name_in_csv="Station 1: Bottom cover",
-        queue_slots=[(449, 851), (520, 851), (591, 851),
-                    (449, 768), (520, 768), (591, 768), (662, 768)],
-        process_pos=(662, 851),
+        queue_slots=[(450, 851), (521, 851), (592, 851),
+                    (450, 768), (521, 768), (592, 768), (663, 768)],
+        process_pos=(663, 851),
         center_pos=(555, 809),
         label_pos=(375, 920),
     ),
@@ -134,12 +134,14 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         label_pos=(820, 920),
     ),
     3: StationGeom(
-        station_name_in_csv="Station 3: Top cover",
-        queue_slots=[(681, 651), (752, 651), (823, 651),
-                    (681, 568), (752, 568), (823, 568), (894, 568)],
-        process_pos=(894, 651),
-        center_pos=(787, 609),
-        label_pos=(700, 430),
+        station_name_in_csv="Station 3: Robot cell",
+        queue_slots=[(1713, 834),
+                    (1713, 751), (1784, 751),
+                    (1713, 668), (1784, 668),
+                    (1713, 567), (1784, 567)],
+        process_pos=(1784, 834),
+        center_pos=(1748, 691),
+        label_pos=(1600, 430),
     ),
     4: StationGeom(
         station_name_in_csv="Station 4: Inspection",
@@ -150,14 +152,12 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         label_pos=(1180, 430),
     ),
     5: StationGeom(
-        station_name_in_csv="Station 5: Robot cell",
-        queue_slots=[(1713, 834),
-                    (1713, 751), (1784, 751),
-                    (1713, 668), (1784, 668),
-                    (1713, 567), (1784, 567)],
-        process_pos=(1784, 834),
-        center_pos=(1748, 691),
-        label_pos=(1600, 430),
+        station_name_in_csv="Station 5: Top cover",
+        queue_slots=[(681, 651), (752, 651), (823, 651),
+                    (681, 568), (752, 568), (823, 568), (894, 568)],
+        process_pos=(894, 651),
+        center_pos=(787, 609),
+        label_pos=(700, 430),
     ),
     6: StationGeom(
         station_name_in_csv="Station 6: Packaging",
@@ -226,7 +226,7 @@ def clear_folder(folder):
             print(f">> Could not delete (locked): {item}")
 
     folder = str(folder).split("\\")[-1].split("__")[0]
-    print(f"cleaned out {folder}/graph")
+    print(f"cleaned out {folder}/movie")
 
 
 # ----------------------------
@@ -552,8 +552,7 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
 
     background = Image.open(BACKGROUND_PNG).convert("RGBA")
     carrier_icon = Image.open(CARRIER_PNG).convert("RGBA").resize((CARRIER_SIZE_PX, CARRIER_SIZE_PX), Image.Resampling.LANCZOS)
-    prod_icon_path = Image.open(CARRIER_PNG).convert("RGBA").resize((CARRIER_SIZE_PX, CARRIER_SIZE_PX), Image.Resampling.LANCZOS)
-    production_icon = Image.open(prod_icon_path).convert("RGBA").resize((PRODUCTION_ICON_SIZE_PX, PRODUCTION_ICON_SIZE_PX), Image.Resampling.LANCZOS)
+    production_icon = Image.open(CARRIER_PNG).convert("RGBA").resize((CARRIER_SIZE_PX, CARRIER_SIZE_PX), Image.Resampling.LANCZOS)
     font = load_font_calibri_prefer(FONT_SIZE)
     timefont = load_font_calibri_prefer(TIME_FONT_SIZE)
 
