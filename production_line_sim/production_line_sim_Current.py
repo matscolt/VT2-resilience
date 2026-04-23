@@ -1179,6 +1179,44 @@ def _update_queue_area(station_state: StationState, current_time_s: float) -> No
     station_state.last_queue_change_time_s = current_time_s
 
 
+def _calculate_active_production_line_time_s(
+    operations: list[OperationRecord],
+    disruption_event_log: list[dict[str, Any]] | None = None,
+    transport_records: list[TransportRecord] | None = None,
+) -> float:
+    if not operations and not transport_records:
+        return 0.0
+
+    intervals: list[tuple[float, float]] = []
+    for op in operations:
+        operation_start_time_s = float(op.start_time_s)
+        operation_finish_time_s = float(op.finish_time_s)
+        if operation_finish_time_s > operation_start_time_s:
+            intervals.append((operation_start_time_s, operation_finish_time_s))
+
+    for tr in transport_records or []:
+        transport_start_time_s = float(tr.start_time_s)
+        transport_finish_time_s = float(tr.finish_time_s)
+        if transport_finish_time_s > transport_start_time_s:
+            intervals.append((transport_start_time_s, transport_finish_time_s))
+
+    if not intervals:
+        return 0.0
+
+    intervals.sort()
+    merged_total = 0.0
+    current_start, current_end = intervals[0]
+    for start_time_s, finish_time_s in intervals[1:]:
+        if start_time_s <= current_end:
+            current_end = max(current_end, finish_time_s)
+        else:
+            merged_total += max(0.0, current_end - current_start)
+            current_start, current_end = start_time_s, finish_time_s
+
+    merged_total += max(0.0, current_end - current_start)
+    return merged_total
+
+
 def run_simulation(
     ordered_units: list[str],
     process_time_data: dict[str, Any],
@@ -1533,6 +1571,8 @@ def run_simulation(
                 disruption_counts["broken_material_extra_items_consumed"] += broken_extra_material_qty
 
         process_time_s = float(disruption_result["effective_process_time_s"])
+        breakdown_added_time_s = float(disruption_result.get("breakdown_added_time_s", 0.0) or 0.0)
+        productive_process_time_for_utilization_s = max(0.0, process_time_s - breakdown_added_time_s)
         wait_time_s = current_time_s - arrival_time_s
 
         operation = OperationRecord(
@@ -1583,7 +1623,7 @@ def run_simulation(
 
         station_state.busy = True
         station_state.current_unit_index = unit_index
-        station_state.busy_time_s += process_time_s
+        station_state.busy_time_s += productive_process_time_for_utilization_s
         station_state.total_wait_time_s += wait_time_s
         if station_state.first_start_time_s is None:
             station_state.first_start_time_s = current_time_s
@@ -1900,22 +1940,6 @@ def calculate_kpis(
         ]
         return float(mean(intervals)) if intervals else 0.0
 
-    def _average_variant_cycle_time_from_global_sequence(unit_rows: list[UnitSummary], variant: str) -> float:
-        ordered_rows = sorted(unit_rows, key=lambda u: float(u.completion_time_s))
-        variant_intervals: list[float] = []
-        previous_row: UnitSummary | None = None
-        for row in ordered_rows:
-            if previous_row is not None and str(previous_row.variant) == variant and str(row.variant) == variant:
-                variant_intervals.append(float(row.completion_time_s) - float(previous_row.completion_time_s))
-            previous_row = row
-        if variant_intervals:
-            return float(mean(variant_intervals))
-
-        variant_rows = [row for row in ordered_rows if str(row.variant) == variant]
-        if len(variant_rows) == 1:
-            return float(variant_rows[0].completion_time_s)
-        return 0.0
-
     if not unit_summaries:
         return {
             "total_units_ordered": 0,
@@ -1961,8 +1985,11 @@ def calculate_kpis(
     }
 
     for variant in sorted({str(u.variant) for u in unit_summaries}):
+        variant_completion_times = [
+            float(u.completion_time_s) for u in unit_summaries if str(u.variant) == variant
+        ]
         kpis[f"average_cycle_time_seconds_{variant.lower()}"] = round(
-            _average_variant_cycle_time_from_global_sequence(unit_summaries, variant), 4
+            _average_cycle_time_from_completion_times(variant_completion_times), 4
         )
 
     for summary in station_summaries:
@@ -1976,11 +2003,12 @@ def calculate_kpis(
         kpis[f"average_wait_{safe_key}_seconds"] = round(summary.average_wait_time_s, 4)
 
         station_ops = [op for op in operations if op.station_name == summary.station_name]
+        station_busy_time_s = sum(float(op.process_time_s) for op in station_ops)
         station_disruption_time_s = sum(
             max(0.0, float(op.process_time_s) - float(op.base_process_time_s))
             for op in station_ops
         )
-        availability = 1.0 - (station_disruption_time_s / makespan_s) if makespan_s > 0 else 1.0
+        availability = 1.0 - (station_disruption_time_s / station_busy_time_s) if station_busy_time_s > 0 else 1.0
         availability = max(0.0, min(1.0, availability))
         kpis[f"availability_{safe_key}"] = round(availability, 6)
 
@@ -2139,8 +2167,15 @@ def write_unit_summary_csv(unit_summaries: list[UnitSummary], output_path: Path)
 
 
 def write_station_summary_csv(
-    station_summaries: list[StationSummary], output_path: Path
+    station_summaries: list[StationSummary],
+    output_path: Path,
+    utilization_active_window_without_disruptions_by_station: dict[tuple[int, str], float] | None = None,
+    active_order_utilization_by_station: dict[tuple[int, str], float] | None = None,
 ) -> None:
+    utilization_active_window_without_disruptions_by_station = (
+        utilization_active_window_without_disruptions_by_station or {}
+    )
+    active_order_utilization_by_station = active_order_utilization_by_station or {}
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(
@@ -2156,9 +2191,18 @@ def write_station_summary_csv(
                 "total_wait_time_s",
                 "utilization_overall",
                 "utilization_active_window",
+                "utilization_active_window_without_disruptions",
+                "active_order_utilization",
             ]
         )
         for summary in station_summaries:
+            station_key = (int(summary.station_index), str(summary.station_name))
+            no_disruptions_value = utilization_active_window_without_disruptions_by_station.get(
+                station_key
+            )
+            active_order_utilization_value = active_order_utilization_by_station.get(
+                station_key
+            )
             writer.writerow(
                 [
                     summary.station_index,
@@ -2176,6 +2220,12 @@ def write_station_summary_csv(
                     round(summary.total_wait_time_s, 4),
                     round(summary.utilization_overall, 6),
                     round(summary.utilization_active_window, 6),
+                    round(float(no_disruptions_value), 6)
+                    if no_disruptions_value is not None
+                    else "",
+                    round(float(active_order_utilization_value), 6)
+                    if active_order_utilization_value is not None
+                    else "",
                 ]
             )
 
@@ -2678,14 +2728,16 @@ def main() -> None:
         kpis[f"disruption_{key}"] = value
 
     operations_no_disruptions: list[OperationRecord] = operations
+    transport_records_no_disruptions: list[TransportRecord] = transport_records
     unit_summaries_no_disruptions: list[UnitSummary] = unit_summaries
     station_summaries_no_disruptions: list[StationSummary] = station_summaries
     completed_good_variants_no_disruptions: list[str] = completed_good_variants
+    simulation_details_no_disruptions: dict[str, Any] = simulation_details
 
     if disruptions_enabled:
         (
             operations_no_disruptions,
-            _transport_records_no_disruptions,
+            transport_records_no_disruptions,
             unit_summaries_no_disruptions,
             station_summaries_no_disruptions,
             _,
@@ -2725,12 +2777,58 @@ def main() -> None:
     kpis_no_disruptions["effective_station_count"] = len(effective_line_layout["station_sequence"])
     kpis_no_disruptions["completed_good_units"] = len(completed_good_variants_no_disruptions)
 
+    station_utilization_active_window_without_disruptions = {
+        (int(summary.station_index), str(summary.station_name)): float(summary.utilization_active_window)
+        for summary in station_summaries_no_disruptions
+    }
+
+    active_production_line_time_s = _calculate_active_production_line_time_s(
+        operations,
+        simulation_details.get("disruption_event_log", []),
+        transport_records,
+    )
+    station_active_order_utilization = {}
+    for summary in station_summaries:
+        station_key = (int(summary.station_index), str(summary.station_name))
+        if active_production_line_time_s > 0:
+            station_active_order_utilization[station_key] = float(summary.busy_time_s) / float(active_production_line_time_s)
+        else:
+            station_active_order_utilization[station_key] = 0.0
+        safe_key = re.sub(r"[^A-Za-z0-9]+", "_", str(summary.station_name)).strip("_").lower()
+        kpis[f"active_order_utilization_{safe_key}"] = round(
+            float(station_active_order_utilization[station_key]),
+            6,
+        )
+
+    active_production_line_time_no_disruptions_s = _calculate_active_production_line_time_s(
+        operations_no_disruptions,
+        simulation_details_no_disruptions.get("disruption_event_log", []),
+        transport_records_no_disruptions,
+    )
+    station_active_order_utilization_no_disruptions = {}
+    for summary in station_summaries_no_disruptions:
+        station_key = (int(summary.station_index), str(summary.station_name))
+        if active_production_line_time_no_disruptions_s > 0:
+            station_active_order_utilization_no_disruptions[station_key] = float(summary.busy_time_s) / float(active_production_line_time_no_disruptions_s)
+        else:
+            station_active_order_utilization_no_disruptions[station_key] = 0.0
+        safe_key = re.sub(r"[^A-Za-z0-9]+", "_", str(summary.station_name)).strip("_").lower()
+        kpis_no_disruptions[f"active_order_utilization_{safe_key}"] = round(
+            float(station_active_order_utilization_no_disruptions[station_key]),
+            6,
+        )
+
     write_kpis_csv(kpis, run_output_dir / "kpi_summary.csv")
     write_kpis_csv(kpis_no_disruptions, run_output_dir / "kpi_summary_without_disruptions.csv")
     write_operations_csv(operations, run_output_dir / "station_schedule.csv")
     write_transport_csv(transport_records, run_output_dir / "transport_schedule.csv")
     write_unit_summary_csv(unit_summaries, run_output_dir / "unit_summary.csv")
-    write_station_summary_csv(station_summaries, run_output_dir / "station_summary.csv")
+    write_station_summary_csv(
+        station_summaries,
+        run_output_dir / "station_summary.csv",
+        utilization_active_window_without_disruptions_by_station=station_utilization_active_window_without_disruptions,
+        active_order_utilization_by_station=station_active_order_utilization,
+    )
 
     if disruptions_enabled or simulation_details.get("disruption_event_log"):
         save_json(
