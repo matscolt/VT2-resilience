@@ -68,7 +68,6 @@ OUTPUTDIR = ROOTDIR / "output"
 
 BACKGROUND_PNG = LAYOUTDIR / "1_LAYOUT.png"
 CARRIER_PNG = LAYOUTDIR / "carrier.png"
-PRODUCTION_ICON_PNG = LAYOUTDIR / "carrier_loading.png"
 
 STATION_SCHEDULE_CSV = "station_schedule.csv"
 TRANSPORT_SCHEDULE_CSV = "transport_schedule.csv"
@@ -80,7 +79,7 @@ TRANSPORT_SCHEDULE_CSV = "transport_schedule.csv"
 FPS = 30
 SIM_SECONDS_PER_FRAME = 0.5
 
-CARRIER_SIZE_PX = 28
+CARRIER_SIZE_PX = 63
 PRODUCTION_ICON_SIZE_PX = 40
 
 FONT_SIZE = 12
@@ -553,7 +552,7 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
 
     background = Image.open(BACKGROUND_PNG).convert("RGBA")
     carrier_icon = Image.open(CARRIER_PNG).convert("RGBA").resize((CARRIER_SIZE_PX, CARRIER_SIZE_PX), Image.Resampling.LANCZOS)
-    prod_icon_path = PRODUCTION_ICON_PNG if PRODUCTION_ICON_PNG.exists() else CARRIER_PNG
+    prod_icon_path = Image.open(CARRIER_PNG).convert("RGBA").resize((CARRIER_SIZE_PX, CARRIER_SIZE_PX), Image.Resampling.LANCZOS)
     production_icon = Image.open(prod_icon_path).convert("RGBA").resize((PRODUCTION_ICON_SIZE_PX, PRODUCTION_ICON_SIZE_PX), Image.Resampling.LANCZOS)
     font = load_font_calibri_prefer(FONT_SIZE)
     timefont = load_font_calibri_prefer(TIME_FONT_SIZE)
