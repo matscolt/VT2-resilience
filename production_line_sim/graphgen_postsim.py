@@ -105,7 +105,8 @@ def load_all_data(data_folder):
     station_summary = to_float(station_summary, [
         "busy_time_s","first_start_time_s","last_finish_time_s",
         "max_queue_length","average_queue_length","average_wait_time_s",
-        "total_wait_time_s","utilization_overall","utilization_active_window"
+        "total_wait_time_s","utilization_overall","utilization_active_window",
+        "active_order_utilization"
     ])
 
     transport_data = to_float(transport_data, [
@@ -309,7 +310,7 @@ def plot_station_utilization(station_data, graphfolder):
 
     # 1) Data (én række per station i din CSV)
     stations = [row["station_name"] for row in station_data]
-    times = [float(row["utilization_active_window"]) * 100 for row in station_data]
+    times = [float(row["active_order_utilization"]) * 100 for row in station_data]
 
     # 2) Farvelogik (justér thresholds efter behov)
     lower = 40
