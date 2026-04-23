@@ -287,7 +287,7 @@ def prompt_int(prompt: str, default: int) -> int:
 # Terminal progress bar (2% steps)
 # ----------------------------
 
-def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 40) -> int:
+def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 70) -> int:
     """Update a single-line progress bar at 2% intervals. Returns next_pct threshold."""
     if total_frames <= 0:
         return next_pct
