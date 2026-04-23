@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import csv
 import json
 import os
@@ -90,14 +91,21 @@ def to_float(data, keys):
     return data
 
 def load_all_data(data_folder):
-    station_data = load_data(os.path.join(data_folder, "station_schedule.csv"))
+    station_schedule = load_data(os.path.join(data_folder, "station_schedule.csv"))
+    station_summary = load_data(os.path.join(data_folder, "station_summary.csv"))
     transport_data = load_data(os.path.join(data_folder, "transport_schedule.csv"))
     unit_data = load_data(os.path.join(data_folder, "unit_summary.csv"))
     material_data = load_data(os.path.join(data_folder, "unit_summary.csv"))
 
     # convert relevant columns
-    station_data = to_float(station_data, [
+    station_schedule = to_float(station_schedule, [
         "start_time_s", "finish_time_s", "process_time_s"
+    ])
+   
+    station_summary = to_float(station_summary, [
+        "busy_time_s","first_start_time_s","last_finish_time_s",
+        "max_queue_length","average_queue_length","average_wait_time_s",
+        "total_wait_time_s","utilization_overall","utilization_active_window"
     ])
 
     transport_data = to_float(transport_data, [
@@ -108,7 +116,7 @@ def load_all_data(data_folder):
         "completion_time_s", "flow_time_s"
     ])
 
-    return station_data, transport_data, unit_data,material_data
+    return station_schedule, station_summary, transport_data, unit_data,material_data
 
 # ---------------------------
 # PLOTS
@@ -295,26 +303,60 @@ def plot_flow_times(unit_data,graphfolder):
     plt.savefig(graphfolder/graphname, dpi=200, bbox_inches="tight")
     print(f">> Generated {graphname}")
 
-def plot_station_load(station_data,graphfolder):
-    print(">> Generating station plots!")
-    load = {}
-    graphname = "Station_operation_time.png"
+def plot_station_utilization(station_data, graphfolder):
+    print(">> Generating station utilization!")
+    graphname = "Station_utilization.png"
 
-    for row in station_data:
-        station = row["station_name"]
-        load.setdefault(station, 0)
-        load[station] += row["process_time_s"]
+    # 1) Data (én række per station i din CSV)
+    stations = [row["station_name"] for row in station_data]
+    times = [float(row["utilization_active_window"]) * 100 for row in station_data]
 
-    stations = list(load.keys())
-    times = list(load.values())
+    # 2) Farvelogik (justér thresholds efter behov)
+    lower = 40
+    higher = 80
 
-    plt.figure()
-    plt.barh(stations, times)
-    plt.xlabel("Total processing time [s]")
-    plt.title("Station workload")
+    def color_for(u):
+        if u < lower:
+            return "#2ca02c"   # grøn
+        elif u < higher:
+            return "#fceb31"   # gul
+        else:
+            return "#d62728"   # rød
+
+    colors = [color_for(u) for u in times]
+
+    # 3) Plot
+    fig, ax = plt.subplots(figsize=(9, max(3, 0.5 * len(stations))))
+    bars = ax.barh(stations, times, color=colors)
+
+    ax.set_xlabel("Utilization [%]")
+    ax.set_title("Station utilization")
+
+    # 4) Skriv værdien ved enden af hver bar
+    # (bar_label kræver Matplotlib >= 3.4; fallback nedenfor hvis du får fejl)
+    try:
+        ax.bar_label(bars, labels=[f"{t:.1f}%" for t in times], padding=3)
+    except AttributeError:
+        for bar, val in zip(bars, times):
+            ax.text(val + 1,
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{val:.1f}%",
+                    va="center", ha="left", fontsize=9)
+
+    # 5) Giv luft i højre side så labels ikke klippes
+    right = max(times) if times else 1
+    ax.set_xlim(0, right * 1.15)
+
+    # 6) Legend (forklar farverne)
+    legend_handles = [
+        mpatches.Patch(color="#2ca02c", label=f"Low (<{lower}%)"),
+        mpatches.Patch(color="#fceb31", label=f"Medium ({lower}–{higher}%)"),
+        mpatches.Patch(color="#d62728", label=f"High (≥{higher}%)"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower right")
 
     plt.tight_layout()
-    plt.savefig(graphfolder/graphname, dpi=200, bbox_inches="tight")
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
     print(f">> Generated {graphname}")
 
 #main
@@ -337,17 +379,16 @@ def main(starttime):
     print(f"using folder: {foldername}")
 
     clear_folder(folder)
-    station_data, transport_data, unit_data, material_data = load_all_data(folder)
+    station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(folder)
 
     graph_folder = folder / "graphs"
     graph_folder.mkdir(exist_ok=True)
 
-    plot_gantt(station_data,transport_data,graph_folder)
+    plot_gantt(station_schedule,transport_data,graph_folder)
     print("Time spent: "+str(time.perf_counter()-starttime))
     plot_flow_times(unit_data,graph_folder)
     print("Time spent: "+str(time.perf_counter()-starttime))
-    plot_station_load(station_data,graph_folder)
-    
+    plot_station_utilization(station_summary,graph_folder)
 
 if __name__ == "__main__":
     starttime = time.perf_counter()
