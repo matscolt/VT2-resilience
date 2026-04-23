@@ -1,7 +1,7 @@
 {
   "stock_unit": "pieces",
   "materials_in_stock": {
-    "Fuse": 100000,
+    "Fuse": 15,
     "Bottom cover": 100000,
     "Top cover": 100000,
     "PCB": 100000
