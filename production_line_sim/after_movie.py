@@ -131,6 +131,13 @@ BAR_BG_COLOR = (255, 255, 255, 255)     # white background
 BAR_BORDER_COLOR = (255, 255, 255, 255) # white border
 BAR_FILL_COLOR = (0, 200, 0, 255)       # green fill
 
+# Hvis du bruger top-left koordinater til subboxes/slots:
+QUEUE_BOX_W = 24   # <-- mål/justér så den passer til dine subboxes
+QUEUE_BOX_H = 24
+
+PROCESS_BOX_W = 24 # <-- mål/justér
+PROCESS_BOX_H = 24
+
 @dataclass(frozen=True)
 class StationGeom:
     station_name_in_csv: str
@@ -620,7 +627,7 @@ def main():
         folder = find_output_folder()
     foldername = str(folder).split("\\")[-1].split("__")[0]
     print(f"using folder: {foldername}")
-    
+
     parser = argparse.ArgumentParser(description="Production line after-movie renderer")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
