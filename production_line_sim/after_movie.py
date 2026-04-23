@@ -39,7 +39,8 @@ import argparse
 import os
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
-
+from datetime import datetime
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
@@ -48,9 +49,48 @@ from PIL import Image, ImageDraw, ImageFont
 # ----------------------------
 # Configuration (edit this)
 # ----------------------------
+ROOTDIR = Path(__file__).parent
 
-BACKGROUND_PNG = "1_LAYOUT.png"
-CARRIER_PNG = "carrier.png"
+#find the correct order
+def find_output_folder(output_path=None, target_timestamp=None):
+    if output_path is None:
+        output_path = ROOTDIR / "output"
+
+    folders = []
+
+    for name in os.listdir(output_path):
+        full_path = output_path / name   
+
+        if not full_path.is_dir():
+            continue
+
+        try:
+            timestamp_str = name.split("__")[0]
+            timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+            folders.append((timestamp, full_path))
+
+        except Exception:
+            continue
+
+    if not folders:
+        raise FileNotFoundError(f"No valid output folders found in {output_path}")
+
+    folders.sort(key=lambda x: x[0])
+
+    if target_timestamp:
+        target_dt = datetime.strptime(target_timestamp, "%Y%m%d_%H%M%S")
+        closest = min(folders, key=lambda x: abs(x[0] - target_dt))
+        return closest[1]
+
+    return folders[-1][1]
+
+picturefolder = "data/Layouts"
+BACKGROUND_PNG = os.path.join(picturefolder, "1_LAYOUT.png")
+CARRIER_PNG = os.path.join(picturefolder, "carrier.png")
+
+DEFAULT_OUTPUT_MP4 = "production_line_after_movie.mp4"
+
+PRODUCTION_ICON_PNG = "image.png"
 
 STATION_SCHEDULE_CSV = "station_schedule.csv"
 TRANSPORT_SCHEDULE_CSV = "transport_schedule.csv"
@@ -66,35 +106,30 @@ FPS = 30
 #   0.2  => each frame = 0.2 sim-seconds (slower / smoother)
 SIM_SECONDS_PER_FRAME = 0.5
 
-# Carrier icon size in pixels (tweak to fit your boxes)
+# Icon sizes
 CARRIER_SIZE_PX = 28
+PRODUCTION_ICON_SIZE_PX = 40  # production icon can be larger if you want
 
-# Text style: Calibri 12 if available, else fallback
+# Text style
 FONT_SIZE = 12
-
-# Text color in the white circle
 TEXT_COLOR = (0, 0, 0, 255)
 
-# Optional: draw time label
+# Time label
 DRAW_TIME_LABEL = True
 TIME_LABEL_POS = (20, 20)
 TIME_LABEL_COLOR = (255, 255, 255, 255)
 
-# Optional: show station processing as a faint green glow behind the carrier
-DRAW_PROCESS_GLOW = False
-PROCESS_GLOW_COLOR = (0, 255, 0, 120)
-PROCESS_GLOW_RADIUS = 18
+# Disruption label style
+DISRUPTION_TEXT_COLOR = (255, 80, 80, 255)  # reddish
+DISRUPTION_PREFIX = "DISR"
 
-
-# ----------------------------
-# Station geometry (YOU MUST FILL THIS)
-# ----------------------------
-# Provide pixel coordinates (x, y) in the layout PNG for:
-# - queue_slots: list of 7 positions, ORDERED bottom->top (lowest on screen first)
-# - process_pos: position of the production subbox center
-# - center_pos: station center for transport movement endpoints
-#
-# Tip: run `python after_movie.py pick-coords` and click the points you need.
+# Loading bar appearance (above production icon)
+BAR_W = 50
+BAR_H = 8
+BAR_GAP = 6
+BAR_BG_COLOR = (255, 255, 255, 255)     # white background
+BAR_BORDER_COLOR = (255, 255, 255, 255) # white border
+BAR_FILL_COLOR = (0, 200, 0, 255)       # green fill
 
 @dataclass(frozen=True)
 class StationGeom:
@@ -116,59 +151,70 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
     #
     1: StationGeom(
         station_name_in_csv="Station 1: Bottom cover",
-        queue_slots=[(0, 0)] * 7,      # <-- fill
+        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
         process_pos=(0, 0),            # <-- fill
         center_pos=(0, 0),             # <-- fill
     ),
     2: StationGeom(
         station_name_in_csv="Station 2: Drill station",
-        queue_slots=[(0, 0)] * 7,
-        process_pos=(0, 0),
-        center_pos=(0, 0),
+        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
+        process_pos=(0, 0),            # <-- fill
+        center_pos=(0, 0),             # <-- fill
     ),
     3: StationGeom(
         station_name_in_csv="Station 3: Top cover",
-        queue_slots=[(0, 0)] * 7,
-        process_pos=(0, 0),
-        center_pos=(0, 0),
+        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
+        process_pos=(0, 0),            # <-- fill
+        center_pos=(0, 0),             # <-- fill
     ),
     4: StationGeom(
         station_name_in_csv="Station 4: Inspection",
-        queue_slots=[(0, 0)] * 7,
-        process_pos=(0, 0),
-        center_pos=(0, 0),
+        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
+        process_pos=(0, 0),            # <-- fill
+        center_pos=(0, 0),             # <-- fill
+    ),
+    4: StationGeom(
+        station_name_in_csv="Station 4: Inspection",
+        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
+        process_pos=(0, 0),            # <-- fill
+        center_pos=(0, 0),             # <-- fill
     ),
     5: StationGeom(
         station_name_in_csv="Station 5: Robot cell",
-        queue_slots=[(0, 0)] * 7,
-        process_pos=(0, 0),
-        center_pos=(0, 0),
+        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
+        process_pos=(0, 0),            # <-- fill
+        center_pos=(0, 0),             # <-- fill
+    ),
+    5: StationGeom(
+        station_name_in_csv="Station 5: Robot cell",
+        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
+        process_pos=(0, 0),            # <-- fill
+        center_pos=(0, 0),             # <-- fill
     ),
     6: StationGeom(
         station_name_in_csv="Station 6: Packaging",
-        queue_slots=[(0, 0)] * 7,
-        process_pos=(0, 0),
-        center_pos=(0, 0),
+        queue_slots=[(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0),(0, 0)],  # <-- fill
+        process_pos=(0, 0),            # <-- fill
+        center_pos=(0, 0),             # <-- fill
     ),
 }
 
 
+#
 # ----------------------------
 # Helpers
 # ----------------------------
 
 def load_font_calibri_prefer(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """
-    Try to load Calibri. If not found, fallback to common fonts.
-    For best results: place 'calibri.ttf' in the script folder.
+    Try to load Calibri. If not found, fallback to a common font.
+    Best: place calibri.ttf next to this script.
     """
     candidates = [
         os.path.join(os.getcwd(), "calibri.ttf"),
         os.path.join(os.getcwd(), "Calibri.ttf"),
-        # Common Linux paths (Calibri usually not installed)
         "/usr/share/fonts/truetype/msttcorefonts/Calibri.ttf",
         "/usr/share/fonts/truetype/msttcorefonts/calibri.ttf",
-        "/usr/share/fonts/truetype/microsoft/calibri.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ]
     for path in candidates:
@@ -177,50 +223,63 @@ def load_font_calibri_prefer(size: int) -> ImageFont.FreeTypeFont | ImageFont.Im
                 return ImageFont.truetype(path, size=size)
             except Exception:
                 pass
-    # Final fallback
     return ImageFont.load_default()
 
 
-def paste_carrier_with_text(
+def paste_icon_with_centered_text(
     frame_rgba: Image.Image,
-    carrier_rgba_resized: Image.Image,
+    icon_rgba_resized: Image.Image,
     center_xy: Tuple[float, float],
     text: str,
     font: ImageFont.ImageFont,
     text_color: Tuple[int, int, int, int] = TEXT_COLOR,
 ):
-    """
-    Paste carrier icon centered at center_xy and draw centered text on top.
-    """
+    """Paste an RGBA icon centered at center_xy and draw centered text on top."""
     cx, cy = center_xy
-    w, h = carrier_rgba_resized.size
+    w, h = icon_rgba_resized.size
     x0 = int(round(cx - w / 2))
     y0 = int(round(cy - h / 2))
 
-    # Paste with alpha
-    frame_rgba.alpha_composite(carrier_rgba_resized, dest=(x0, y0))
+    frame_rgba.alpha_composite(icon_rgba_resized, dest=(x0, y0))
 
-    # Draw centered text
     draw = ImageDraw.Draw(frame_rgba)
-
-    # Compute text box in pixels
-    # Using textbbox for better centering across fonts
     bbox = draw.textbbox((0, 0), text, font=font)
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
-
     tx = int(round(cx - tw / 2))
     ty = int(round(cy - th / 2))
-
     draw.text((tx, ty), text, font=font, fill=text_color)
 
 
+def draw_loading_bar(
+    frame_rgba: Image.Image,
+    center_xy: Tuple[float, float],
+    progress_0_1: float,
+):
+    """Draw a white bar above the given center point; fill green according to progress."""
+    progress = float(max(0.0, min(1.0, progress_0_1)))
+    cx, cy = center_xy
+
+    # Position bar above icon
+    x0 = int(round(cx - BAR_W / 2))
+    y0 = int(round(cy - PRODUCTION_ICON_SIZE_PX / 2 - BAR_GAP - BAR_H))
+    x1 = x0 + BAR_W
+    y1 = y0 + BAR_H
+
+    draw = ImageDraw.Draw(frame_rgba)
+
+    # Background
+    draw.rectangle([x0, y0, x1, y1], fill=BAR_BG_COLOR, outline=BAR_BORDER_COLOR)
+
+    # Fill
+    fill_w = int(round(BAR_W * progress))
+    if fill_w > 0:
+        draw.rectangle([x0, y0, x0 + fill_w, y1], fill=BAR_FILL_COLOR)
+
+
 def pick_coords_interactive(image_path: str):
-    """
-    Interactive coordinate picker using matplotlib.
-    Click points on the image; printed coordinates can be copied into STATION_GEOMETRY.
-    """
-    import matplotlib.pyplot as plt  # local import by design
+    """Interactive coordinate picker using matplotlib. Click points, read coords from console."""
+    import matplotlib.pyplot as plt
 
     img = Image.open(image_path).convert("RGB")
     arr = np.asarray(img)
@@ -259,173 +318,224 @@ def load_schedules() -> Schedules:
     station_df = pd.read_csv(STATION_SCHEDULE_CSV)
     transport_df = pd.read_csv(TRANSPORT_SCHEDULE_CSV)
 
-    # Basic sanity: ensure expected columns exist
-    needed_station_cols = {
-        "unit_id", "station_index", "station_name",
-        "arrival_time_s", "start_time_s", "finish_time_s"
-    }
-    needed_transport_cols = {
-        "unit_id", "from_station", "to_station",
-        "start_time_s", "finish_time_s", "transport_time_s"
-    }
-    missing_station = needed_station_cols - set(station_df.columns)
-    missing_transport = needed_transport_cols - set(transport_df.columns)
+    needed_station = {"unit_id", "station_index", "station_name", "arrival_time_s", "start_time_s", "finish_time_s"}
+    needed_transport = {"unit_id", "from_station", "to_station", "start_time_s", "finish_time_s", "transport_time_s"}
+
+    missing_station = needed_station - set(station_df.columns)
+    missing_transport = needed_transport - set(transport_df.columns)
     if missing_station:
         raise ValueError(f"station_schedule.csv missing columns: {sorted(missing_station)}")
     if missing_transport:
         raise ValueError(f"transport_schedule.csv missing columns: {sorted(missing_transport)}")
 
-    # Build station name->index mapping from the station schedule
-    name_to_index = (
+    # Optional disruption columns (recommended)
+    # process_time_s and base_process_time_s are used if present
+    has_process_time = "process_time_s" in station_df.columns
+    has_base_time = "base_process_time_s" in station_df.columns
+
+    if not (has_process_time and has_base_time):
+        print("WARNING: station_schedule.csv does not include both process_time_s and base_process_time_s.")
+        print("         Disruption time will be treated as 0 and loading bar will span full (finish-start).")
+
+    # station name -> index mapping
+    station_name_to_index = (
         station_df[["station_name", "station_index"]]
         .drop_duplicates()
         .set_index("station_name")["station_index"]
         .to_dict()
     )
 
-    # Build station name->geom mapping from your configured geometry
     index_to_geom = STATION_GEOMETRY_BY_INDEX.copy()
-    name_to_geom = {g.station_name_in_csv: g for g in index_to_geom.values()}
+    station_name_to_geom = {g.station_name_in_csv: g for g in index_to_geom.values()}
 
-    # End time
-    t_end = float(np.nanmax([
-        station_df["finish_time_s"].max(),
-        transport_df["finish_time_s"].max()
-    ]))
+    t_end = float(np.nanmax([station_df["finish_time_s"].max(), transport_df["finish_time_s"].max()]))
 
-    # Sort for deterministic queue ordering
     station_df = station_df.sort_values(["station_index", "arrival_time_s", "unit_id"]).reset_index(drop=True)
     transport_df = transport_df.sort_values(["start_time_s", "unit_id"]).reset_index(drop=True)
 
     return Schedules(
         station_df=station_df,
         transport_df=transport_df,
-        station_name_to_index=name_to_index,
+        station_name_to_index=station_name_to_index,
         station_index_to_geom=index_to_geom,
-        station_name_to_geom=name_to_geom,
-        t_end=t_end,
+        station_name_to_geom=station_name_to_geom,
+        t_end=t_end
     )
 
 
-def get_station_waiting_units_at_time(station_rows: pd.DataFrame, t: float) -> pd.DataFrame:
-    """
-    Units waiting in queue are those that have arrived but not started processing yet:
-      arrival_time_s <= t < start_time_s
-    """
+def get_waiting(station_rows: pd.DataFrame, t: float) -> pd.DataFrame:
     return station_rows[(station_rows["arrival_time_s"] <= t) & (station_rows["start_time_s"] > t)]
 
 
-def get_station_processing_units_at_time(station_rows: pd.DataFrame, t: float) -> pd.DataFrame:
-    """
-    Units in processing:
-      start_time_s <= t < finish_time_s
-    """
+def get_processing(station_rows: pd.DataFrame, t: float) -> pd.DataFrame:
     return station_rows[(station_rows["start_time_s"] <= t) & (station_rows["finish_time_s"] > t)]
 
 
-def get_transports_at_time(transport_df: pd.DataFrame, t: float) -> pd.DataFrame:
-    """
-    Active transports:
-      start_time_s <= t < finish_time_s
-    """
+def get_transports(transport_df: pd.DataFrame, t: float) -> pd.DataFrame:
     return transport_df[(transport_df["start_time_s"] <= t) & (transport_df["finish_time_s"] > t)]
 
 
-def render_after_movie(
-    output_path: str,
-    fps: int = FPS,
-    sim_seconds_per_frame: float = SIM_SECONDS_PER_FRAME,
-):
+def disruption_and_processing_times(row: pd.Series) -> Tuple[float, float, float]:
+    """
+    Returns:
+      disruption_time, processing_start_time, processing_duration
+    Logic:
+      disruption_time = max(process_time_s - base_process_time_s, 0)
+      disruption interval starts at start_time_s
+      normal processing begins at start_time_s + disruption_time
+      normal processing duration = finish_time_s - processing_start_time
+    """
+    ts = float(row["start_time_s"])
+    tf = float(row["finish_time_s"])
+
+    if ("process_time_s" in row) and ("base_process_time_s" in row):
+        try:
+            pt = float(row["process_time_s"])
+            bt = float(row["base_process_time_s"])
+            disruption = max(pt - bt, 0.0)
+        except Exception:
+            disruption = 0.0
+    else:
+        disruption = 0.0
+
+    # Clamp disruption so it can't exceed total available interval
+    total = max(tf - ts, 0.0)
+    disruption = min(disruption, total)
+
+    proc_start = ts + disruption
+    proc_dur = max(tf - proc_start, 0.0)
+
+    return disruption, proc_start, proc_dur
+
+
+def render_after_movie(output_path: str, fps: int = FPS, sim_seconds_per_frame: float = SIM_SECONDS_PER_FRAME):
     schedules = load_schedules()
 
-    # Load images
     background = Image.open(BACKGROUND_PNG).convert("RGBA")
-    carrier_base = Image.open(CARRIER_PNG).convert("RGBA")
-    carrier_resized = carrier_base.resize((CARRIER_SIZE_PX, CARRIER_SIZE_PX), resample=Image.Resampling.LANCZOS)
+
+    carrier_icon = Image.open(CARRIER_PNG).convert("RGBA").resize(
+        (CARRIER_SIZE_PX, CARRIER_SIZE_PX), resample=Image.Resampling.LANCZOS
+    )
+
+    # Production icon: use image.png if present, else carrier.png
+    prod_path = PRODUCTION_ICON_PNG if os.path.exists(PRODUCTION_ICON_PNG) else CARRIER_PNG
+    production_icon = Image.open(prod_path).convert("RGBA").resize(
+        (PRODUCTION_ICON_SIZE_PX, PRODUCTION_ICON_SIZE_PX), resample=Image.Resampling.LANCZOS
+    )
 
     font = load_font_calibri_prefer(FONT_SIZE)
 
-    # Group station schedule by station index for faster filtering
     station_groups = {idx: df for idx, df in schedules.station_df.groupby("station_index")}
 
-    # Attempt MP4 writer
+    # Writer
     writer = None
     use_png_fallback = False
-
     try:
-        import imageio.v2 as imageio  # imageio v2 API (most stable)
+        import imageio.v2 as imageio
         writer = imageio.get_writer(output_path, fps=fps)
     except Exception as e:
-        print("WARNING: Could not create MP4 writer (ffmpeg missing?). Falling back to PNG frames.")
+        print("WARNING: Could not create MP4 writer (ffmpeg missing?). Falling back to PNG frames in ./frames/")
         print(f"Reason: {e}")
         use_png_fallback = True
         os.makedirs("frames", exist_ok=True)
 
-    # Main loop
+    # Geometry warnings
+    for idx, geom in schedules.station_index_to_geom.items():
+        if geom.process_pos == (0, 0) or geom.center_pos == (0, 0) or any(p == (0, 0) for p in geom.queue_slots):
+            print(f"WARNING: Station geometry for station_index={idx} still has (0,0) placeholders.")
+
     t = 0.0
     frame_idx = 0
     t_end = schedules.t_end
-
-    # Pre-check geometry configuration (to help you catch missing coords early)
-    for idx, geom in schedules.station_index_to_geom.items():
-        if (geom.process_pos == (0, 0)) or (geom.center_pos == (0, 0)) or any(p == (0, 0) for p in geom.queue_slots):
-            print(f"WARNING: Station geometry for station_index={idx} contains (0,0) placeholders. "
-                  f"Update STATION_GEOMETRY_BY_INDEX before final rendering.")
 
     while t <= t_end + 1e-9:
         frame = background.copy()
         draw = ImageDraw.Draw(frame)
 
-        # ---- Draw station queues and processing carriers ----
+        # ---- Stations: queues + processing + disruption countdown + loading bar ----
         for station_index, geom in schedules.station_index_to_geom.items():
             station_rows = station_groups.get(station_index)
             if station_rows is None or station_rows.empty:
                 continue
 
-            # Processing units (often 0 or 1)
-            processing = get_station_processing_units_at_time(station_rows, t)
-
-            # If multiple are processing (parallel machines), draw all (slightly offset)
-            for k, (_, row) in enumerate(processing.iterrows()):
-                px, py = geom.process_pos
-                if DRAW_PROCESS_GLOW:
-                    draw.ellipse(
-                        [px - PROCESS_GLOW_RADIUS, py - PROCESS_GLOW_RADIUS,
-                         px + PROCESS_GLOW_RADIUS, py + PROCESS_GLOW_RADIUS],
-                        fill=PROCESS_GLOW_COLOR
-                    )
-                offset = (k * (CARRIER_SIZE_PX * 0.35))
-                paste_carrier_with_text(
-                    frame_rgba=frame,
-                    carrier_rgba_resized=carrier_resized,
-                    center_xy=(px + offset, py),
-                    text=str(row["unit_id"]),
-                    font=font
-                )
-
-            # Queue units
-            waiting = get_station_waiting_units_at_time(station_rows, t)
-
-            # Queue ordering: earliest arrival is closest to processing (bottom slot).
-            # Because you want "lowest available spot on arrival", queue fills bottom-first.
-            waiting = waiting.sort_values(["arrival_time_s", "unit_id"], ascending=[True, True])
-
-            # Map waiting units to slots bottom->top
-            max_slots = len(geom.queue_slots)
+            # Queue: units arrived but not started
+            waiting = get_waiting(station_rows, t).sort_values(["arrival_time_s", "unit_id"])
             for i, (_, row) in enumerate(waiting.iterrows()):
-                if i >= max_slots:
-                    break  # queue overflow not shown
-                slot_xy = geom.queue_slots[i]  # i=0 is the lowest/bottom-most slot
-                paste_carrier_with_text(
+                if i >= len(geom.queue_slots):
+                    break
+                paste_icon_with_centered_text(
                     frame_rgba=frame,
-                    carrier_rgba_resized=carrier_resized,
-                    center_xy=slot_xy,
+                    icon_rgba_resized=carrier_icon,
+                    center_xy=geom.queue_slots[i],
                     text=str(row["unit_id"]),
                     font=font
                 )
 
-        # ---- Draw transports (moving carriers between station centers) ----
-        moving = get_transports_at_time(schedules.transport_df, t)
+            # Processing: units started but not finished
+            processing = get_processing(station_rows, t)
+
+            # Draw disruption countdown next to station label if disrupted
+            # and draw production icon + loading bar only after disruption ends.
+            for k, (_, row) in enumerate(processing.iterrows()):
+                unit_id = str(row["unit_id"])
+                ts = float(row["start_time_s"])
+                tf = float(row["finish_time_s"])
+
+                disruption, proc_start, proc_dur = disruption_and_processing_times(row)
+                disruption_end = ts + disruption
+
+                # Label position: explicit or auto near process_pos
+                label_pos = geom.label_pos
+                if label_pos is None:
+                    # Auto: slightly above/right of process box
+                    label_pos = (geom.process_pos[0] + 25, geom.process_pos[1] - 35)
+
+                if disruption > 0 and ts <= t < disruption_end:
+                    remaining = max(disruption_end - t, 0.0)
+                    draw.text(
+                        label_pos,
+                        f"{DISRUPTION_PREFIX} {remaining:0.1f}s",
+                        fill=DISRUPTION_TEXT_COLOR,
+                        font=font
+                    )
+                    # During disruption, we still show the unit sitting in production subbox
+                    # (your request: unit png within production subbox)
+                    offset = (k * (PRODUCTION_ICON_SIZE_PX * 0.35))
+                    paste_icon_with_centered_text(
+                        frame_rgba=frame,
+                        icon_rgba_resized=production_icon,
+                        center_xy=(geom.process_pos[0] + offset, geom.process_pos[1]),
+                        text=unit_id,
+                        font=font
+                    )
+                else:
+                    # Normal processing: show loading bar filling green
+                    # If there was no disruption, proc_start==ts
+                    # If proc_dur==0 (edge cases), bar is full.
+                    if t < proc_start:
+                        progress = 0.0
+                    elif proc_dur <= 1e-9:
+                        progress = 1.0
+                    else:
+                        progress = (t - proc_start) / proc_dur
+
+                    offset = (k * (PRODUCTION_ICON_SIZE_PX * 0.35))
+                    center = (geom.process_pos[0] + offset, geom.process_pos[1])
+
+                    # Loading bar above the unit (starts only after disruption ended)
+                    draw_loading_bar(frame, center_xy=center, progress_0_1=progress)
+
+                    # Production unit icon
+                    paste_icon_with_centered_text(
+                        frame_rgba=frame,
+                        icon_rgba_resized=production_icon,
+                        center_xy=center,
+                        text=unit_id,
+                        font=font
+                    )
+
+        # ---- Transports: moving carriers between station centers ----
+        moving = get_transports(schedules.transport_df, t)
         if not moving.empty:
             for _, r in moving.iterrows():
                 from_name = str(r["from_station"])
@@ -435,14 +545,13 @@ def render_after_movie(
                 from_geom = schedules.station_name_to_geom.get(from_name)
                 to_geom = schedules.station_name_to_geom.get(to_name)
 
-                # If names don't match config, try mapping via station_name_to_index (from station_schedule)
+                # If names mismatch, attempt mapping via station_name_to_index
                 if from_geom is None and from_name in schedules.station_name_to_index:
                     from_geom = schedules.station_index_to_geom.get(schedules.station_name_to_index[from_name])
                 if to_geom is None and to_name in schedules.station_name_to_index:
                     to_geom = schedules.station_index_to_geom.get(schedules.station_name_to_index[to_name])
 
                 if from_geom is None or to_geom is None:
-                    # Can't animate this transport without endpoints
                     continue
 
                 x0, y0 = from_geom.center_pos
@@ -451,15 +560,14 @@ def render_after_movie(
                 ts = float(r["start_time_s"])
                 tf = float(r["finish_time_s"])
                 denom = max(tf - ts, 1e-9)
-                alpha = float((t - ts) / denom)
-                alpha = max(0.0, min(1.0, alpha))
+                alpha = max(0.0, min(1.0, (t - ts) / denom))
 
                 x = x0 + alpha * (x1 - x0)
                 y = y0 + alpha * (y1 - y0)
 
-                paste_carrier_with_text(
+                paste_icon_with_centered_text(
                     frame_rgba=frame,
-                    carrier_rgba_resized=carrier_resized,
+                    icon_rgba_resized=carrier_icon,
                     center_xy=(x, y),
                     text=unit_id,
                     font=font
@@ -471,13 +579,11 @@ def render_after_movie(
 
         # ---- Write frame ----
         frame_np = np.asarray(frame)
-
         if use_png_fallback:
             frame.save(os.path.join("frames", f"frame_{frame_idx:06d}.png"))
         else:
             writer.append_data(frame_np)
 
-        # Advance
         frame_idx += 1
         t += sim_seconds_per_frame
 
@@ -486,10 +592,11 @@ def render_after_movie(
 
     if use_png_fallback:
         print("Saved PNG frames to ./frames/")
-        print("To convert frames to MP4 with ffmpeg (example):")
+        print("Convert to MP4 with ffmpeg example:")
         print("  ffmpeg -r 30 -i frames/frame_%06d.png -pix_fmt yuv420p output.mp4")
 
     print(f"Done. Rendered {frame_idx} frames. Output: {output_path}")
+
 
 
 # ----------------------------
@@ -497,6 +604,23 @@ def render_after_movie(
 # ----------------------------
 
 def main():
+    specific_folder = "20260420_131845"#enter the wanted foldername(only the first timestamp) in the output folder
+    
+    specific_folder_choice = 0 #yes = 1, no = 0
+    
+    if specific_folder_choice == 1:
+        try:
+            folder = find_output_folder(target_timestamp=specific_folder)
+            print(f">> Using selected folder: {folder}")
+        except Exception as e:
+            print(f">> Warning: Could not find requested folder ({e})")
+            print(">> Falling back to newest folder instead.")
+            folder = find_output_folder()
+    else:
+        folder = find_output_folder()
+    foldername = str(folder).split("\\")[-1].split("__")[0]
+    print(f"using folder: {foldername}")
+    
     parser = argparse.ArgumentParser(description="Production line after-movie renderer")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
