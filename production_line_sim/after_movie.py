@@ -183,7 +183,7 @@ x4_4 = x4_3 + x_space
 y4_1 = y1_1 + y_14_gap
 y4_2 = y4_1 - y_space
 
-x_45_gap = -490
+x_45_gap = -493
 y_45_gap = 0
 
 x5_1 = x4_1 + x_45_gap
@@ -194,8 +194,8 @@ x5_4 = x5_3 + x_space
 y5_1 = y4_1
 y5_2 = y5_1 - y_space
 
-x_56_gap = -580
-y_56_gap = -525
+x_56_gap = -500
+y_56_gap = -524
 
 x6_1 = x5_1 + x_56_gap
 x6_2 = x6_1 + x_space
@@ -862,7 +862,8 @@ def main():
         #clear_folder(order_dir)
         starttime, total_frames = render_after_movie(order_dir, fps=fps, sim_seconds_per_frame=spf)
         endtime = time.perf_counter()
-        fps = int(np.round((endtime - starttime) / max(1e-9, total_frames)))
+        fps = (endtime - starttime) / total_frames if total_frames > 0 else 0.0
+        print(total_frames, "frames rendered.")
         print(f"Rendered {fps} frames per second.")
         print(f"Total rendering time: {endtime - starttime:.2f} seconds")
         return
@@ -876,6 +877,8 @@ def main():
         fps = args.fps if args.fps is not None else FPS
         spf = args.sim_seconds_per_frame if args.sim_seconds_per_frame is not None else SIM_SECONDS_PER_FRAME
         #clear_folder(order_dir)
+        starttime, total_frames = render_after_movie(order_dir, fps=fps, sim_seconds_per_frame=spf)
+        endtime = time.perf_counter()
         starttime, total_frames = render_after_movie(order_dir, fps=fps, sim_seconds_per_frame=spf)
         endtime = time.perf_counter()
         fps = int(np.round((endtime - starttime) / max(1e-9, total_frames)))
