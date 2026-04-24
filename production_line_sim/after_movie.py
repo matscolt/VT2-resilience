@@ -862,8 +862,7 @@ def main():
         #clear_folder(order_dir)
         starttime, total_frames = render_after_movie(order_dir, fps=fps, sim_seconds_per_frame=spf)
         endtime = time.perf_counter()
-        fps = (endtime - starttime) / total_frames if total_frames > 0 else 0.0
-        print(total_frames, "frames rendered.")
+        fps = total_frames / (endtime - starttime) if total_frames > 0 else 0.0
         print(f"Rendered {fps} frames per second.")
         print(f"Total rendering time: {endtime - starttime:.2f} seconds")
         return
@@ -881,7 +880,7 @@ def main():
         endtime = time.perf_counter()
         starttime, total_frames = render_after_movie(order_dir, fps=fps, sim_seconds_per_frame=spf)
         endtime = time.perf_counter()
-        fps = int(np.round((endtime - starttime) / max(1e-9, total_frames)))
+        fps = total_frames / (endtime - starttime) if total_frames > 0 else 0.0
         print(f"Rendered {fps} frames per second.")
         print(f"Total rendering time: {endtime - starttime:.2f} seconds")
         return
