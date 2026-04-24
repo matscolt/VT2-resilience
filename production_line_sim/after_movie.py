@@ -74,8 +74,17 @@ SIM_SECONDS_PER_FRAME = 0.5
 
 CARRIER_SIZE_PX = 63
 
-FONT_SIZE = 12
-TEXT_COLOR = (0, 0, 0, 255)
+
+# Unit-ID style (inside carrier)
+UNIT_FONT_SIZE = 14
+UNIT_TEXT_COLOR = (0, 0, 0, 255)          # fx sort
+UNIT_FONT_PATH = None                     # fx "calibri.ttf" hvis du vil tvinge en bestemt
+
+# Disruption style (next to station)
+DISRUPTION_FONT_SIZE = 24
+DISRUPTION_COLOR = (255, 80, 80, 255)     # rød (du har allerede DISRUPTION_TEXT_COLOR)
+DISRUPTION_FONT_PATH = None               # fx "consola.ttf" eller anden
+
 
 DRAW_TIME_LABEL = True
 TIME_LABEL_POS = (20, 20)
@@ -123,24 +132,46 @@ class StationGeom:
     center_pos: Tuple[int, int]
     label_pos: Optional[Tuple[int, int]] = None
 
+x_space = 71
+y_space = 83
+
+x1_1 = 414
+x1_2 = x1_1 + x_space
+x1_3 = x1_2 + x_space
+x1_4 = x1_3 + x_space
+
+y1_1 = 899
+y1_2 = y1_1 - y_space
+
+x_12_gap = 477
+y_12_gap = 0
+
+x2_1 = x1_1 + x_12_gap
+x2_2 = x2_1 + x_space
+x2_3 = x2_2 + x_space
+x2_4 = x2_3 + x_space
+
+y2_1 = y1_1 + y_12_gap
+y2_2 = y1_2 + y_space
+
 
 # Example: swap these to your measured TOP-LEFT coordinates.
 STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
     1: StationGeom(
         station_name_in_csv="Station 1: Bottom cover",
-        queue_slots_tl=[(414, 809), (485, 809), (556, 809),
-                        (414, 726), (485, 726), (556, 726), (627, 726)],
-        process_pos_tl=(627, 809),
-        center_pos=(555, 809),
-        label_pos=(375, 920),
+        queue_slots_tl=[(x1_3, y1_1), (x1_2, y1_1), (x1_1, y1_1),
+                        (x1_4, y1_2),(x1_3, y1_2), (x1_2, y1_2), (x1_1, y1_2), ],
+        process_pos_tl=(x1_4, y1_1),
+        center_pos=(700, 900),
+        label_pos=(650, 1010),
     ),
     2: StationGeom(
         station_name_in_csv="Station 2: Drill station",
-        queue_slots_tl=[(787, 809), (858, 809), (945, 809),
-                        (787, 726), (858, 726), (945, 726), (1032, 726)],
-        process_pos_tl=(1032, 809),
-        center_pos=(945, 809),
-        label_pos=(820, 920),
+        queue_slots_tl=[(x2_1, y2_1), (x2_2, y2_1), (x2_3, y2_1),
+                        (x2_1, y2_2), (x2_2, y2_2), (x2_3, y2_2), (x2_4, y2_2)],
+        process_pos_tl=(x2_4, y2_1),
+        center_pos=(900, 900),
+        label_pos=(1150, 1010),
     ),
     3: StationGeom(
         station_name_in_csv="Station 3: Robot cell",
@@ -150,7 +181,7 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
                         (1677, 525), (1748, 525)],
         process_pos_tl=(1748, 792),
         center_pos=(1748, 691),
-        label_pos=(1600, 430),
+        label_pos=(1800, 600),
     ),
     4: StationGeom(
         station_name_in_csv="Station 4: Inspection",
@@ -354,7 +385,7 @@ def paste_icon_with_centered_text(
     center_xy: Tuple[float, float],
     text: str,
     font: ImageFont.ImageFont,
-    text_color: Tuple[int, int, int, int] = TEXT_COLOR,
+    text_color: Tuple[int, int, int, int] = UNIT_TEXT_COLOR,
 ):
     cx, cy = center_xy
     w, h = icon_rgba_resized.size
@@ -559,7 +590,9 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
     background = Image.open(BACKGROUND_PNG).convert("RGBA")
     carrier_icon = Image.open(CARRIER_PNG).convert("RGBA").resize((CARRIER_SIZE_PX, CARRIER_SIZE_PX), Image.Resampling.LANCZOS)
     production_icon = Image.open(CARRIER_PNG).convert("RGBA").resize((CARRIER_SIZE_PX, CARRIER_SIZE_PX), Image.Resampling.LANCZOS)
-    font = load_font_calibri_prefer(FONT_SIZE)
+    unit_font = load_font_calibri_prefer(UNIT_FONT_SIZE)
+    disruption_font = load_font_calibri_prefer(DISRUPTION_FONT_SIZE)
+
 
     # Per-station pointers + state
     arr_ptr = {idx: 0 for idx in STATION_GEOMETRY_BY_INDEX.keys()}
@@ -628,7 +661,7 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                 q = queues[idx]
                 for i, u in enumerate(q[:len(geom.queue_slots_tl)]):
                     center_xy = tl_to_center(geom.queue_slots_tl[i])
-                    paste_icon_with_centered_text(frame, carrier_icon, center_xy, u, font)
+                    paste_icon_with_centered_text(frame, carrier_icon, center_xy, u, font=unit_font)
 
                 # processing: convert TL->CENTER
                 for k, pr in enumerate(active_proc[idx]):
@@ -639,8 +672,8 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                     if pr.disruption_end > pr.start and pr.start <= t < pr.disruption_end:
                         remaining = max(pr.disruption_end - t, 0.0)
                         label_pos = geom.label_pos or (int(center[0] + 25), int(center[1] - 35))
-                        draw.text(label_pos, f"{DISRUPTION_PREFIX} {remaining:0.1f}s", fill=DISRUPTION_TEXT_COLOR, font=font)
-                        paste_icon_with_centered_text(frame, production_icon, center, pr.unit_id, font)
+                        draw.text(label_pos, f"{DISRUPTION_PREFIX} {remaining:0.1f}s", fill=DISRUPTION_TEXT_COLOR, font=disruption_font)
+                        paste_icon_with_centered_text(frame, production_icon, center, pr.unit_id, font=unit_font)
                     else:
                         if t < pr.proc_start:
                             progress = 0.0
@@ -649,7 +682,7 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                         else:
                             progress = (t - pr.proc_start) / pr.proc_dur
                         draw_loading_bar(frame, center, progress)
-                        paste_icon_with_centered_text(frame, production_icon, center, pr.unit_id, font)
+                        paste_icon_with_centered_text(frame, production_icon, center, pr.unit_id, font=unit_font)
 
             # transports use station center_pos as before
             for tr in active_tr:
@@ -670,10 +703,10 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                 alpha = max(0.0, min(1.0, (t - tr.start) / denom))
                 x = x0 + alpha * (x1 - x0)
                 y = y0 + alpha * (y1 - y0)
-                paste_icon_with_centered_text(frame, carrier_icon, (x, y), tr.unit_id, font)
+                paste_icon_with_centered_text(frame, carrier_icon, (x, y), tr.unit_id, font=unit_font)
 
             if DRAW_TIME_LABEL:
-                draw.text(TIME_LABEL_POS, f"t = {t:7.2f} s", fill=TIME_LABEL_COLOR, font=font)
+                draw.text(TIME_LABEL_POS, f"t = {t:7.2f} s", fill=TIME_LABEL_COLOR, font=unit_font)
 
             frame_path = frames_dir / f"{frame_idx + 1}.png"
             frame.save(frame_path)
