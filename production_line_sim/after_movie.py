@@ -1,55 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""after_movie.py
-
-Opdateret efter dine ønsker:
-
-1) Produktions-ikon er fjernet.
-   - Vi bruger carrier.png alle steder (queue, transport og i produktion).
-   - Loading bar over unit i produktion bibeholdes.
-
-2) Farver/font-størrelser er konsekvent implementeret:
-   - Samme fontfamilie loader (Calibri hvis muligt), men forskellige størrelser og farver
-     for unit-id og disruption.
-   - Disruption farve/konstant er kun defineret ét sted.
-
-3) Transport er ændret til input/output pr station:
-   - Hver station har input_pos (slutpunkt for incoming) og output_pos (startpunkt for outgoing).
-   - Transport interpolerer fra from_station.output_pos -> to_station.input_pos.
-
-4) OPTION A (top-left koordinater) bibeholdes:
-   - Du indtaster top-left for queue slots + process subbox.
-   - Scriptet konverterer til center via SUBBOX_W/H.
-
-5) Din måde at beregne koordinater på bibeholdes:
-   - x1_1, x_space, y_space osv. er med og kan bruges til at definere positioner.
-
-6) clear_folder() bibeholdes og KØRES før rendering.
-
-Folderstruktur:
-production_line_sim/
-  after_movie.py
-  data/Layouts/
-    1_LAYOUT.png
-    carrier.png
-  output/
-    <run_folder>/
-      station_schedule.csv
-      transport_schedule.csv
-      movie/
-        after_movie.mp4
-        frames/
-          1.png, 2.png, ...
-
-Kør:
-  python after_movie.py
-  python after_movie.py render --run <run_folder>
-
-MP4 backend (Windows, hvis nødvendigt):
-  pip install imageio[ffmpeg]
-"""
-
 from __future__ import annotations
 import time
 import argparse
@@ -58,7 +6,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
-
+from collections import deque
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
@@ -87,12 +35,12 @@ SIM_SECONDS_PER_FRAME = 0.5
 CARRIER_SIZE_PX = 63
 
 # Unit-ID style (inside carrier)
-UNIT_FONT_SIZE = 30
+UNIT_FONT_SIZE = 12
 UNIT_TEXT_COLOR = (0, 0, 0, 255)
 
 # Disruption style (next to station)
-DISRUPTION_FONT_SIZE = 30
-DISRUPTION_TEXT_COLOR = (255, 255, 255, 255)
+DISRUPTION_FONT_SIZE = 26
+DISRUPTION_TEXT_COLOR = (255, 0, 0, 255)
 DISRUPTION_PREFIX = "DISR"
 
 # Optional time label
@@ -219,7 +167,7 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         process_pos_tl=(x1_4, y1_1),
         input_pos=(x1_1 - 30, y1_1-6),
         output_pos=(x1_4 + 102, y1_1-6),
-        label_pos=(650, 1010),
+        label_pos=(650, 988),
     ),
 
     2: StationGeom(
@@ -231,7 +179,7 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         process_pos_tl=(x2_4, y2_1),
         input_pos=(x2_1 - 30, y2_1-6),
         output_pos=(x2_4 + 102, y2_1-6),
-        label_pos=(1150, 1010),
+        label_pos=(1150, 998),
     ),
 
     3: StationGeom(
@@ -245,7 +193,7 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         process_pos_tl=(x3_2, y3_4),
         input_pos=(1640, 891),
         output_pos=(1640, y4_1 - 6),
-        label_pos=(1830, 600),
+        label_pos=(1830, 585),
     ),
 
     4: StationGeom(
@@ -257,7 +205,7 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         process_pos_tl=(x4_4, y4_1),
         input_pos=(x4_4 + 102, y4_1 - 6),
         output_pos=(x4_1-30, y4_1 - 6),
-        label_pos=(1340, 585),
+        label_pos=(1340, 577),
     ),
 
     5: StationGeom(
@@ -269,7 +217,7 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         process_pos_tl=(x5_4, y5_1),
         input_pos=(x5_4 + 102, y5_1 - 6),
         output_pos=(x5_1 - 30, y5_1 - 6),
-        label_pos=(850, 585),
+        label_pos=(860, 577),
     ),
 
     6: StationGeom(
@@ -283,7 +231,7 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         process_pos_tl=(x6_2, y6_4),
         input_pos=(x6_2 + 102, y6_4 - 34),
         output_pos=(x6_2 - 60, y6_4 + 30),
-        label_pos=(280, 150),
+        label_pos=(280, 140),
     ),
 }
 
@@ -425,25 +373,26 @@ def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width:
 # ----------------------------
 # Drawing helpers
 # ----------------------------
-
-def load_font_calibri_prefer(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Prøver Calibri, ellers fallback. Samme fontfamilie; størrelser styres af size."""
+   
+def load_font_calibri_prefer(size: int):
     candidates = [
+        r"C:\Windows\Fonts\calibri.ttf",
+        r"C:\Windows\Fonts\Calibri.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
         str(ROOTDIR / "calibri.ttf"),
         str(ROOTDIR / "Calibri.ttf"),
-        os.path.join(os.getcwd(), "calibri.ttf"),
-        os.path.join(os.getcwd(), "Calibri.ttf"),
-        "/usr/share/fonts/truetype/msttcorefonts/Calibri.ttf",
-        "/usr/share/fonts/truetype/msttcorefonts/calibri.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ]
     for path in candidates:
         if os.path.exists(path):
             try:
-                return ImageFont.truetype(path, size=size)
-            except Exception:
-                pass
-    return ImageFont.load_default()
+                f = ImageFont.truetype(path, size=size)
+                return f
+            except Exception as e:
+                print("Font load failed:", path, e)
+
+    print("WARNING: Falling back to load_default() (fixed size)")
+    return ImageFont.load_default
+
 
 
 def paste_icon_with_centered_text(
@@ -824,9 +773,9 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
         print()  # newline after progress bar
 
     print(f"Rendered {frame_idx} frames")
-    print(f"Frames saved in: {frames_dir}")
+    print(f"Frames saved in: {str(frames_dir).split('__')[1]}")
     if writer is not None:
-        print(f"MP4 saved to:    {mp4_path}")
+        print(f"MP4 saved to:    {str(mp4_path).split('__')[1]}")
     return starttime, total_frames
 
 
@@ -863,7 +812,7 @@ def main():
         starttime, total_frames = render_after_movie(order_dir, fps=fps, sim_seconds_per_frame=spf)
         endtime = time.perf_counter()
         fps = total_frames / (endtime - starttime) if total_frames > 0 else 0.0
-        print(f"Rendered {fps} frames per second.")
+        print(f"Rendered {fps:.2f} frames per second.")
         print(f"Total rendering time: {endtime - starttime:.2f} seconds")
         return
 
