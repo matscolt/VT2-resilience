@@ -352,6 +352,36 @@ def prompt_int(prompt: str, default: int) -> int:
 # ----------------------------
 
 def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 70) -> int:
+    # Use perf_counter for timing
+    now = time.perf_counter()
+
+    # Create persistent state the first time
+    if not hasattr(progress_update, "_last_tick"):
+        progress_update._last_tick = now
+        progress_update._dts = deque(maxlen=100)  # last 100 frame times
+        progress_update._avg_fps = None
+        progress_update._eta_seconds = None
+
+    dt = now - progress_update._last_tick
+    progress_update._last_tick = now
+
+    if dt > 0:
+        progress_update._dts.append(dt)
+
+    # Average FPS (last 100 frames; before 100 frames it is average of all so far)
+    if len(progress_update._dts) > 0:
+        avg_dt = sum(progress_update._dts) / len(progress_update._dts)
+        progress_update._avg_fps = 1.0 / avg_dt if avg_dt > 1e-9 else None
+    else:
+        progress_update._avg_fps = None
+
+    remaining = max(int(total_frames) - int(frame_idx), 0)
+    if progress_update._avg_fps and progress_update._avg_fps > 0:
+        progress_update._eta_seconds = remaining / progress_update._avg_fps
+    else:
+        progress_update._eta_seconds = None
+
+    # --- original % step logic (2%) ---
     if total_frames <= 0:
         return next_pct
 
@@ -360,13 +390,27 @@ def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width:
         return next_pct
 
     pct = min(100, max(0, pct))
+
+    def _format_eta(seconds):
+        if seconds is None or seconds != seconds or seconds < 0:
+            return "--:--"
+        seconds = int(round(seconds))
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        return f"{h:d}:{m:02d}:{s:02d}" if h > 0 else f"{m:02d}:{s:02d}"
+
+    fps_str = f"{progress_update._avg_fps:5.1f} fps" if (progress_update._avg_fps and progress_update._avg_fps > 0) else "--.- fps"
+    eta_str = _format_eta(progress_update._eta_seconds)
+
     filled = int(round((pct / 100) * bar_width))
     bar = "#" * filled + "-" * (bar_width - filled)
-    msg = f"Rendering: [{bar}] {pct:3d}%  ({frame_idx}/{total_frames})"
+    msg = f"Rendering: [{bar}] {pct:3d}%  ({frame_idx}/{total_frames})  {fps_str}  ETA {eta_str}"
     print("\r" + msg, end="", flush=True)
 
     if pct >= 100:
         return 101
+
     return next_pct + 1
 
 
