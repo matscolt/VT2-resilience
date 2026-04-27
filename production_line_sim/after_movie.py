@@ -87,19 +87,19 @@ SIM_SECONDS_PER_FRAME = 0.5
 CARRIER_SIZE_PX = 63
 
 # Unit-ID style (inside carrier)
-UNIT_FONT_SIZE = 14
+UNIT_FONT_SIZE = 30
 UNIT_TEXT_COLOR = (0, 0, 0, 255)
 
 # Disruption style (next to station)
-DISRUPTION_FONT_SIZE = 24
-DISRUPTION_TEXT_COLOR = (255, 80, 80, 255)
+DISRUPTION_FONT_SIZE = 30
+DISRUPTION_TEXT_COLOR = (255, 255, 255, 255)
 DISRUPTION_PREFIX = "DISR"
 
 # Optional time label
 DRAW_TIME_LABEL = True
 TIME_LABEL_POS = (20, 20)
 TIME_LABEL_COLOR = (255, 255, 255, 255)
-TIME_LABEL_FONT_SIZE = 16
+TIME_LABEL_FONT_SIZE = 30
 
 # Loading bar shown above the unit in production
 BAR_W = 50
@@ -257,7 +257,7 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         process_pos_tl=(x4_4, y4_1),
         input_pos=(x4_4 + 102, y4_1 - 6),
         output_pos=(x4_1-30, y4_1 - 6),
-        label_pos=(1180, 430),
+        label_pos=(1340, 585),
     ),
 
     5: StationGeom(
@@ -269,7 +269,7 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         process_pos_tl=(x5_4, y5_1),
         input_pos=(x5_4 + 102, y5_1 - 6),
         output_pos=(x5_1 - 30, y5_1 - 6),
-        label_pos=(700, 430),
+        label_pos=(850, 585),
     ),
 
     6: StationGeom(
@@ -281,9 +281,9 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
             (x6_1, y6_1), (x6_2, y6_1),
         ],
         process_pos_tl=(x6_2, y6_4),
-        input_pos=(x6_2 + 60, y6_4 - 63),
+        input_pos=(x6_2 + 102, y6_4 - 34),
         output_pos=(x6_2 - 60, y6_4 + 30),
-        label_pos=(130, 120),
+        label_pos=(280, 150),
     ),
 }
 
@@ -400,7 +400,7 @@ def prompt_int(prompt: str, default: int) -> int:
 
 
 # ----------------------------
-# Terminal progress bar (2% steps)
+# Terminal progress bar
 # ----------------------------
 
 def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 70) -> int:
@@ -419,7 +419,7 @@ def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width:
 
     if pct >= 100:
         return 101
-    return next_pct + 2
+    return next_pct + 1
 
 
 # ----------------------------
