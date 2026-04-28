@@ -10,7 +10,7 @@ from collections import deque
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
-
+import math
 
 # ----------------------------
 # Paths
@@ -39,7 +39,7 @@ UNIT_FONT_SIZE = 12
 UNIT_TEXT_COLOR = (0, 0, 0, 255)
 
 # Disruption style (next to station)
-DISRUPTION_FONT_SIZE = 26
+DISRUPTION_FONT_SIZE = 28
 DISRUPTION_TEXT_COLOR = (255, 0, 0, 255)
 DISRUPTION_PREFIX = "DISR"
 
@@ -167,7 +167,7 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         process_pos_tl=(x1_4, y1_1),
         input_pos=(x1_1 - 30, y1_1-6),
         output_pos=(x1_4 + 102, y1_1-6),
-        label_pos=(650, 988),
+        label_pos=(500, 1022),
     ),
 
     2: StationGeom(
@@ -179,7 +179,7 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         process_pos_tl=(x2_4, y2_1),
         input_pos=(x2_1 - 30, y2_1-6),
         output_pos=(x2_4 + 102, y2_1-6),
-        label_pos=(1150, 998),
+        label_pos=(985, 1025),
     ),
 
     3: StationGeom(
@@ -192,8 +192,8 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         ],
         process_pos_tl=(x3_2, y3_4),
         input_pos=(1640, 891),
-        output_pos=(1640, y4_1 - 6),
-        label_pos=(1830, 585),
+        output_pos=(1640, y4_1 - 7),
+        label_pos=(1691, 562),
     ),
 
     4: StationGeom(
@@ -203,9 +203,9 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
             (x4_4, y4_2), (x4_3, y4_2), (x4_2, y4_2), (x4_1, y4_2),
         ],
         process_pos_tl=(x4_4, y4_1),
-        input_pos=(x4_4 + 102, y4_1 - 6),
-        output_pos=(x4_1-30, y4_1 - 6),
-        label_pos=(1340, 577),
+        input_pos=(x4_4 + 102, y4_1 - 7),
+        output_pos=(x4_1-30, y4_1 - 7),
+        label_pos=(1210, 550),
     ),
 
     5: StationGeom(
@@ -215,9 +215,9 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
             (x5_4, y5_2), (x5_3, y5_2), (x5_2, y5_2), (x5_1, y5_2),
         ],
         process_pos_tl=(x5_4, y5_1),
-        input_pos=(x5_4 + 102, y5_1 - 6),
-        output_pos=(x5_1 - 30, y5_1 - 6),
-        label_pos=(860, 577),
+        input_pos=(x5_4 + 102, y5_1 - 7),
+        output_pos=(x5_1 - 30, y5_1 - 7),
+        label_pos=(730, 550),
     ),
 
     6: StationGeom(
@@ -229,9 +229,9 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
             (x6_1, y6_1), (x6_2, y6_1),
         ],
         process_pos_tl=(x6_2, y6_4),
-        input_pos=(x6_2 + 102, y6_4 - 34),
+        input_pos=(x6_2 + 102, y6_4 - 30),
         output_pos=(x6_2 - 60, y6_4 + 30),
-        label_pos=(280, 140),
+        label_pos=(160, 112),
     ),
 }
 
@@ -351,7 +351,7 @@ def prompt_int(prompt: str, default: int) -> int:
 # Terminal progress bar
 # ----------------------------
 
-def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 70) -> int:
+def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 60) -> int:
     # Use perf_counter for timing
     now = time.perf_counter()
 
@@ -643,7 +643,6 @@ def prepare_data(order_dir: Path) -> Prepared:
 def resolve_transport_points(prepared: Prepared, from_name: str, to_name: str) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
     from_geom = prepared.station_name_to_geom.get(from_name)
     to_geom = prepared.station_name_to_geom.get(to_name)
-
     if from_geom is None and from_name in prepared.station_name_to_index:
         from_geom = STATION_GEOMETRY_BY_INDEX.get(int(prepared.station_name_to_index[from_name]))
     if to_geom is None and to_name in prepared.station_name_to_index:
@@ -653,6 +652,86 @@ def resolve_transport_points(prepared: Prepared, from_name: str, to_name: str) -
         return None
 
     return (from_geom.output_pos, to_geom.input_pos)
+
+
+# ----------------------------
+# Transport polyline helpers (for routes with 90-degree turns)
+# ----------------------------
+
+def polyline_point(points, alpha: float):
+    """
+    Return (x,y) at fraction alpha (0..1) along a polyline defined by 'points'.
+    Uses distance-proportional interpolation, so speed is smooth over segments.
+    """
+    if not points or len(points) < 2:
+        return points[0] if points else (0.0, 0.0)
+
+    alpha = max(0.0, min(1.0, float(alpha)))
+
+    seg_lens = []
+    total = 0.0
+    for (x0, y0), (x1, y1) in zip(points[:-1], points[1:]):
+        L = math.hypot(x1 - x0, y1 - y0)
+        seg_lens.append(L)
+        total += L
+
+    if total <= 1e-9:
+        return points[-1]
+
+    target = alpha * total
+    acc = 0.0
+    for i, L in enumerate(seg_lens):
+        if acc + L >= target:
+            t = (target - acc) / max(L, 1e-9)
+            (x0, y0) = points[i]
+            (x1, y1) = points[i + 1]
+            return (x0 + t * (x1 - x0), y0 + t * (y1 - y0))
+        acc += L
+
+    return points[-1]
+
+
+# Route-specific intermediate waypoints (exclude start/end; those are added automatically)
+# Key: (from_station_index, to_station_index)
+# TODO: Replace the two points for (5,6) with your measured corner coordinates.
+ROUTE_WAYPOINTS = {
+    (5, 6): [
+        (490, y5_1 - 7),  # checkpoint 1 (first 90-degree turn)
+        (490, y6_4 - 30),  # checkpoint 2 (second 90-degree turn)
+    ],
+}
+
+def resolve_transport_polyline(prepared, from_name: str, to_name: str):
+    """
+    Build polyline: from.output_pos -> [route waypoints] -> to.input_pos
+    Falls back to straight line if no waypoints exist.
+    """
+    base = resolve_transport_points(prepared, from_name, to_name)
+    if base is None:
+        return None
+
+    start, end = base
+
+    from_idx = prepared.station_name_to_index.get(from_name)
+    to_idx = prepared.station_name_to_index.get(to_name)
+
+    waypoints = []
+    if from_idx is not None and to_idx is not None:
+        waypoints = ROUTE_WAYPOINTS.get((int(from_idx), int(to_idx)), [])
+
+    # Filter invalid/placeholder points
+    cleaned = []
+    for p in waypoints:
+        if p is None:
+            continue
+        if not (isinstance(p, (tuple, list)) and len(p) == 2):
+            continue
+        x, y = p
+        if (x, y) == (0, 0):
+            continue
+        cleaned.append((x, y))
+
+    return [start, *cleaned, end]
 
 
 # ----------------------------
@@ -784,15 +863,14 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
 
             # transports
             for tr in active_tr:
-                pts = resolve_transport_points(prepared, tr.from_name, tr.to_name)
-                if pts is None:
+                poly = resolve_transport_polyline(prepared, tr.from_name, tr.to_name)
+                if poly is None:
                     continue
-                (x0, y0), (x1, y1) = pts
 
                 denom = max(tr.finish - tr.start, 1e-9)
                 alpha = max(0.0, min(1.0, (t - tr.start) / denom))
-                x = x0 + alpha * (x1 - x0)
-                y = y0 + alpha * (y1 - y0)
+
+                x, y = polyline_point(poly, alpha)
                 paste_icon_with_centered_text(frame, unit_icon, (x, y), tr.unit_id, unit_font, UNIT_TEXT_COLOR)
 
             if DRAW_TIME_LABEL:
