@@ -351,6 +351,15 @@ def prompt_int(prompt: str, default: int) -> int:
 # Terminal progress bar
 # ----------------------------
 
+def _format_eta(seconds):
+        if seconds is None or seconds != seconds or seconds < 0:
+            return "--:--"
+        seconds = int(round(seconds))
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        return f"{h:d}:{m:02d}:{s:02d}" if h > 0 else f"{m:02d}:{s:02d}"
+
 def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 60) -> int:
     # Use perf_counter for timing
     now = time.perf_counter()
@@ -390,15 +399,6 @@ def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width:
         return next_pct
 
     pct = min(100, max(0, pct))
-
-    def _format_eta(seconds):
-        if seconds is None or seconds != seconds or seconds < 0:
-            return "--:--"
-        seconds = int(round(seconds))
-        h = seconds // 3600
-        m = (seconds % 3600) // 60
-        s = seconds % 60
-        return f"{h:d}:{m:02d}:{s:02d}" if h > 0 else f"{m:02d}:{s:02d}"
 
     fps_str = f"{progress_update._avg_fps:5.1f} fps" if (progress_update._avg_fps and progress_update._avg_fps > 0) else "--.- fps"
     eta_str = _format_eta(progress_update._eta_seconds)
@@ -930,12 +930,12 @@ def main():
         order_dir = prompt_for_run_folder(OUTPUTDIR)
         fps = prompt_int("FPS", FPS)
         spf = prompt_float("Simulation seconds per frame", SIM_SECONDS_PER_FRAME)
-        #clear_folder(order_dir)
         starttime, total_frames = render_after_movie(order_dir, fps=fps, sim_seconds_per_frame=spf)
         endtime = time.perf_counter()
-        fps = total_frames / (endtime - starttime) if total_frames > 0 else 0.0
+        runtime = endtime - starttime
+        fps = total_frames / (runtime) if total_frames > 0 else 0.0
         print(f"Rendered {fps:.2f} frames per second.")
-        print(f"Total rendering time: {endtime - starttime:.2f} seconds")
+        print(f"Total rendering time: {_format_eta(runtime):.2f} seconds")
         return
 
     if args.cmd == "pick-coords":
@@ -946,14 +946,12 @@ def main():
         order_dir = prompt_for_run_folder(OUTPUTDIR) if args.run is None else (OUTPUTDIR / args.run)
         fps = args.fps if args.fps is not None else FPS
         spf = args.sim_seconds_per_frame if args.sim_seconds_per_frame is not None else SIM_SECONDS_PER_FRAME
-        #clear_folder(order_dir)
         starttime, total_frames = render_after_movie(order_dir, fps=fps, sim_seconds_per_frame=spf)
         endtime = time.perf_counter()
-        starttime, total_frames = render_after_movie(order_dir, fps=fps, sim_seconds_per_frame=spf)
-        endtime = time.perf_counter()
-        fps = total_frames / (endtime - starttime) if total_frames > 0 else 0.0
-        print(f"Rendered {fps} frames per second.")
-        print(f"Total rendering time: {endtime - starttime:.2f} seconds")
+        runtime = endtime - starttime
+        fps = total_frames / (runtime) if total_frames > 0 else 0.0
+        print(f"Rendered {fps:.2f} frames per second.")
+        print(f"Total rendering time: {_format_eta(runtime):.2f} seconds")
         return
 
 
