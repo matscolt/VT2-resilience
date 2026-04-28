@@ -186,9 +186,9 @@ STATION_GEOMETRY_BY_INDEX: Dict[int, StationGeom] = {
         station_name_in_csv="Station 3: Robot cell",
         queue_slots_tl=[
             (x3_1, y3_4),
-            (x3_1, y3_3), (x3_2, y3_3),
-            (x3_1, y3_2), (x3_2, y3_2),
-            (x3_1, y3_1), (x3_2, y3_1),
+            (x3_2, y3_3),(x3_1, y3_3), 
+            (x3_2, y3_2),(x3_1, y3_2), 
+            (x3_2, y3_1),(x3_1, y3_1), 
         ],
         process_pos_tl=(x3_2, y3_4),
         input_pos=(1640, 891),
