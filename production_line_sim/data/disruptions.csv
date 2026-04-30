@@ -1,0 +1,5 @@
+disruption_type,station_id,start_time,end_time,efficiency_percentage,order_id,Order_time,priority,variant0,quantity,variant1,quantity,variant2,quantity
+machine_breakdown,1,500,10000,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+efficiency_loss,2,1500,20000,70,nan,nan,nan,nan,nan,nan,nan,nan,nan
+failed_inspection,4,2500,30000,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan
+emergency_order,nan,3500,nan,nan,999,nan,1,FUSE0,5,FUSE1,5,FUSE2,5
