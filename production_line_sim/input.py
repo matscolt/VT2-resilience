@@ -1,46 +1,113 @@
 import json
 import csv
+import random
 from datetime import datetime
 from pathlib import Path
 
 # 🔷 Write CSV
-def write_csv(rows, output_path: Path):
+def write_order_csv(rows, output_path: Path):
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["order_id", "due date", "priority", "variant0", "quantity", "variant1", "quantity", "variant2", "quantity"]
+            fieldnames=["order_id", "due date", "priority", "variant0", "quantity0", "variant1", "quantity1", "variant2", "quantity2"]
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+def write_disruption_csv(rows, output_path: Path):
+    with output_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["disruption_type", "station_id", "start_time", "end_time", "efficiency_percentage", "order_id", "Order_time", "priority", "variant0", "quantity0", "variant1", "quantity1", "variant2", "quantity2"]
         )
         writer.writeheader()
         writer.writerows(rows)
 
 #output csv file with disruptions
 
-def generate_orderlist(num_orders, num_units, output_path: Path):
+def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
     rows = []
-    for order_id in range(1, num_orders + 1):
-        due_date = 0
-        priority = 1
-        variant0 = f"FUSE{order_id % 3}"
-        quantity0 = num_units
-        variant1 = f"FUSE{(order_id + 1) % 3}"
-        quantity1 = num_units
-        variant2 = f"FUSE{(order_id + 2) % 3}"
-        quantity2 = num_units
+    sum = []
+    orderstd = 0.1
+    unitstd = 0.1
+    ordermean = num_units/num_orders
 
+    for order_id in range(1, num_orders):
+        units = int(max(random.normalvariate(ordermean, orderstd), 1))
+        due_date = 0
+        priority = int(max(random.normalvariate(2, 1), 1))
+        variant0 = "FUSE0"
+        quantity0 = int(units * max(random.normalvariate(0.33, unitstd), 0))
+        variant1 = "FUSE1"
+        quantity1 = int(units * max(random.normalvariate(0.33, unitstd), 0))
+        variant2 = "FUSE2"
+        quantity2 = int(units - quantity0 - quantity1)
+        while quantity2 < 0:
+            quantity0 = quantity0 - 1
+            quantity1 = quantity1 - 1
+            quantity2 = units - quantity0 - quantity1
+            
         row = {
             "order_id": order_id,
             "due date": due_date,
             "priority": priority,
             "variant0": variant0,
-            "quantity": quantity0,
+            "quantity0": quantity0,
             "variant1": variant1,
-            "quantity": quantity1,
+            "quantity1": quantity1,
             "variant2": variant2,
-            "quantity": quantity2
+            "quantity2": quantity2
         }
         rows.append(row)
+        sum.append(quantity0 + quantity1 + quantity2)
+    
+    total_sum = 0
+    for s in sum:
+        total_sum += s
+    units = num_units-total_sum
+    due_date = 0
+    priority = int(max(random.normalvariate(2, 1), 1))
+    variant0 = "FUSE0"
+    quantity0 = int(units * max(random.normalvariate(0.33, unitstd), 0))
+    variant1 = "FUSE1"
+    quantity1 = int(units * max(random.normalvariate(0.33, unitstd), 0))
+    variant2 = "FUSE2"
+    quantity2 = int(units - quantity0 - quantity1)
+    while quantity2 < 0:
+        quantity0 = quantity0 - 1
+        quantity1 = quantity1 - 1
+        quantity2 = units - quantity0 - quantity1
 
-    write_csv(rows, output_path)
+    row = {
+        "order_id": order_id,
+        "due date": due_date,
+        "priority": priority,
+        "variant0": variant0,
+        "quantity0": quantity0,
+        "variant1": variant1,
+        "quantity1": quantity1,
+        "variant2": variant2,
+        "quantity2": quantity2
+    }
+    rows.append(row)
+    total_sum += quantity0 + quantity1 + quantity2
+    
+    print(f"Generated {num_orders} orders with a total of {total_sum} units.")
+    write_order_csv(rows, output_path)
+
+def generate_disruption_list(sim_time: int, output_path: Path):
+    #read settings json file
+
+    #read disruption json file
+
+    #generate disruptions csv based on settings and disruption json files
+    #   it should calculate the chance of each disruption on each station
+    #   Use the data to generate a list of disruptions
+    rows = []
+    write_disruption_csv(rows, output_path)
+
+
+
 
 # output json file with settings and disruptions
 
@@ -176,6 +243,16 @@ def create_disruption_json(output_path: Path):
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(setting, f, indent=4)
 
+def read_settings_json(input_path: Path):
+    with input_path.open("r", encoding="utf-8") as f:
+        settings = json.load(f)
+    return settings["sim_time [s]"]
+
+def read_disruption_json(input_path: Path):
+    with input_path.open("r", encoding="utf-8") as f:
+        disruption_settings = json.load(f)
+    return disruption_settings
+
 def main():
     base_dir = Path(__file__).resolve().parent
     input_dir = base_dir / "input"
@@ -195,7 +272,8 @@ def main():
     order_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate paths
-    output_path_csv = order_dir / ordername_csv
+    output_path_ordercsv = order_dir / ordername_csv
+    output_path_disruptioncsv = order_dir / f"disruption_list_{timestamp}_{n}.csv"
     output_path_settingsjson = order_dir / "settings.json"
     output_path_disruptionjson = order_dir / "disruption.json"
 
@@ -205,10 +283,17 @@ def main():
 
     num_orders = int(input("Enter amount of orders: "))
     num_units = int(input("Enter amount of units: "))
+   
+    # read settings json file
+
+    sim_time = read_settings_json(output_path_settingsjson)
+    disruption_settings = read_disruption_json(output_path_disruptionjson)
+
     # Generate orderlist
 
     # should be in format: order_id, Order_time, priority, variant0, quantity, variant1, quantity, variant2, quantity
-    generate_orderlist(num_orders, num_units, output_path_csv)
+    generate_orderlist(num_orders, num_units, sim_time, output_path_ordercsv)
+    generate_disruption_list(sim_time, output_path_disruptioncsv)
     print(f"--- Created order file: {orderfoldername} ----")
 
 
