@@ -874,7 +874,7 @@ def render_after_movie(order_dir: Path, fps: int = FPS, sim_seconds_per_frame: f
                 paste_icon_with_centered_text(frame, unit_icon, (x, y), tr.unit_id, unit_font, UNIT_TEXT_COLOR)
 
             if DRAW_TIME_LABEL:
-                draw.text(TIME_LABEL_POS, f"t = {t:7.2f} s", fill=TIME_LABEL_COLOR, font=time_font)
+                draw.text(TIME_LABEL_POS, f"t = {t:7.2f} s ({_format_eta(t)})", fill=TIME_LABEL_COLOR, font=time_font)
 
             frame_path = frames_dir / f"{frame_idx + 1}.png"
             frame.save(frame_path)
@@ -935,7 +935,7 @@ def main():
         runtime = endtime - starttime
         fps = total_frames / (runtime) if total_frames > 0 else 0.0
         print(f"Rendered {fps:.2f} frames per second.")
-        print(f"Total rendering time: {_format_eta(runtime):.2f} seconds")
+        print(f"Total rendering time: {_format_eta(runtime)} seconds")
         return
 
     if args.cmd == "pick-coords":
@@ -951,7 +951,7 @@ def main():
         runtime = endtime - starttime
         fps = total_frames / (runtime) if total_frames > 0 else 0.0
         print(f"Rendered {fps:.2f} frames per second.")
-        print(f"Total rendering time: {_format_eta(runtime):.2f} seconds")
+        print(f"Total rendering time: {_format_eta(runtime)}")
         return
 
 
