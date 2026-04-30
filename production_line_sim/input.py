@@ -66,7 +66,7 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
         total_sum += s
     units = num_units-total_sum
     due_date = 0
-    priority = int(max(random.normalvariate(2, 1), 1))
+    priority = int(max(random.normalvariate(2.5, 1), 1))
     variant0 = "FUSE0"
     quantity0 = int(units * max(random.normalvariate(0.33, unitstd), 0))
     variant1 = "FUSE1"
