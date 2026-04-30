@@ -1968,6 +1968,7 @@ def calculate_kpis(
     operations: list[OperationRecord],
     unit_summaries: list[UnitSummary],
     station_summaries: list[StationSummary],
+    transport_records: list[TransportRecord] | None = None,
 ) -> dict[str, float | int]:
     def _average_cycle_time_from_completion_times(completion_times: list[float]) -> float:
         if not completion_times:
@@ -1980,6 +1981,59 @@ def calculate_kpis(
             for i in range(1, len(completion_times_sorted))
         ]
         return float(mean(intervals)) if intervals else 0.0
+
+    def _build_line_active_intervals() -> list[tuple[float, float]]:
+        intervals: list[tuple[float, float]] = []
+        for op in operations:
+            start_time_s = float(op.start_time_s)
+            finish_time_s = float(op.finish_time_s)
+            if finish_time_s > start_time_s:
+                intervals.append((start_time_s, finish_time_s))
+        for tr in transport_records or []:
+            start_time_s = float(tr.start_time_s)
+            finish_time_s = float(tr.finish_time_s)
+            if finish_time_s > start_time_s:
+                intervals.append((start_time_s, finish_time_s))
+        if not intervals:
+            return []
+        intervals.sort()
+        merged: list[tuple[float, float]] = []
+        current_start, current_end = intervals[0]
+        for start_time_s, finish_time_s in intervals[1:]:
+            if start_time_s <= current_end:
+                current_end = max(current_end, finish_time_s)
+            else:
+                merged.append((current_start, current_end))
+                current_start, current_end = start_time_s, finish_time_s
+        merged.append((current_start, current_end))
+        return merged
+
+    def _overlap_with_active_intervals(
+        interval_start_s: float,
+        interval_finish_s: float,
+        active_intervals: list[tuple[float, float]],
+    ) -> float:
+        if interval_finish_s <= interval_start_s or not active_intervals:
+            return 0.0
+        overlap_s = 0.0
+        for active_start_s, active_finish_s in active_intervals:
+            if active_finish_s <= interval_start_s:
+                continue
+            if active_start_s >= interval_finish_s:
+                break
+            overlap_s += max(
+                0.0,
+                min(interval_finish_s, active_finish_s) - max(interval_start_s, active_start_s),
+            )
+        return overlap_s
+
+    def _average_from_intervals(
+        intervals: list[float],
+        single_fallback_value: float = 0.0,
+    ) -> float:
+        if intervals:
+            return float(mean(intervals))
+        return float(single_fallback_value)
 
     if not unit_summaries:
         return {
@@ -2025,13 +2079,111 @@ def calculate_kpis(
         "total_wait_time_seconds": round(total_wait_time_s, 4),
     }
 
+    line_active_intervals = _build_line_active_intervals()
+    completed_units_sorted = sorted(
+        unit_summaries,
+        key=lambda unit_summary: (float(unit_summary.completion_time_s), str(unit_summary.unit_id)),
+    )
+
+    variant_wall_clock_intervals: defaultdict[str, list[float]] = defaultdict(list)
+    variant_global_active_intervals: defaultdict[str, list[float]] = defaultdict(list)
+    variant_global_cycle_intervals: defaultdict[str, list[float]] = defaultdict(list)
+    variant_completion_values: defaultdict[str, list[float]] = defaultdict(list)
+
+    variant_line_intervals_raw: defaultdict[str, list[tuple[float, float]]] = defaultdict(list)
+    for op in operations:
+        start_time_s = float(op.start_time_s)
+        finish_time_s = float(op.finish_time_s)
+        if finish_time_s > start_time_s:
+            variant_line_intervals_raw[str(op.variant)].append((start_time_s, finish_time_s))
+    for tr in transport_records or []:
+        start_time_s = float(tr.start_time_s)
+        finish_time_s = float(tr.finish_time_s)
+        if finish_time_s > start_time_s:
+            variant_line_intervals_raw[str(tr.variant)].append((start_time_s, finish_time_s))
+
+    variant_line_intervals: dict[str, list[tuple[float, float]]] = {}
+    for variant_name, raw_intervals in variant_line_intervals_raw.items():
+        if not raw_intervals:
+            variant_line_intervals[variant_name] = []
+            continue
+        raw_intervals.sort()
+        merged_variant_intervals: list[tuple[float, float]] = []
+        current_start_s, current_finish_s = raw_intervals[0]
+        for start_time_s, finish_time_s in raw_intervals[1:]:
+            if start_time_s <= current_finish_s:
+                current_finish_s = max(current_finish_s, finish_time_s)
+            else:
+                merged_variant_intervals.append((current_start_s, current_finish_s))
+                current_start_s, current_finish_s = start_time_s, finish_time_s
+        merged_variant_intervals.append((current_start_s, current_finish_s))
+        variant_line_intervals[variant_name] = merged_variant_intervals
+
+    for unit_summary in completed_units_sorted:
+        variant_completion_values[str(unit_summary.variant)].append(float(unit_summary.completion_time_s))
+
+    for variant, completion_values in variant_completion_values.items():
+        if len(completion_values) < 2:
+            continue
+
+        for previous_completion_s, current_completion_s in zip(completion_values, completion_values[1:]):
+            interval_start_s = float(previous_completion_s)
+            interval_finish_s = float(current_completion_s)
+            interval_duration_s = max(0.0, interval_finish_s - interval_start_s)
+
+            variant_wall_clock_intervals[variant].append(interval_duration_s)
+
+            active_same_variant_s = _overlap_with_active_intervals(
+                interval_start_s,
+                interval_finish_s,
+                variant_line_intervals.get(variant, []),
+            )
+            active_any_variant_s = _overlap_with_active_intervals(
+                interval_start_s,
+                interval_finish_s,
+                line_active_intervals,
+            )
+            no_activity_s = max(0.0, interval_duration_s - active_any_variant_s)
+
+            variant_global_active_intervals[variant].append(active_same_variant_s)
+            variant_global_cycle_intervals[variant].append(active_same_variant_s + no_activity_s)
+
     for variant in sorted({str(u.variant) for u in unit_summaries}):
-        variant_completion_times = [
-            float(u.completion_time_s) for u in unit_summaries if str(u.variant) == variant
-        ]
-        kpis[f"average_cycle_time_seconds_{variant.lower()}"] = round(
-            _average_cycle_time_from_completion_times(variant_completion_times), 4
+        variant_key = variant.lower()
+        single_completion_fallback_s = (
+            variant_completion_values[variant][0] if len(variant_completion_values[variant]) == 1 else 0.0
         )
+        single_active_completion_fallback_s = (
+            _overlap_with_active_intervals(
+                0.0,
+                variant_completion_values[variant][0],
+                variant_line_intervals.get(variant, []),
+            )
+            if len(variant_completion_values[variant]) == 1
+            else 0.0
+        )
+        single_global_completion_fallback_s = (
+            float(variant_completion_values[variant][0])
+            if len(variant_completion_values[variant]) == 1
+            else 0.0
+        )
+
+        average_variant_cycle_time_s = _average_from_intervals(
+            variant_wall_clock_intervals[variant],
+            single_fallback_value=single_completion_fallback_s,
+        )
+        active_variant_cycle_time_s = _average_from_intervals(
+            variant_global_active_intervals[variant],
+            single_fallback_value=single_active_completion_fallback_s,
+        )
+        global_variant_cycle_time_s = _average_from_intervals(
+            variant_global_cycle_intervals[variant],
+            single_fallback_value=single_global_completion_fallback_s,
+        )
+
+        kpis[f"average_cycle_time_seconds_{variant_key}"] = round(average_variant_cycle_time_s, 4)
+        kpis[f"Active_average_cycle_time_seconds_{variant_key}"] = round(active_variant_cycle_time_s, 4)
+        kpis[f"global_average_cycle_time_seconds_{variant_key}"] = round(global_variant_cycle_time_s, 4)
 
     for summary in station_summaries:
         safe_key = re.sub(r"[^A-Za-z0-9]+", "_", summary.station_name).strip("_").lower()
@@ -2755,6 +2907,7 @@ def main() -> None:
         operations=operations,
         unit_summaries=unit_summaries,
         station_summaries=station_summaries,
+        transport_records=transport_records,
     )
 
     kpis["carriers"] = carriers
@@ -2818,6 +2971,7 @@ def main() -> None:
         operations=operations_no_disruptions,
         unit_summaries=unit_summaries_no_disruptions,
         station_summaries=station_summaries_no_disruptions,
+        transport_records=transport_records_no_disruptions,
     )
     kpis_no_disruptions["carriers"] = carriers
     kpis_no_disruptions["return_to_station_1_time_seconds"] = round(RETURN_TO_STATION_1_TIME_S, 4)
