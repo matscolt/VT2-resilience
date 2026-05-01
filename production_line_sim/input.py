@@ -25,23 +25,27 @@ def write_disruption_csv(rows, output_path: Path):
 
 #output csv file with disruptions
 
+def round_half_up(n):
+    n = n+0.5
+    return int(n)
+
 def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
     rows = []
     sum = []
-    orderstd = 0.1
-    unitstd = 0.1
+    priosum = []
     ordermean = num_units/num_orders
-
+    orderstd = ordermean * 0.1
+    unitstd =  0.1
     for order_id in range(1, num_orders):
-        units = int(max(random.normalvariate(ordermean, orderstd), 1))
+        units = round_half_up(max(random.normalvariate(ordermean, orderstd), 1))
         due_date = 0
-        priority = int(max(random.normalvariate(2, 1), 1))
+        priority = round_half_up(max(random.normalvariate(2, 1), 1))
         variant0 = "FUSE0"
-        quantity0 = int(units * max(random.normalvariate(0.33, unitstd), 0))
+        quantity0 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
         variant1 = "FUSE1"
-        quantity1 = int(units * max(random.normalvariate(0.33, unitstd), 0))
+        quantity1 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
         variant2 = "FUSE2"
-        quantity2 = int(units - quantity0 - quantity1)
+        quantity2 = round_half_up(units - quantity0 - quantity1)
         while quantity2 < 0:
             quantity0 = quantity0 - 1
             quantity1 = quantity1 - 1
@@ -60,26 +64,31 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
         }
         rows.append(row)
         sum.append(quantity0 + quantity1 + quantity2)
+        priosum.append(priority)
     
     total_sum = 0
     for s in sum:
         total_sum += s
+    priority_sum = 0
+    for p in priosum:
+        priority_sum += p
+    print(f"Total units in orders: {total_sum}")
     units = num_units-total_sum
     due_date = 0
-    priority = int(max(random.normalvariate(2.5, 1), 1))
+    priority = round_half_up(max(random.normalvariate(2.5, 1), 1))
     variant0 = "FUSE0"
-    quantity0 = int(units * max(random.normalvariate(0.33, unitstd), 0))
+    quantity0 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
     variant1 = "FUSE1"
-    quantity1 = int(units * max(random.normalvariate(0.33, unitstd), 0))
+    quantity1 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
     variant2 = "FUSE2"
-    quantity2 = int(units - quantity0 - quantity1)
+    quantity2 = round_half_up(units - quantity0 - quantity1)
     while quantity2 < 0:
         quantity0 = quantity0 - 1
         quantity1 = quantity1 - 1
         quantity2 = units - quantity0 - quantity1
 
     row = {
-        "order_id": order_id,
+        "order_id": order_id+1,
         "due date": due_date,
         "priority": priority,
         "variant0": variant0,
@@ -91,8 +100,10 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
     }
     rows.append(row)
     total_sum += quantity0 + quantity1 + quantity2
-    
-    print(f"Generated {num_orders} orders with a total of {total_sum} units.")
+    priority_sum += priority
+
+    print(f"Total priority in orders: {priority_sum} with a mean of {priority_sum/num_orders}")
+    print(f"Generated {num_orders} orders with a total of {total_sum} units.\n Average units per order: {total_sum/num_orders}")
     write_order_csv(rows, output_path)
 
 def generate_disruption_list(sim_time: int, output_path: Path):
@@ -104,6 +115,9 @@ def generate_disruption_list(sim_time: int, output_path: Path):
     #   it should calculate the chance of each disruption on each station
     #   Use the data to generate a list of disruptions
     rows = []
+
+
+
     write_disruption_csv(rows, output_path)
 
 
@@ -293,7 +307,8 @@ def main():
 
     # should be in format: order_id, Order_time, priority, variant0, quantity, variant1, quantity, variant2, quantity
     generate_orderlist(num_orders, num_units, sim_time, output_path_ordercsv)
-    generate_disruption_list(sim_time, output_path_disruptioncsv)
+    if disruption_settings["random based disruptions"]["enabled"] == 2:
+        generate_disruption_list(sim_time, output_path_disruptioncsv)
     print(f"--- Created order file: {orderfoldername} ----")
 
 
