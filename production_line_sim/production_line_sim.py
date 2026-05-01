@@ -3314,8 +3314,10 @@ def main() -> None:
     run_output_dir = create_run_output_dir(output_root, order_text)
 
     copy_file_if_exists(settings_path, run_output_dir / "settings_used.json")
-    copy_file_if_exists(disruption_path, run_output_dir / "disruption_used.json")
-    copy_file_if_exists(timed_disruption_csv_path, run_output_dir / "disruption_used.csv")
+    if int(disruption_mode) == 1:
+        copy_file_if_exists(disruption_path, run_output_dir / "disruption_used.json")
+    elif int(disruption_mode) == 2:
+        copy_file_if_exists(timed_disruption_csv_path, run_output_dir / "disruption_used.csv")
 
     save_run_metadata(
         order_text,
