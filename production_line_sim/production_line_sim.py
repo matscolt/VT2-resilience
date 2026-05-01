@@ -3409,6 +3409,163 @@ def main() -> None:
         transport_records=transport_records,
     )
 
+    completed_units_sorted = sorted(
+        unit_summaries,
+        key=lambda unit_summary: (
+            float(unit_summary.completion_time_s),
+            str(unit_summary.unit_id),
+        ),
+    )
+    fuse0_wall_clock_intervals: list[float] = []
+    fuse0_active_intervals: list[float] = []
+    fuse0_global_intervals: list[float] = []
+
+    line_active_intervals: list[tuple[float, float]] = []
+    for op in operations:
+        start_time_s = float(op.start_time_s)
+        finish_time_s = float(op.finish_time_s)
+        if finish_time_s > start_time_s:
+            line_active_intervals.append((start_time_s, finish_time_s))
+    for tr in transport_records:
+        start_time_s = float(tr.start_time_s)
+        finish_time_s = float(tr.finish_time_s)
+        if finish_time_s > start_time_s:
+            line_active_intervals.append((start_time_s, finish_time_s))
+    if line_active_intervals:
+        line_active_intervals.sort()
+        merged_line_active_intervals: list[tuple[float, float]] = []
+        current_start_s, current_finish_s = line_active_intervals[0]
+        for start_time_s, finish_time_s in line_active_intervals[1:]:
+            if start_time_s <= current_finish_s:
+                current_finish_s = max(current_finish_s, finish_time_s)
+            else:
+                merged_line_active_intervals.append((current_start_s, current_finish_s))
+                current_start_s, current_finish_s = start_time_s, finish_time_s
+        merged_line_active_intervals.append((current_start_s, current_finish_s))
+        line_active_intervals = merged_line_active_intervals
+
+    fuse0_variant_intervals: list[tuple[float, float]] = []
+    for op in operations:
+        if str(op.variant).upper() != "FUSE0":
+            continue
+        start_time_s = float(op.start_time_s)
+        finish_time_s = float(op.finish_time_s)
+        if finish_time_s > start_time_s:
+            fuse0_variant_intervals.append((start_time_s, finish_time_s))
+    for tr in transport_records:
+        if str(tr.variant).upper() != "FUSE0":
+            continue
+        start_time_s = float(tr.start_time_s)
+        finish_time_s = float(tr.finish_time_s)
+        if finish_time_s > start_time_s:
+            fuse0_variant_intervals.append((start_time_s, finish_time_s))
+    if fuse0_variant_intervals:
+        fuse0_variant_intervals.sort()
+        merged_fuse0_variant_intervals: list[tuple[float, float]] = []
+        current_start_s, current_finish_s = fuse0_variant_intervals[0]
+        for start_time_s, finish_time_s in fuse0_variant_intervals[1:]:
+            if start_time_s <= current_finish_s:
+                current_finish_s = max(current_finish_s, finish_time_s)
+            else:
+                merged_fuse0_variant_intervals.append((current_start_s, current_finish_s))
+                current_start_s, current_finish_s = start_time_s, finish_time_s
+        merged_fuse0_variant_intervals.append((current_start_s, current_finish_s))
+        fuse0_variant_intervals = merged_fuse0_variant_intervals
+
+    def _overlap_with_intervals(
+        interval_start_s: float,
+        interval_finish_s: float,
+        active_intervals: list[tuple[float, float]],
+    ) -> float:
+        if interval_finish_s <= interval_start_s or not active_intervals:
+            return 0.0
+        overlap_s = 0.0
+        for active_start_s, active_finish_s in active_intervals:
+            if active_finish_s <= interval_start_s:
+                continue
+            if active_start_s >= interval_finish_s:
+                break
+            overlap_s += max(
+                0.0,
+                min(interval_finish_s, active_finish_s) - max(interval_start_s, active_start_s),
+            )
+        return overlap_s
+
+    for previous_unit_summary, current_unit_summary in zip(
+        completed_units_sorted,
+        completed_units_sorted[1:],
+    ):
+        previous_variant = str(previous_unit_summary.variant).upper()
+        current_variant = str(current_unit_summary.variant).upper()
+        if previous_variant != "FUSE0" or current_variant != "FUSE0":
+            continue
+
+        interval_start_s = float(previous_unit_summary.completion_time_s)
+        interval_finish_s = float(current_unit_summary.completion_time_s)
+        interval_duration_s = max(0.0, interval_finish_s - interval_start_s)
+
+        fuse0_wall_clock_intervals.append(interval_duration_s)
+        fuse0_active_intervals.append(
+            _overlap_with_intervals(
+                interval_start_s,
+                interval_finish_s,
+                fuse0_variant_intervals,
+            )
+        )
+
+        active_any_variant_s = _overlap_with_intervals(
+            interval_start_s,
+            interval_finish_s,
+            line_active_intervals,
+        )
+        no_activity_s = max(0.0, interval_duration_s - active_any_variant_s)
+        fuse0_global_intervals.append(
+            fuse0_active_intervals[-1] + no_activity_s
+        )
+
+    fuse0_completion_times = [
+        float(unit_summary.completion_time_s)
+        for unit_summary in completed_units_sorted
+        if str(unit_summary.variant).upper() == "FUSE0"
+    ]
+    if len(fuse0_completion_times) == 1:
+        fuse0_average_cycle_time = float(fuse0_completion_times[0])
+        fuse0_active_cycle_time = _overlap_with_intervals(
+            0.0,
+            float(fuse0_completion_times[0]),
+            fuse0_variant_intervals,
+        )
+        fuse0_global_cycle_time = float(fuse0_completion_times[0])
+    else:
+        fuse0_average_cycle_time = (
+            float(mean(fuse0_wall_clock_intervals))
+            if fuse0_wall_clock_intervals
+            else 0.0
+        )
+        fuse0_active_cycle_time = (
+            float(mean(fuse0_active_intervals))
+            if fuse0_active_intervals
+            else 0.0
+        )
+        fuse0_global_cycle_time = (
+            float(mean(fuse0_global_intervals))
+            if fuse0_global_intervals
+            else 0.0
+        )
+
+    kpis["average_cycle_time_seconds_fuse0"] = round(
+        fuse0_average_cycle_time,
+        4,
+    )
+    kpis["Active_average_cycle_time_seconds_fuse0"] = round(
+        fuse0_active_cycle_time,
+        4,
+    )
+    kpis["global_average_cycle_time_seconds_fuse0"] = round(
+        fuse0_global_cycle_time,
+        4,
+    )
+
     kpis["carriers"] = carriers
     kpis["return_to_station_1_time_seconds"] = round(RETURN_TO_STATION_1_TIME_S, 4)
     kpis["disruptions_enabled"] = int(disruptions_enabled)
@@ -3474,6 +3631,164 @@ def main() -> None:
         station_summaries=station_summaries_no_disruptions,
         transport_records=transport_records_no_disruptions,
     )
+
+    completed_units_sorted_no_disruptions = sorted(
+        unit_summaries_no_disruptions,
+        key=lambda unit_summary: (
+            float(unit_summary.completion_time_s),
+            str(unit_summary.unit_id),
+        ),
+    )
+    fuse0_wall_clock_intervals_no_disruptions: list[float] = []
+    fuse0_active_intervals_no_disruptions: list[float] = []
+    fuse0_global_intervals_no_disruptions: list[float] = []
+
+    line_active_intervals_no_disruptions: list[tuple[float, float]] = []
+    for op in operations_no_disruptions:
+        start_time_s = float(op.start_time_s)
+        finish_time_s = float(op.finish_time_s)
+        if finish_time_s > start_time_s:
+            line_active_intervals_no_disruptions.append((start_time_s, finish_time_s))
+    for tr in transport_records_no_disruptions:
+        start_time_s = float(tr.start_time_s)
+        finish_time_s = float(tr.finish_time_s)
+        if finish_time_s > start_time_s:
+            line_active_intervals_no_disruptions.append((start_time_s, finish_time_s))
+    if line_active_intervals_no_disruptions:
+        line_active_intervals_no_disruptions.sort()
+        merged_line_active_intervals_no_disruptions: list[tuple[float, float]] = []
+        current_start_s, current_finish_s = line_active_intervals_no_disruptions[0]
+        for start_time_s, finish_time_s in line_active_intervals_no_disruptions[1:]:
+            if start_time_s <= current_finish_s:
+                current_finish_s = max(current_finish_s, finish_time_s)
+            else:
+                merged_line_active_intervals_no_disruptions.append((current_start_s, current_finish_s))
+                current_start_s, current_finish_s = start_time_s, finish_time_s
+        merged_line_active_intervals_no_disruptions.append((current_start_s, current_finish_s))
+        line_active_intervals_no_disruptions = merged_line_active_intervals_no_disruptions
+
+    fuse0_variant_intervals_no_disruptions: list[tuple[float, float]] = []
+    for op in operations_no_disruptions:
+        if str(op.variant).upper() != "FUSE0":
+            continue
+        start_time_s = float(op.start_time_s)
+        finish_time_s = float(op.finish_time_s)
+        if finish_time_s > start_time_s:
+            fuse0_variant_intervals_no_disruptions.append((start_time_s, finish_time_s))
+    for tr in transport_records_no_disruptions:
+        if str(tr.variant).upper() != "FUSE0":
+            continue
+        start_time_s = float(tr.start_time_s)
+        finish_time_s = float(tr.finish_time_s)
+        if finish_time_s > start_time_s:
+            fuse0_variant_intervals_no_disruptions.append((start_time_s, finish_time_s))
+    if fuse0_variant_intervals_no_disruptions:
+        fuse0_variant_intervals_no_disruptions.sort()
+        merged_fuse0_variant_intervals_no_disruptions: list[tuple[float, float]] = []
+        current_start_s, current_finish_s = fuse0_variant_intervals_no_disruptions[0]
+        for start_time_s, finish_time_s in fuse0_variant_intervals_no_disruptions[1:]:
+            if start_time_s <= current_finish_s:
+                current_finish_s = max(current_finish_s, finish_time_s)
+            else:
+                merged_fuse0_variant_intervals_no_disruptions.append((current_start_s, current_finish_s))
+                current_start_s, current_finish_s = start_time_s, finish_time_s
+        merged_fuse0_variant_intervals_no_disruptions.append((current_start_s, current_finish_s))
+        fuse0_variant_intervals_no_disruptions = merged_fuse0_variant_intervals_no_disruptions
+
+    def _overlap_with_intervals_no_disruptions(
+        interval_start_s: float,
+        interval_finish_s: float,
+        active_intervals: list[tuple[float, float]],
+    ) -> float:
+        if interval_finish_s <= interval_start_s or not active_intervals:
+            return 0.0
+        overlap_s = 0.0
+        for active_start_s, active_finish_s in active_intervals:
+            if active_finish_s <= interval_start_s:
+                continue
+            if active_start_s >= interval_finish_s:
+                break
+            overlap_s += max(
+                0.0,
+                min(interval_finish_s, active_finish_s) - max(interval_start_s, active_start_s),
+            )
+        return overlap_s
+
+    for previous_unit_summary, current_unit_summary in zip(
+        completed_units_sorted_no_disruptions,
+        completed_units_sorted_no_disruptions[1:],
+    ):
+        previous_variant = str(previous_unit_summary.variant).upper()
+        current_variant = str(current_unit_summary.variant).upper()
+        if previous_variant != "FUSE0" or current_variant != "FUSE0":
+            continue
+
+        interval_start_s = float(previous_unit_summary.completion_time_s)
+        interval_finish_s = float(current_unit_summary.completion_time_s)
+        interval_duration_s = max(0.0, interval_finish_s - interval_start_s)
+
+        fuse0_wall_clock_intervals_no_disruptions.append(interval_duration_s)
+        fuse0_active_intervals_no_disruptions.append(
+            _overlap_with_intervals_no_disruptions(
+                interval_start_s,
+                interval_finish_s,
+                fuse0_variant_intervals_no_disruptions,
+            )
+        )
+
+        active_any_variant_s = _overlap_with_intervals_no_disruptions(
+            interval_start_s,
+            interval_finish_s,
+            line_active_intervals_no_disruptions,
+        )
+        no_activity_s = max(0.0, interval_duration_s - active_any_variant_s)
+        fuse0_global_intervals_no_disruptions.append(
+            fuse0_active_intervals_no_disruptions[-1] + no_activity_s
+        )
+
+    fuse0_completion_times_no_disruptions = [
+        float(unit_summary.completion_time_s)
+        for unit_summary in completed_units_sorted_no_disruptions
+        if str(unit_summary.variant).upper() == "FUSE0"
+    ]
+    if len(fuse0_completion_times_no_disruptions) == 1:
+        fuse0_average_cycle_time_no_disruptions = float(fuse0_completion_times_no_disruptions[0])
+        fuse0_active_cycle_time_no_disruptions = _overlap_with_intervals_no_disruptions(
+            0.0,
+            float(fuse0_completion_times_no_disruptions[0]),
+            fuse0_variant_intervals_no_disruptions,
+        )
+        fuse0_global_cycle_time_no_disruptions = float(fuse0_completion_times_no_disruptions[0])
+    else:
+        fuse0_average_cycle_time_no_disruptions = (
+            float(mean(fuse0_wall_clock_intervals_no_disruptions))
+            if fuse0_wall_clock_intervals_no_disruptions
+            else 0.0
+        )
+        fuse0_active_cycle_time_no_disruptions = (
+            float(mean(fuse0_active_intervals_no_disruptions))
+            if fuse0_active_intervals_no_disruptions
+            else 0.0
+        )
+        fuse0_global_cycle_time_no_disruptions = (
+            float(mean(fuse0_global_intervals_no_disruptions))
+            if fuse0_global_intervals_no_disruptions
+            else 0.0
+        )
+
+    kpis_no_disruptions["average_cycle_time_seconds_fuse0"] = round(
+        fuse0_average_cycle_time_no_disruptions,
+        4,
+    )
+    kpis_no_disruptions["Active_average_cycle_time_seconds_fuse0"] = round(
+        fuse0_active_cycle_time_no_disruptions,
+        4,
+    )
+    kpis_no_disruptions["global_average_cycle_time_seconds_fuse0"] = round(
+        fuse0_global_cycle_time_no_disruptions,
+        4,
+    )
+
     kpis_no_disruptions["carriers"] = carriers
     kpis_no_disruptions["return_to_station_1_time_seconds"] = round(RETURN_TO_STATION_1_TIME_S, 4)
     kpis_no_disruptions["disruptions_enabled"] = 0
