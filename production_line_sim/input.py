@@ -70,16 +70,40 @@ def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(x, hi))
 
 
-def sample_duration(spec: Dict[str, Any],Range = False) -> int:
+def sample_duration(spec: Dict[str, Any], Range: bool = False) -> int:
     """Sample a disruption duration in seconds as an int >= 1.
 
-    Uses normal distribution with mean 'duration [s]' and std 'std'.
-    Clamps to 'range' if present.
+    Supports two spec formats:
+      - v1: keys like 'duration [s]', 'std', and optional 'range'
+      - v2: keys like 'mean [s]', 'std [0-1 of mean]' / 'std [% of mean]', and 'range [s]'
+
+    The Range flag keeps backward compatibility: it clamps v1 durations only when Range=True.
+    v2 durations are always clamped to 'range [s]' if provided.
     """
+
+    # --- v2 format ---
+    if spec.get("mean [s]") is not None:
+        mean = float(spec.get("mean [s]", 0))
+        std_frac = spec.get("std [0-1 of mean]")
+        if std_frac is None:
+            std_pct = spec.get("std [% of mean]")
+            std_frac = float(std_pct) / 100.0 if std_pct is not None else 0.0
+        std = float(std_frac) * mean
+
+        dur = mean if std <= 0 else random.normalvariate(mean, std)
+
+        rng = spec.get("range [s]")
+        if isinstance(rng, (list, tuple)) and len(rng) == 2:
+            dur = clamp(dur, float(rng[0]), float(rng[1]))
+
+        return max(1, round_half_up(dur))
+
+    # --- v1 format (original) ---
     mean = float(spec.get("duration [s]", 0))
     std = float(spec.get("std", 0))
     dur = mean if std <= 0 else random.normalvariate(mean, std)
-    if Range == True and spec.get("range") is not None:    
+
+    if Range is True and spec.get("range") is not None:
         rng = spec.get("range")
         if isinstance(rng, (list, tuple)) and len(rng) == 2:
             dur = clamp(dur, float(rng[0]), float(rng[1]))
@@ -177,6 +201,48 @@ def sample_event_count_from_time_fraction(target_downtime: float, mean_duration:
     n = random.normalvariate(mean_events, std_events)
     return max(0, round_half_up(n))
 
+def iter_breakdown_specs_v2(station_cfg: Dict[str, Any]):
+    """Yield breakdown specs for both v1 and v2 disruption JSON structures.
+
+    v2 format uses key 'machine breakdowns' which is a list of dict specs.
+    v1 format uses key 'breakdown' which is a single dict spec.
+
+    Yields tuples: (disruption_type_string, spec_dict, chance_fraction, mean_duration_seconds)
+    """
+
+    # v2: list of machine breakdowns
+    if isinstance(station_cfg.get("machine breakdowns"), list):
+        for spec in station_cfg["machine breakdowns"]:
+            if not isinstance(spec, dict):
+                continue
+            name = str(spec.get("name", "breakdown")).strip() or "breakdown"
+            dtype = f"breakdown:{name}"
+
+            # Prefer explicit fraction field
+            if spec.get("chance [0-1]") is not None:
+                chance = float(spec.get("chance [0-1]", 0))
+            elif spec.get("chance [%]") is not None:
+                # v2 chance[%] is a percent value (e.g., 0.02 means 0.02%)
+                chance = float(spec.get("chance [%]", 0)) / 100.0
+            else:
+                chance = 0.0
+
+            mean_dur = float(spec.get("mean [s]", 0))
+            if mean_dur <= 0 and isinstance(spec.get("range [s]"), (list, tuple)) and len(spec["range [s]"]) == 2:
+                a, b = spec["range [s]"]
+                mean_dur = (float(a) + float(b)) / 2.0
+
+            yield dtype, spec, max(0.0, chance), max(0.0, mean_dur)
+
+    # v1: single breakdown dict
+    if isinstance(station_cfg.get("breakdown"), dict):
+        spec = station_cfg["breakdown"]
+        dtype = "breakdown"
+        chance = normalize_chance(spec.get("Machine breakdown chance [%]", 0))
+        mean_dur = float(spec.get("duration [s]", 0))
+        yield dtype, spec, chance, mean_dur
+
+
 
 # ============================================================
 # JSON create/read
@@ -198,116 +264,382 @@ def create_setting_json(output_path: Path) -> Dict[str, Any]:
 
 def create_disruption_json(output_path: Path) -> Dict[str, Any]:
     disruption = {
-        "Stations": {
-            "1": {
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 300,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std": 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-            },
-            "2": {
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std": 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-            },
-            "3": {
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std": 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-            },
-            "4": {
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std": 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-            },
-            "5": {
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std": 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-            },
-            "6": {
-                "failed inspection": {"wrong assembly chance": 0.005},
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std": 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std": 10,
-                },
-            },
+  "Stations": {
+    "1": {
+      "station_type": "Bottom cover",
+      "machine breakdowns": [
+        {
+          "name": "PLC Failure",
+          "chance [%]": 0.02,
+          "chance [0-1]": 0.0002,
+          "range [s]": [
+            30,
+            60
+          ],
+          "mean [s]": 45,
+          "std [% of mean]": 5,
+          "std [0-1 of mean]": 0.05
         },
-        "Material": {
-            "Broken material chance [%]": 0.15,
-            "ran out of material chance [%]": 0.00,
+        {
+          "name": "Bottom Cover Misaligned",
+          "chance [%]": 0.01,
+          "chance [0-1]": 0.0001,
+          "range [s]": [
+            30,
+            80
+          ],
+          "mean [s]": 55,
+          "std [% of mean]": 10,
+          "std [0-1 of mean]": 0.1
         },
+        {
+          "name": "Bottom Cover Stuck",
+          "chance [%]": 0.01,
+          "chance [0-1]": 0.0001,
+          "range [s]": [
+            40,
+            90
+          ],
+          "mean [s]": 65,
+          "std [% of mean]": 5,
+          "std [0-1 of mean]": 0.05
+        },
+        {
+          "name": "Piston Broke",
+          "chance [%]": 0.002,
+          "chance [0-1]": 2e-05,
+          "range [s]": [
+            600,
+            1800
+          ],
+          "mean [s]": 1200,
+          "std [% of mean]": 20,
+          "std [0-1 of mean]": 0.2
+        }
+      ],
+      "efficiency loss": {
+        "chance [%]": 0.076,
+        "chance [0-1]": 0.00076,
+        "range [%]": [
+          10,
+          90
+        ],
+        "range [0-1]": [
+          0.1,
+          0.9
+        ]
+      }
+    },
+    "2": {
+      "station_type": "Drilling",
+      "machine breakdowns": [
+        {
+          "name": "PLC Failure",
+          "chance [%]": 0.02,
+          "chance [0-1]": 0.0002,
+          "range [s]": [
+            30,
+            60
+          ],
+          "mean [s]": 45,
+          "std [% of mean]": 5,
+          "std [0-1 of mean]": 0.05
+        },
+        {
+          "name": "Drill To Dull",
+          "chance [%]": 0.005,
+          "chance [0-1]": 5e-05,
+          "range [s]": [
+            120,
+            320
+          ],
+          "mean [s]": 220,
+          "std [% of mean]": 10,
+          "std [0-1 of mean]": 0.1
+        },
+        {
+          "name": "Drill Broke",
+          "chance [%]": 0.01,
+          "chance [0-1]": 0.0001,
+          "range [s]": [
+            160,
+            340
+          ],
+          "mean [s]": 250,
+          "std [% of mean]": 10,
+          "std [0-1 of mean]": 0.1
+        }
+      ],
+      "efficiency loss": {
+        "chance [%]": 0.048,
+        "chance [0-1]": 0.00048,
+        "range [%]": [
+          10,
+          90
+        ],
+        "range [0-1]": [
+          0.1,
+          0.9
+        ]
+      }
+    },
+    "3": {
+      "station_type": "Robot cell",
+      "machine breakdowns": [
+        {
+          "name": "PLC Failure",
+          "chance [%]": 0.02,
+          "chance [0-1]": 0.0002,
+          "range [s]": [
+            30,
+            60
+          ],
+          "mean [s]": 45,
+          "std [% of mean]": 5,
+          "std [0-1 of mean]": 0.05
+        },
+        {
+          "name": "Cover Wrong Orientation",
+          "chance [%]": 0.01,
+          "chance [0-1]": 0.0001,
+          "range [s]": [
+            120,
+            300
+          ],
+          "mean [s]": 210,
+          "std [% of mean]": 10,
+          "std [0-1 of mean]": 0.1
+        },
+        {
+          "name": "Arm Movement Misaligned",
+          "chance [%]": 0.005,
+          "chance [0-1]": 5e-05,
+          "range [s]": [
+            600,
+            1200
+          ],
+          "mean [s]": 900,
+          "std [% of mean]": 15,
+          "std [0-1 of mean]": 0.15
+        },
+        {
+          "name": "Cart Relised To Early",
+          "chance [%]": 0.005,
+          "chance [0-1]": 5e-05,
+          "range [s]": [
+            300,
+            600
+          ],
+          "mean [s]": 450,
+          "std [% of mean]": 10,
+          "std [0-1 of mean]": 0.1
+        },
+        {
+          "name": "Misaligned Material",
+          "chance [%]": 0.005,
+          "chance [0-1]": 5e-05,
+          "range [s]": [
+            200,
+            480
+          ],
+          "mean [s]": 340,
+          "std [% of mean]": 15,
+          "std [0-1 of mean]": 0.15
+        },
+        {
+          "name": "Tool Broke",
+          "chance [%]": 0.001,
+          "chance [0-1]": 1e-05,
+          "range [s]": [
+            900,
+            1800
+          ],
+          "mean [s]": 1350,
+          "std [% of mean]": 20,
+          "std [0-1 of mean]": 0.2
+        },
+        {
+          "name": "Robot Arm Broke",
+          "chance [%]": 0.001,
+          "chance [0-1]": 1e-05,
+          "range [s]": [
+            3400,
+            7000
+          ],
+          "mean [s]": 5200,
+          "std [% of mean]": 25,
+          "std [0-1 of mean]": 0.25
+        }
+      ],
+      "efficiency loss": {
+        "chance [%]": 0.027,
+        "chance [0-1]": 0.00027,
+        "range [%]": [
+          10,
+          90
+        ],
+        "range [0-1]": [
+          0.1,
+          0.9
+        ]
+      }
+    },
+    "4": {
+      "station_type": "Inspection",
+      "machine breakdowns": [
+        {
+          "name": "PLC Failure",
+          "chance [%]": 0.02,
+          "chance [0-1]": 0.0002,
+          "range [s]": [
+            30,
+            60
+          ],
+          "mean [s]": 45,
+          "std [% of mean]": 5,
+          "std [0-1 of mean]": 0.05
+        },
+        {
+          "name": "Camera Broken",
+          "chance [%]": 0.002,
+          "chance [0-1]": 2e-05,
+          "range [s]": [
+            300,
+            600
+          ],
+          "mean [s]": 450,
+          "std [% of mean]": 15,
+          "std [0-1 of mean]": 0.15
+        },
+        {
+          "name": "Camera Dirty",
+          "chance [%]": 0.005,
+          "chance [0-1]": 5e-05,
+          "range [s]": [
+            60,
+            120
+          ],
+          "mean [s]": 90,
+          "std [% of mean]": 10,
+          "std [0-1 of mean]": 0.1
+        }
+      ],
+      "efficiency loss": {
+        "chance [%]": 0.119,
+        "chance [0-1]": 0.00119,
+        "range [%]": [
+          10,
+          90
+        ],
+        "range [0-1]": [
+          0.1,
+          0.9
+        ]
+      }
+    },
+    "5": {
+      "station_type": "Top cover",
+      "machine breakdowns": [
+        {
+          "name": "PLC Failure",
+          "chance [%]": 0.02,
+          "chance [0-1]": 0.0002,
+          "range [s]": [
+            30,
+            60
+          ],
+          "mean [s]": 45,
+          "std [% of mean]": 5,
+          "std [0-1 of mean]": 0.05
+        },
+        {
+          "name": "Top Cover Misaligned",
+          "chance [%]": 0.01,
+          "chance [0-1]": 0.0001,
+          "range [s]": [
+            30,
+            80
+          ],
+          "mean [s]": 55,
+          "std [% of mean]": 10,
+          "std [0-1 of mean]": 0.1
+        },
+        {
+          "name": "Top Cover Stuck",
+          "chance [%]": 0.01,
+          "chance [0-1]": 0.0001,
+          "range [s]": [
+            40,
+            90
+          ],
+          "mean [s]": 65,
+          "std [% of mean]": 5,
+          "std [0-1 of mean]": 0.05
+        },
+        {
+          "name": "Piston Broke",
+          "chance [%]": 0.002,
+          "chance [0-1]": 2e-05,
+          "range [s]": [
+            600,
+            1800
+          ],
+          "mean [s]": 1200,
+          "std [% of mean]": 20,
+          "std [0-1 of mean]": 0.2
+        }
+      ],
+      "efficiency loss": {
+        "chance [%]": 0.109,
+        "chance [0-1]": 0.00109,
+        "range [%]": [
+          10,
+          90
+        ],
+        "range [0-1]": [
+          0.1,
+          0.9
+        ]
+      }
+    },
+    "6": {
+      "station_type": "Packaging",
+      "machine breakdowns": [
+        {
+          "name": "PLC Failure",
+          "chance [%]": 0.02,
+          "chance [0-1]": 0.0002,
+          "range [s]": [
+            30,
+            60
+          ],
+          "mean [s]": 45,
+          "std [% of mean]": 5,
+          "std [0-1 of mean]": 0.05
+        }
+      ],
+      "inspection failure": {
+        "name": "Inspection Failure",
+        "effect": "cancel_and_redo_unit",
+        "chance [%]": 0.0068,
+        "chance [0-1]": 6.8e-05,
+        "action": "The unit is cancelled and redone."
+      },
+      "efficiency loss": {
+        "chance [%]": 0.0625,
+        "chance [0-1]": 0.000625,
+        "range [%]": [
+          10,
+          90
+        ],
+        "range [0-1]": [
+          0.1,
+          0.9
+        ]
+      }
     }
+  }
+}
 
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(disruption, f, indent=4)
@@ -426,7 +758,8 @@ def generate_disruption_list(sim_time: int, output_path: Path) -> None:
 
     input_dir = output_path.parent
     settings = read_settings_json(input_dir / "settings.json")
-    disruption_settings = read_disruption_json(input_dir / "disruption.json")
+    disruption_file = (input_dir / "disruption_v2.json") if (input_dir / "disruption_v2.json").exists() else (input_dir / "disruption.json")
+    disruption_settings = read_disruption_json(disruption_file)
 
     # Reproducible randomness
     random.seed(settings.get("seed", None))
@@ -443,18 +776,17 @@ def generate_disruption_list(sim_time: int, output_path: Path) -> None:
         occupied: List[Tuple[int, int]] = []
         summary.setdefault(station_id, {})
 
-        # --- Breakdown ---
-        if "breakdown" in station_cfg:
-            spec = station_cfg["breakdown"]
-            chance = normalize_chance(spec.get("Machine breakdown chance [%]", 0))
+        # --- Breakdown (supports multiple breakdown types from disruption_v2.json) ---
+        # v2 uses key: 'machine breakdowns' (list) with name/chance/range/mean/std
+        # v1 uses key: 'breakdown' (single dict)
+        for dtype, spec, chance, mean_dur in iter_breakdown_specs_v2(station_cfg):
             target_downtime = chance * sim_time
-            mean_dur = float(spec.get("duration [s]", 0))
-
             n_events = sample_event_count_from_time_fraction(target_downtime, mean_dur)
 
             placed = 0
             for _ in range(n_events):
-                duration = sample_duration(spec)
+                # v2 durations are clamped automatically; v1 uses Range flag to clamp
+                duration = sample_duration(spec, Range=True)
                 start = pick_random_start_non_overlapping(duration, occupied, sim_time)
                 if start is None:
                     break
@@ -465,7 +797,7 @@ def generate_disruption_list(sim_time: int, output_path: Path) -> None:
 
                 rows.append(
                     {
-                        "disruption_type": "breakdown",
+                        "disruption_type": dtype,
                         "station_id": station_id,
                         "start_time": start,
                         "end_time": end,
@@ -483,51 +815,104 @@ def generate_disruption_list(sim_time: int, output_path: Path) -> None:
                 )
 
             if placed:
-                summary[station_id]["breakdown"] = summary[station_id].get("breakdown", 0) + placed
+                summary[station_id][dtype] = summary[station_id].get(dtype, 0) + placed
 
         # --- Efficiency loss ---
+
         if "efficiency loss" in station_cfg:
             spec = station_cfg["efficiency loss"]
-            chance = normalize_chance(spec.get("efficiency drop chance [%]", 0))
-            target_downtime = chance * sim_time
-            mean_dur = float(spec.get("duration [s]", 0))
 
-            n_events = sample_event_count_from_time_fraction(target_downtime, mean_dur)
+            # v2 format: has keys like 'chance [0-1]' and 'range [0-1]' or 'range [%]' (no duration given)
+            if spec.get("chance [0-1]") is not None or spec.get("chance [%]") is not None:
+                if spec.get("chance [0-1]") is not None:
+                    chance = float(spec.get("chance [0-1]", 0))
+                else:
+                    # v2 chance[%] is a percent value (e.g., 0.076 means 0.076%)
+                    chance = float(spec.get("chance [%]", 0)) / 100.0
 
-            placed = 0
-            for _ in range(n_events):
-                duration = sample_duration(spec)
+                target_downtime = chance * sim_time
+                duration = max(1, round_half_up(target_downtime))
+
                 start = pick_random_start_non_overlapping(duration, occupied, sim_time)
-                if start is None:
-                    break
-                end = min(sim_time, start + duration)
+                if start is not None:
+                    end = min(sim_time, start + duration)
+                    occupied.append((start, end))
 
-                occupied.append((start, end))
-                placed += 1
+                    # sample efficiency drop from provided ranges
+                    eff = 100
+                    if isinstance(spec.get("range [0-1]"), (list, tuple)) and len(spec["range [0-1]"]) == 2:
+                        lo, hi = spec["range [0-1]"]
+                        drop_frac = random.uniform(float(lo), float(hi))
+                        eff = int(clamp(round_half_up(100.0 * (1.0 - drop_frac)), 1, 100))
+                    elif isinstance(spec.get("range [%]"), (list, tuple)) and len(spec["range [%]"]) == 2:
+                        lo, hi = spec["range [%]"]
+                        drop_pct = random.uniform(float(lo), float(hi))
+                        eff = int(clamp(round_half_up(100.0 - drop_pct), 1, 100))
 
-                eff = sample_efficiency_percentage(spec)
+                    rows.append(
+                        {
+                            "disruption_type": "efficiency_loss",
+                            "station_id": station_id,
+                            "start_time": start,
+                            "end_time": end,
+                            "efficiency_percentage": eff,
+                            "order_id": "",
+                            "Order_time": "",
+                            "priority": "",
+                            "variant0": "",
+                            "quantity0": "",
+                            "variant1": "",
+                            "quantity1": "",
+                            "variant2": "",
+                            "quantity2": "",
+                        }
+                    )
 
-                rows.append(
-                    {
-                        "disruption_type": "efficiency_loss",
-                        "station_id": station_id,
-                        "start_time": start,
-                        "end_time": end,
-                        "efficiency_percentage": eff,
-                        "order_id": "",
-                        "Order_time": "",
-                        "priority": "",
-                        "variant0": "",
-                        "quantity0": "",
-                        "variant1": "",
-                        "quantity1": "",
-                        "variant2": "",
-                        "quantity2": "",
-                    }
-                )
+                    summary[station_id]["efficiency_loss"] = summary[station_id].get("efficiency_loss", 0) + 1
 
-            if placed:
-                summary[station_id]["efficiency_loss"] = summary[station_id].get("efficiency_loss", 0) + placed
+            # v1 format: has duration and std for efficiency loss
+            else:
+                chance = normalize_chance(spec.get("efficiency drop chance [%]", 0))
+                target_downtime = chance * sim_time
+                mean_dur = float(spec.get("duration [s]", 0))
+
+                n_events = sample_event_count_from_time_fraction(target_downtime, mean_dur)
+
+                placed = 0
+                for _ in range(n_events):
+                    duration = sample_duration(spec, Range=True)
+                    start = pick_random_start_non_overlapping(duration, occupied, sim_time)
+                    if start is None:
+                        break
+                    end = min(sim_time, start + duration)
+
+                    occupied.append((start, end))
+                    placed += 1
+
+                    eff = sample_efficiency_percentage(spec, Range=True)
+
+                    rows.append(
+                        {
+                            "disruption_type": "efficiency_loss",
+                            "station_id": station_id,
+                            "start_time": start,
+                            "end_time": end,
+                            "efficiency_percentage": eff,
+                            "order_id": "",
+                            "Order_time": "",
+                            "priority": "",
+                            "variant0": "",
+                            "quantity0": "",
+                            "variant1": "",
+                            "quantity1": "",
+                            "variant2": "",
+                            "quantity2": "",
+                        }
+                    )
+
+                if placed:
+                    summary[station_id]["efficiency_loss"] = summary[station_id].get("efficiency_loss", 0) + placed
+
 
         # NOTE: "failed inspection" in your current JSON is probability-based without duration,
         # so it does not fit the downtime-% approach. If you add a duration spec, you can generate it similarly.

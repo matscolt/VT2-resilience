@@ -1,7 +1,4 @@
 {
-  "Disruptions": {
-    "Enabled": 1
-  },
   "Stations": {
     "1": {
       "station_type": "Bottom cover",
