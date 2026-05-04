@@ -5,13 +5,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
-# -----------------------------
+# ============================================================
 # CSV writers
-# -----------------------------
+# ============================================================
 
-# 🔷 Write CSV
-def write_order_csv(rows, output_path: Path):
-    """Write orders to CSV with a fixed schema expected by the simulation."""
+def write_order_csv(rows: List[Dict[str, Any]], output_path: Path) -> None:
+    """Write orders to CSV with the schema expected by the simulation."""
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
@@ -26,8 +25,8 @@ def write_order_csv(rows, output_path: Path):
         writer.writerows(rows)
 
 
-def write_disruption_csv(rows, output_path: Path):
-    """Write disruptions to CSV with a fixed schema expected by the simulation."""
+def write_disruption_csv(rows: List[Dict[str, Any]], output_path: Path) -> None:
+    """Write disruptions to CSV with the schema expected by the simulation."""
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
@@ -43,113 +42,142 @@ def write_disruption_csv(rows, output_path: Path):
         writer.writerows(rows)
 
 
-# -----------------------------
-# Small helpers
-# -----------------------------
+# ============================================================
+# Helpers
+# ============================================================
 
-def round_half_up(n: float) -> int:
-    """Round half up (1.5 -> 2) for non-negative values."""
-    return int(n + 0.5)
+def round_half_up(x: float) -> int:
+    """Round half up for non-negative values."""
+    return int(x + 0.5)
 
 
-def _normalize_chance(value: float) -> float:
-    """Accept either fraction (0.05) or percent (5) and return fraction."""
-    if value is None:
+def normalize_chance(v: Any) -> float:
+    """Accept either fraction (0.05) or percent (5) and return a fraction [0..1]."""
+    if v is None:
         return 0.0
     try:
-        v = float(value)
+        x = float(v)
     except (TypeError, ValueError):
         return 0.0
-    if v > 1.0:
-        v = v / 100.0
-    return max(0.0, min(v, 1.0))
+    if x > 1.0:
+        x /= 100.0
+    return max(0.0, min(x, 1.0))
 
 
-def _sample_duration(spec: Dict[str, Any]) -> float:
-    """Sample a disruption duration from spec. Uses normalvariate + clamp to range if present."""
+def clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(x, hi))
+
+
+def sample_duration(spec: Dict[str, Any]) -> int:
+    """Sample a disruption duration in seconds as an int >= 1.
+
+    Uses normal distribution with mean 'duration [s]' and std 'std'.
+    Clamps to 'range' if present.
+    """
     mean = float(spec.get("duration [s]", 0))
     std = float(spec.get("std", 0))
     dur = mean if std <= 0 else random.normalvariate(mean, std)
 
-    # Clamp to range if present
     rng = spec.get("range")
     if isinstance(rng, (list, tuple)) and len(rng) == 2:
-        lo, hi = float(rng[0]), float(rng[1])
-        dur = max(lo, min(dur, hi))
+        dur = clamp(dur, float(rng[0]), float(rng[1]))
 
-    return max(dur, 1.0)
+    return max(1, round_half_up(dur))
 
 
-def _sample_efficiency_drop(spec: Dict[str, Any]) -> float:
-    """Sample an efficiency drop percentage from spec (e.g., mean 20)."""
+def sample_efficiency_percentage(spec: Dict[str, Any]) -> int:
+    """For efficiency loss, sample the resulting efficiency percentage (1..100).
+
+    Reads:
+      - mean drop: 'efficiency drop [%]'
+      - std: 'efficiency drop std'
+      - optional clamp: 'efficiency drop range'
+
+    Returns efficiency_percentage = 100 - drop.
+    """
     mean = float(spec.get("efficiency drop [%]", 0))
     std = float(spec.get("efficiency drop std", 0))
     drop = mean if std <= 0 else random.normalvariate(mean, std)
 
     rng = spec.get("efficiency drop range")
     if isinstance(rng, (list, tuple)) and len(rng) == 2:
-        lo, hi = float(rng[0]), float(rng[1])
-        drop = max(lo, min(drop, hi))
+        drop = clamp(drop, float(rng[0]), float(rng[1]))
 
-    return max(0.0, min(drop, 100.0))
+    eff = 100.0 - clamp(drop, 0.0, 100.0)
+    return int(clamp(round_half_up(eff), 1, 100))
 
 
-def _pick_start_in_free_window(
-    duration: float,
-    intervals: List[Tuple[float, float]],
-    sim_time: float,
-) -> Optional[float]:
-    """Pick a random start time such that [start, start+duration] does not overlap existing intervals.
+def pick_random_start_non_overlapping(
+    duration: int,
+    occupied: List[Tuple[int, int]],
+    sim_time: int,
+) -> Optional[int]:
+    """Pick a random start time such that [start, start+duration] does not overlap.
 
-    Returns None if no feasible slot exists.
+    occupied: list of (start,end) intervals (ints) for one station.
+    Returns start time (int) or None if not possible.
     """
     if duration > sim_time:
         return None
 
-    # Sort existing intervals and build free windows.
-    intervals_sorted = sorted(intervals)
-    free: List[Tuple[float, float]] = []
+    occ = sorted(occupied)
 
-    prev_end = 0.0
-    for s, e in intervals_sorted:
+    # build free windows [a,b)
+    free: List[Tuple[int, int]] = []
+    prev_end = 0
+    for s, e in occ:
         if s > prev_end:
             free.append((prev_end, s))
         prev_end = max(prev_end, e)
-
     if prev_end < sim_time:
         free.append((prev_end, sim_time))
 
-    # Filter windows that can fit duration
-    free = [(a, b) for a, b in free if (b - a) >= duration]
+    # filter windows that can fit duration
+    free = [(a, b) for (a, b) in free if (b - a) >= duration]
     if not free:
         return None
 
-    # Choose a window weighted by available placement length (b-a-duration)
-    weights = [(b - a - duration) for a, b in free]
-    total = sum(weights)
+    # choose a window weighted by number of possible integer start positions
+    # (b - a - duration) is the span of possible starts in continuous; for int starts use +1.
+    weights = []
+    for a, b in free:
+        count_positions = (b - a - duration) + 1
+        weights.append(max(1, count_positions))
 
-    # If total == 0, all windows are exactly duration long; choose uniformly among them
-    if total <= 0:
-        a, b = random.choice(free)
-        return a
-
-    r = random.random() * total
-    acc = 0.0
-    chosen = free[-1]
-    for w, win in zip(weights, free):
-        acc += w
-        if r <= acc:
-            chosen = win
-            break
-
-    a, b = chosen
+    win = random.choices(free, weights=weights, k=1)[0]
+    a, b = win
     latest_start = b - duration
-    return random.uniform(a, latest_start)
+    return random.randint(a, latest_start)
 
 
-# -----------------------------
+def overlaps(a: Tuple[int, int], b: Tuple[int, int]) -> bool:
+    return not (a[1] <= b[0] or b[1] <= a[0])
+
+
+def sample_event_count_from_time_fraction(target_downtime: float, mean_duration: float) -> int:
+    """Compute mean event count from downtime and sample an integer count from a normal distribution.
+
+    mean_events = target_downtime / mean_duration
+    std_events  = 10% of mean_events
+
+    Returns an int >= 0.
+    """
+    if mean_duration <= 0 or target_downtime <= 0:
+        return 0
+
+    mean_events = target_downtime / mean_duration
+    std_events = 0.1 * mean_events
+
+    if std_events <= 0:
+        return max(0, round_half_up(mean_events))
+
+    n = random.normalvariate(mean_events, std_events)
+    return max(0, round_half_up(n))
+
+
+# ============================================================
 # JSON create/read
-# -----------------------------
+# ============================================================
 
 def create_setting_json(output_path: Path) -> Dict[str, Any]:
     setting = {
@@ -377,130 +405,152 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
 
 # -----------------------------
 # Disruption generation
-# -----------------------------
+# ============================================================
 
-def generate_disruption_list(sim_time: int, output_path: Path):
-    """Generate a disruption CSV based on the disruption.json.
+def generate_disruption_list(sim_time: int, output_path: Path) -> None:
+    """Generate disruptions.csv based on settings.json and disruption.json.
 
-    Semantics implemented (as you requested):
-    - Each disruption chance is treated as a fraction of total sim_time.
-      Example: 0.05 means ~5% of sim_time should be affected by that disruption type.
-    - Disruptions get a random start time and end_time = start_time + duration.
-    - Different stations may overlap in time.
-    - Within a station, disruptions are not allowed to overlap (no double disruptions).
+    Your requested semantics implemented:
+      - chance is treated as fraction of total sim_time (downtime fraction)
+      - number of events is sampled from Normal(mean_events, 0.1*mean_events)
+      - events have random start time, end_time = start + duration
+      - stations may overlap with each other
+      - within a station, events cannot overlap
+      - output CSV is sorted by start_time
+      - prints a per-station summary to terminal
     """
 
     input_dir = output_path.parent
     settings = read_settings_json(input_dir / "settings.json")
     disruption_settings = read_disruption_json(input_dir / "disruption.json")
 
-    # Seed randomness for reproducibility (string seed is fine for random.seed)
+    # Reproducible randomness
     random.seed(settings.get("seed", None))
 
     rows: List[Dict[str, Any]] = []
+
+    # Summary: station -> disruption_type -> count
+    summary: Dict[int, Dict[str, int]] = {}
 
     stations: Dict[str, Any] = disruption_settings.get("Stations", {})
 
     for station_id_str, station_cfg in stations.items():
         station_id = int(station_id_str)
+        occupied: List[Tuple[int, int]] = []
+        summary.setdefault(station_id, {})
 
-        # Track existing disruptions for this station to prevent overlaps
-        intervals: List[Tuple[float, float]] = []
-
-        # ---- Breakdown ----
+        # --- Breakdown ---
         if "breakdown" in station_cfg:
-            bcfg = station_cfg["breakdown"]
-            chance = _normalize_chance(bcfg.get("Machine breakdown chance [%]", 0))
+            spec = station_cfg["breakdown"]
+            chance = normalize_chance(spec.get("Machine breakdown chance [%]", 0))
             target_downtime = chance * sim_time
+            mean_dur = float(spec.get("duration [s]", 0))
 
-            mean_dur = float(bcfg.get("duration [s]", 0))
-            if mean_dur > 0 and target_downtime > 0:
-                n_events = round_half_up(target_downtime / mean_dur)
+            n_events = sample_event_count_from_time_fraction(target_downtime, mean_dur)
 
-                for _ in range(n_events):
-                    duration = _sample_duration(bcfg)
-                    start = _pick_start_in_free_window(duration, intervals, sim_time)
-                    if start is None:
-                        break
-                    end = start + duration
-                    start_i = round_half_up(start)
-                    end_i = min(round_half_up(end), sim_time)
-                    # Store rounded intervals so the no-overlap rule also holds in the written CSV
-                    intervals.append((start_i, end_i))
+            placed = 0
+            for _ in range(n_events):
+                duration = sample_duration(spec)
+                start = pick_random_start_non_overlapping(duration, occupied, sim_time)
+                if start is None:
+                    break
+                end = min(sim_time, start + duration)
 
-                    rows.append(
-                        {
-                            "disruption_type": "breakdown",
-                            "station_id": station_id,
-                            "start_time": start_i,
-                            "end_time": end_i,
-                            "efficiency_percentage": 0,
-                            "order_id": "",
-                            "Order_time": "",
-                            "priority": "",
-                            "variant0": "",
-                            "quantity0": "",
-                            "variant1": "",
-                            "quantity1": "",
-                            "variant2": "",
-                            "quantity2": "",
-                        }
-                    )
+                occupied.append((start, end))
+                placed += 1
 
-        # ---- Efficiency loss ----
+                rows.append(
+                    {
+                        "disruption_type": "breakdown",
+                        "station_id": station_id,
+                        "start_time": start,
+                        "end_time": end,
+                        "efficiency_percentage": 0,
+                        "order_id": "",
+                        "Order_time": "",
+                        "priority": "",
+                        "variant0": "",
+                        "quantity0": "",
+                        "variant1": "",
+                        "quantity1": "",
+                        "variant2": "",
+                        "quantity2": "",
+                    }
+                )
+
+            if placed:
+                summary[station_id]["breakdown"] = summary[station_id].get("breakdown", 0) + placed
+
+        # --- Efficiency loss ---
         if "efficiency loss" in station_cfg:
-            ecfg = station_cfg["efficiency loss"]
-            chance = _normalize_chance(ecfg.get("efficiency drop chance [%]", 0))
+            spec = station_cfg["efficiency loss"]
+            chance = normalize_chance(spec.get("efficiency drop chance [%]", 0))
             target_downtime = chance * sim_time
+            mean_dur = float(spec.get("duration [s]", 0))
 
-            mean_dur = float(ecfg.get("duration [s]", 0))
-            if mean_dur > 0 and target_downtime > 0:
-                n_events = round_half_up(target_downtime / mean_dur)
+            n_events = sample_event_count_from_time_fraction(target_downtime, mean_dur)
 
-                for _ in range(n_events):
-                    duration = _sample_duration(ecfg)
-                    start = _pick_start_in_free_window(duration, intervals, sim_time)
-                    if start is None:
-                        break
-                    end = start + duration
-                    start_i = round_half_up(start)
-                    end_i = min(round_half_up(end), sim_time)
-                    intervals.append((start_i, end_i))
+            placed = 0
+            for _ in range(n_events):
+                duration = sample_duration(spec)
+                start = pick_random_start_non_overlapping(duration, occupied, sim_time)
+                if start is None:
+                    break
+                end = min(sim_time, start + duration)
 
-                    drop = _sample_efficiency_drop(ecfg)
-                    eff = max(1.0, min(100.0, 100.0 - drop))
+                occupied.append((start, end))
+                placed += 1
 
-                    rows.append(
-                        {
-                            "disruption_type": "efficiency_loss",
-                            "station_id": station_id,
-                            "start_time": start_i,
-                            "end_time": end_i,
-                            "efficiency_percentage": round_half_up(eff),
-                            "order_id": "",
-                            "Order_time": "",
-                            "priority": "",
-                            "variant0": "",
-                            "quantity0": "",
-                            "variant1": "",
-                            "quantity1": "",
-                            "variant2": "",
-                            "quantity2": "",
-                        }
-                    )
+                eff = sample_efficiency_percentage(spec)
 
-        # NOTE: "failed inspection" in your JSON is not time-based and has no duration.
-        # Because you requested time-percentage-driven disruptions, we do not emit it to the CSV here.
-        # If you later add a duration spec to "failed inspection", you can generate it the same way.
+                rows.append(
+                    {
+                        "disruption_type": "efficiency_loss",
+                        "station_id": station_id,
+                        "start_time": start,
+                        "end_time": end,
+                        "efficiency_percentage": eff,
+                        "order_id": "",
+                        "Order_time": "",
+                        "priority": "",
+                        "variant0": "",
+                        "quantity0": "",
+                        "variant1": "",
+                        "quantity1": "",
+                        "variant2": "",
+                        "quantity2": "",
+                    }
+                )
 
-    # Optional: sort for readability
-    rows.sort(key=lambda r: (int(r["station_id"]), int(r["start_time"])))
+            if placed:
+                summary[station_id]["efficiency_loss"] = summary[station_id].get("efficiency_loss", 0) + placed
+
+        # NOTE: "failed inspection" in your current JSON is probability-based without duration,
+        # so it does not fit the downtime-% approach. If you add a duration spec, you can generate it similarly.
+
+    # Sort by start_time (then station_id for stable ordering)
+    rows.sort(key=lambda r: (int(r["start_time"]), int(r["station_id"])))
 
     write_disruption_csv(rows, output_path)
 
-# -----------------------------
+    # Terminal summary
+    print("\nDisruption generation summary")
+    print("============================")
+    for station_id in sorted(summary.keys()):
+        types = summary[station_id]
+        if not types:
+            print(f"Station {station_id}: 0 events")
+            continue
+        parts = [f"{t}={types[t]}" for t in sorted(types.keys())]
+        total = sum(types.values())
+        print(f"Station {station_id}: {total} events (" + ", ".join(parts) + ")")
+
+    print(f"\nTotal events written: {len(rows)}")
+    print(f"CSV: {output_path}")
+
+# ============================================================
 # Main
-# -----------------------------
+# ============================================================
 
 def main():
     base_dir = Path(__file__).resolve().parent
