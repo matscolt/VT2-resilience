@@ -3,31 +3,297 @@ import csv
 import random
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, Any, List, Tuple, Optional
+
+# -----------------------------
+# CSV writers
+# -----------------------------
 
 # 🔷 Write CSV
 def write_order_csv(rows, output_path: Path):
+    """Write orders to CSV with a fixed schema expected by the simulation."""
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["order_id", "due date", "priority", "variant0", "quantity0", "variant1", "quantity1", "variant2", "quantity2"]
+            fieldnames=[
+                "order_id", "due date", "priority",
+                "variant0", "quantity0",
+                "variant1", "quantity1",
+                "variant2", "quantity2",
+            ],
         )
         writer.writeheader()
         writer.writerows(rows)
+
 
 def write_disruption_csv(rows, output_path: Path):
+    """Write disruptions to CSV with a fixed schema expected by the simulation."""
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["disruption_type", "station_id", "start_time", "end_time", "efficiency_percentage", "order_id", "Order_time", "priority", "variant0", "quantity0", "variant1", "quantity1", "variant2", "quantity2"]
+            fieldnames=[
+                "disruption_type", "station_id", "start_time", "end_time", "efficiency_percentage",
+                "order_id", "Order_time", "priority",
+                "variant0", "quantity0",
+                "variant1", "quantity1",
+                "variant2", "quantity2",
+            ],
         )
         writer.writeheader()
         writer.writerows(rows)
 
-#output csv file with disruptions
 
-def round_half_up(n):
-    n = n+0.5
-    return int(n)
+# -----------------------------
+# Small helpers
+# -----------------------------
+
+def round_half_up(n: float) -> int:
+    """Round half up (1.5 -> 2) for non-negative values."""
+    return int(n + 0.5)
+
+
+def _normalize_chance(value: float) -> float:
+    """Accept either fraction (0.05) or percent (5) and return fraction."""
+    if value is None:
+        return 0.0
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if v > 1.0:
+        v = v / 100.0
+    return max(0.0, min(v, 1.0))
+
+
+def _sample_duration(spec: Dict[str, Any]) -> float:
+    """Sample a disruption duration from spec. Uses normalvariate + clamp to range if present."""
+    mean = float(spec.get("duration [s]", 0))
+    std = float(spec.get("std", 0))
+    dur = mean if std <= 0 else random.normalvariate(mean, std)
+
+    # Clamp to range if present
+    rng = spec.get("range")
+    if isinstance(rng, (list, tuple)) and len(rng) == 2:
+        lo, hi = float(rng[0]), float(rng[1])
+        dur = max(lo, min(dur, hi))
+
+    return max(dur, 1.0)
+
+
+def _sample_efficiency_drop(spec: Dict[str, Any]) -> float:
+    """Sample an efficiency drop percentage from spec (e.g., mean 20)."""
+    mean = float(spec.get("efficiency drop [%]", 0))
+    std = float(spec.get("efficiency drop std", 0))
+    drop = mean if std <= 0 else random.normalvariate(mean, std)
+
+    rng = spec.get("efficiency drop range")
+    if isinstance(rng, (list, tuple)) and len(rng) == 2:
+        lo, hi = float(rng[0]), float(rng[1])
+        drop = max(lo, min(drop, hi))
+
+    return max(0.0, min(drop, 100.0))
+
+
+def _pick_start_in_free_window(
+    duration: float,
+    intervals: List[Tuple[float, float]],
+    sim_time: float,
+) -> Optional[float]:
+    """Pick a random start time such that [start, start+duration] does not overlap existing intervals.
+
+    Returns None if no feasible slot exists.
+    """
+    if duration > sim_time:
+        return None
+
+    # Sort existing intervals and build free windows.
+    intervals_sorted = sorted(intervals)
+    free: List[Tuple[float, float]] = []
+
+    prev_end = 0.0
+    for s, e in intervals_sorted:
+        if s > prev_end:
+            free.append((prev_end, s))
+        prev_end = max(prev_end, e)
+
+    if prev_end < sim_time:
+        free.append((prev_end, sim_time))
+
+    # Filter windows that can fit duration
+    free = [(a, b) for a, b in free if (b - a) >= duration]
+    if not free:
+        return None
+
+    # Choose a window weighted by available placement length (b-a-duration)
+    weights = [(b - a - duration) for a, b in free]
+    total = sum(weights)
+
+    # If total == 0, all windows are exactly duration long; choose uniformly among them
+    if total <= 0:
+        a, b = random.choice(free)
+        return a
+
+    r = random.random() * total
+    acc = 0.0
+    chosen = free[-1]
+    for w, win in zip(weights, free):
+        acc += w
+        if r <= acc:
+            chosen = win
+            break
+
+    a, b = chosen
+    latest_start = b - duration
+    return random.uniform(a, latest_start)
+
+
+# -----------------------------
+# JSON create/read
+# -----------------------------
+
+def create_setting_json(output_path: Path) -> Dict[str, Any]:
+    setting = {
+        "sim_time [s]": 36000,
+        "seed": datetime.now().strftime("%Y%m%d%H%M%S"),
+        "random based disruptions": {"enabled": 2},
+        "line_layout_file": "line_layout_single_path.json",
+        "carriers": {"number of carriers": 8},
+    }
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(setting, f, indent=4)
+    return setting
+
+
+def create_disruption_json(output_path: Path) -> Dict[str, Any]:
+    disruption = {
+        "Stations": {
+            "1": {
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std": 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+            },
+            "2": {
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std": 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+            },
+            "3": {
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std": 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+            },
+            "4": {
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std": 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+            },
+            "5": {
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std": 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+            },
+            "6": {
+                "failed inspection": {"wrong assembly chance": 0.005},
+                "breakdown": {
+                    "Machine breakdown chance [%]": 0.05,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+                "efficiency loss": {
+                    "efficiency drop chance [%]": 0.05,
+                    "efficiency drop [%]": 20,
+                    "efficiency drop range": [30, 90],
+                    "efficiency drop std": 10,
+                    "duration [s]": 60,
+                    "range": [30, 90],
+                    "std": 10,
+                },
+            },
+        },
+        "Material": {
+            "Broken material chance [%]": 0.15,
+            "ran out of material chance [%]": 0.00,
+        },
+    }
+
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(disruption, f, indent=4)
+    return disruption
+
+
+def read_settings_json(input_path: Path) -> Dict[str, Any]:
+    with input_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def read_disruption_json(input_path: Path) -> Dict[str, Any]:
+    with input_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+#------------------------------
+# Create Orderlist
+#------------------------------
 
 def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
     rows = []
@@ -109,235 +375,132 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
     print(f"average phone per hour: {total_sum/sim_time*3600}")
     write_order_csv(rows, output_path)
 
+# -----------------------------
+# Disruption generation
+# -----------------------------
+
 def generate_disruption_list(sim_time: int, output_path: Path):
-    #read settings json file
-    settings = read_settings_json(output_path.parent / "settings.json")
-    #read disruption json file
-    disruption_settings = read_disruption_json(output_path.parent / "disruption.json")
-    #generate disruptions csv based on settings and disruption json files
-    #   it should calculate the chance of each disruption on each station
-    #   Use the data to generate a list of disruptions
-    rows = []
-    def generate_single_station_disruption(station_id, sim_time):
-        breakdown_chance = disruption_settings["Stations"][str(station_id)]["breakdown"]["Machine breakdown chance [%]"]
-        breakdown_mean = disruption_settings["Stations"][str(station_id)]["breakdown"]["duration [s]"]
-        
-        efficiency_loss_chance = disruption_settings["Stations"][str(station_id)]["efficiency loss"]["efficiency drop chance [%]"]
-        efficiency_loss_percentage = disruption_settings["Stations"][str(station_id)]["efficiency loss"]["efficiency drop [%]"]
-        efficiency_loss_duration = disruption_settings["Stations"][str(station_id)]["efficiency loss"]["duration [s]"]
-        
-        failed_inspection_chance = disruption_settings["Stations"][str(station_id)].get("failed inspection", {}).get("wrong assembly chance", 0)
+    """Generate a disruption CSV based on the disruption.json.
 
-        breakdown_amount = breakdown_chance * sim_time / breakdown_mean
-        efficiency_loss_amount = efficiency_loss_chance * sim_time / efficiency_loss_duration
-        failed_inspection_amount = round_half_up(failed_inspection_chance * sim_time / 76.4) #assuming that the inspection station is the bottleneck and that the mean order time is 76.4 seconds
-        print(f"Station {station_id}: Breakdowns: {breakdown_amount}, Efficiency Loss: {efficiency_loss_amount}, Failed Inspections: {failed_inspection_amount}")
-        for disruption in range(round_half_up(breakdown_amount)):
-            
-            row = {
-            "disruption_type": disruption_type,
-            "station_id": station_id,
-            "start_time": start_time,
-            "end_time": end_time,
-            "efficiency_percentage": efficiency_percentage,
-            "order_id": None,
-            "order_time": None,
-            "priority": None,
-            "variant0": None,
-            "quantity0": None,
-            "variant1": None,
-            "quantity1": None,
-            "variant2": None,
-            "quantity2": None}
+    Semantics implemented (as you requested):
+    - Each disruption chance is treated as a fraction of total sim_time.
+      Example: 0.05 means ~5% of sim_time should be affected by that disruption type.
+    - Disruptions get a random start time and end_time = start_time + duration.
+    - Different stations may overlap in time.
+    - Within a station, disruptions are not allowed to overlap (no double disruptions).
+    """
 
-        
+    input_dir = output_path.parent
+    settings = read_settings_json(input_dir / "settings.json")
+    disruption_settings = read_disruption_json(input_dir / "disruption.json")
 
+    # Seed randomness for reproducibility (string seed is fine for random.seed)
+    random.seed(settings.get("seed", None))
 
-    
+    rows: List[Dict[str, Any]] = []
 
-    #stations kunne tælles igennem layout filen for at finde ud af hvor mange der er isteden for at hardcode det
-    #plus man ville kunne tælle hvor mange der er af hver type
-    stations = 6 if settings["line_layout_file"] == "line_layout_single_path.json" else 9 if settings["line_layout_file"] == "line_layout_multi_path.json" else 0
-    for station_id in range(1,stations+1):
-        generate_single_station_disruption(station_id,sim_time)
+    stations: Dict[str, Any] = disruption_settings.get("Stations", {})
 
-    #generate emergenct orders
-    # This would involve generating orders that are generated based on the total time of the simulation
-    for i in range(round_half_up(sim_time/3600*10)): #assuming that there are 10 emergenct orders per hour
-        order_time = round_half_up(random.uniform(0, sim_time))
-        priority = 5
-        variant0 = "FUSE0"
-        quantity0 = round_half_up(random.uniform(1, 5))
-        variant1 = "FUSE1"
-        quantity1 = round_half_up(random.uniform(1, 5))
-        variant2 = "FUSE2"
-        quantity2 = round_half_up(random.uniform(1, 5))
-        row = {
-            "disruption_type": "emergency_order",
-            "station_id": None,
-            "start_time": order_time,
-            "end_time": None,
-            "efficiency_percentage": None,
-            "order_id": i+1,
-            "order_time": order_time,
-            "priority": priority,
-            "variant0": variant0,
-            "quantity0": quantity0,
-            "variant1": variant1,
-            "quantity1": quantity1,
-            "variant2": variant2,
-            "quantity2": quantity2}
-        rows.append(row)
+    for station_id_str, station_cfg in stations.items():
+        station_id = int(station_id_str)
 
+        # Track existing disruptions for this station to prevent overlaps
+        intervals: List[Tuple[float, float]] = []
+
+        # ---- Breakdown ----
+        if "breakdown" in station_cfg:
+            bcfg = station_cfg["breakdown"]
+            chance = _normalize_chance(bcfg.get("Machine breakdown chance [%]", 0))
+            target_downtime = chance * sim_time
+
+            mean_dur = float(bcfg.get("duration [s]", 0))
+            if mean_dur > 0 and target_downtime > 0:
+                n_events = round_half_up(target_downtime / mean_dur)
+
+                for _ in range(n_events):
+                    duration = _sample_duration(bcfg)
+                    start = _pick_start_in_free_window(duration, intervals, sim_time)
+                    if start is None:
+                        break
+                    end = start + duration
+                    start_i = round_half_up(start)
+                    end_i = min(round_half_up(end), sim_time)
+                    # Store rounded intervals so the no-overlap rule also holds in the written CSV
+                    intervals.append((start_i, end_i))
+
+                    rows.append(
+                        {
+                            "disruption_type": "breakdown",
+                            "station_id": station_id,
+                            "start_time": start_i,
+                            "end_time": end_i,
+                            "efficiency_percentage": 0,
+                            "order_id": "",
+                            "Order_time": "",
+                            "priority": "",
+                            "variant0": "",
+                            "quantity0": "",
+                            "variant1": "",
+                            "quantity1": "",
+                            "variant2": "",
+                            "quantity2": "",
+                        }
+                    )
+
+        # ---- Efficiency loss ----
+        if "efficiency loss" in station_cfg:
+            ecfg = station_cfg["efficiency loss"]
+            chance = _normalize_chance(ecfg.get("efficiency drop chance [%]", 0))
+            target_downtime = chance * sim_time
+
+            mean_dur = float(ecfg.get("duration [s]", 0))
+            if mean_dur > 0 and target_downtime > 0:
+                n_events = round_half_up(target_downtime / mean_dur)
+
+                for _ in range(n_events):
+                    duration = _sample_duration(ecfg)
+                    start = _pick_start_in_free_window(duration, intervals, sim_time)
+                    if start is None:
+                        break
+                    end = start + duration
+                    start_i = round_half_up(start)
+                    end_i = min(round_half_up(end), sim_time)
+                    intervals.append((start_i, end_i))
+
+                    drop = _sample_efficiency_drop(ecfg)
+                    eff = max(1.0, min(100.0, 100.0 - drop))
+
+                    rows.append(
+                        {
+                            "disruption_type": "efficiency_loss",
+                            "station_id": station_id,
+                            "start_time": start_i,
+                            "end_time": end_i,
+                            "efficiency_percentage": round_half_up(eff),
+                            "order_id": "",
+                            "Order_time": "",
+                            "priority": "",
+                            "variant0": "",
+                            "quantity0": "",
+                            "variant1": "",
+                            "quantity1": "",
+                            "variant2": "",
+                            "quantity2": "",
+                        }
+                    )
+
+        # NOTE: "failed inspection" in your JSON is not time-based and has no duration.
+        # Because you requested time-percentage-driven disruptions, we do not emit it to the CSV here.
+        # If you later add a duration spec to "failed inspection", you can generate it the same way.
+
+    # Optional: sort for readability
+    rows.sort(key=lambda r: (int(r["station_id"]), int(r["start_time"])))
 
     write_disruption_csv(rows, output_path)
 
-
-
-
-# output json file with settings and disruptions
-
-def create_setting_json(output_path: Path):
-    Setting = {
-        "sim_time [s]" :    36000,
-        "seed": datetime.now().strftime("%Y%m%d%H%M%S"),
-        "random based disruptions": {
-            "enabled" : 2
-        },
-        "line_layout_file": "line_layout_single_path.json",
-        "carriers": {
-            "number of carriers": 8
-        }
-    }
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(Setting, f, indent=4) 
-
-#Create disruption JSON file
-def create_disruption_json(output_path: Path):
-    setting = {   
-        "Stations": {
-            "1": {
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10},
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std" : 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10
-                }
-            },
-            "2": {
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10},
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std" : 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10
-                }
-            },
-            "3": {
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10
-                },
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std" : 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10
-                }
-            },
-            "4": {
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10
-                },
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std" : 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10
-                }
-            },
-            "5": {
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10
-                },
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std" : 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10
-                }
-            },
-            "6": {
-                "failed inspection":{
-                "wrong assembly chance": 0.005
-                },
-                "breakdown": {
-                    "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10
-                },
-                "efficiency loss": {
-                    "efficiency drop chance [%]": 0.05,
-                    "efficiency drop [%]": 20,
-                    "efficiency drop range": [30, 90],
-                    "efficiency drop std" : 10,
-                    "duration [s]": 60,
-                    "range": [30, 90],
-                    "std" : 10
-                }
-            }
-        },
-        "Material": {
-            "Broken material chance [%]": 0.15,
-            "ran out of material chance [%]": 0.00
-        }
-    }
-
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(setting, f, indent=4)
-
-def read_settings_json(input_path: Path):
-    with input_path.open("r", encoding="utf-8") as f:
-        settings = json.load(f)
-    return settings
-
-def read_disruption_json(input_path: Path):
-    with input_path.open("r", encoding="utf-8") as f:
-        disruption_settings = json.load(f)
-    return disruption_settings
+# -----------------------------
+# Main
+# -----------------------------
 
 def main():
     base_dir = Path(__file__).resolve().parent
@@ -373,7 +536,7 @@ def main():
     # read settings json file
 
     settings = read_settings_json(output_path_settingsjson)
-    sim_time = settings["sim_time [s]"]
+    sim_time = int(settings.get("sim_time [s]", 36000))
     seed = settings["seed"]
     random.seed(seed)
     disruption_settings = read_disruption_json(output_path_disruptionjson)
@@ -390,5 +553,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
