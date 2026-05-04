@@ -189,6 +189,7 @@ def create_setting_json(output_path: Path) -> Dict[str, Any]:
         "random based disruptions": {"enabled": 2},
         "line_layout_file": "line_layout_single_path.json",
         "carriers": {"number of carriers": 8},
+        "lowest acceptable standard deviation [std below]": 3,
     }
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(setting, f, indent=4)
@@ -713,7 +714,6 @@ def main():
     sim_time = int(settings.get("sim_time [s]", 36000))
     seed = settings["seed"]
     random.seed(seed)
-    disruption_settings = read_disruption_json(output_path_disruptionjson)
 
     # Generate orderlist
 
