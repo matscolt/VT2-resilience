@@ -52,20 +52,6 @@ def round_half_up(x: float) -> int:
     """Round half up for non-negative values."""
     return int(x + 0.5)
 
-
-def normalize_chance(v: Any) -> float:
-    """Accept either fraction (0.05) or percent (5) and return a fraction [0..1]."""
-    if v is None:
-        return 0.0
-    try:
-        x = float(v)
-    except (TypeError, ValueError):
-        return 0.0
-    if x > 1.0:
-        x /= 100.0
-    return max(0.0, min(x, 1.0))
-
-
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(x, hi))
 
@@ -217,15 +203,8 @@ def iter_breakdown_specs_v2(station_cfg: Dict[str, Any]):
                 continue
             name = str(spec.get("name", "breakdown")).strip() or "breakdown"
             dtype = f"breakdown:{name}"
-
-            # Prefer explicit fraction field
-            if spec.get("chance [0-1]") is not None:
-                chance = float(spec.get("chance [0-1]", 0))
-            elif spec.get("chance [%]") is not None:
-                # v2 chance[%] is a percent value (e.g., 0.02 means 0.02%)
-                chance = float(spec.get("chance [%]", 0)) / 100.0
-            else:
-                chance = 0.0
+            # Use ONLY 'chance of sim time [%]' (percentage, e.g. 2.4 = 2.4%)
+            chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
 
             mean_dur = float(spec.get("mean [s]", 0))
             if mean_dur <= 0 and isinstance(spec.get("range [s]"), (list, tuple)) and len(spec["range [s]"]) == 2:
@@ -238,7 +217,7 @@ def iter_breakdown_specs_v2(station_cfg: Dict[str, Any]):
     if isinstance(station_cfg.get("breakdown"), dict):
         spec = station_cfg["breakdown"]
         dtype = "breakdown"
-        chance = normalize_chance(spec.get("Machine breakdown chance [%]", 0))
+        chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
         mean_dur = float(spec.get("duration [s]", 0))
         yield dtype, spec, chance, mean_dur
 
@@ -824,12 +803,9 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
             spec = station_cfg["efficiency loss"]
 
             # v2 format: has keys like 'chance [0-1]' and 'range [0-1]' or 'range [%]' (no duration given)
-            if spec.get("chance [0-1]") is not None or spec.get("chance [%]") is not None:
-                if spec.get("chance [0-1]") is not None:
-                    chance = float(spec.get("chance [0-1]", 0))
-                else:
-                    # v2 chance[%] is a percent value (e.g., 0.076 means 0.076%)
-                    chance = float(spec.get("chance [%]", 0)) / 100.0
+            if spec.get("chance of sim time [%]") is not None:
+                # Use ONLY 'chance of sim time [%]' (percentage, e.g. 2.4 = 2.4%)
+                chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
 
                 target_downtime = chance * sim_time
                 duration = max(1, round_half_up(target_downtime))
@@ -873,7 +849,7 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
 
             # v1 format: has duration and std for efficiency loss
             else:
-                chance = normalize_chance(spec.get("efficiency drop chance [%]", 0))
+                chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
                 target_downtime = chance * sim_time
                 mean_dur = float(spec.get("duration [s]", 0))
 
