@@ -70,7 +70,7 @@ def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(x, hi))
 
 
-def sample_duration(spec: Dict[str, Any]) -> int:
+def sample_duration(spec: Dict[str, Any],Range = False) -> int:
     """Sample a disruption duration in seconds as an int >= 1.
 
     Uses normal distribution with mean 'duration [s]' and std 'std'.
@@ -79,15 +79,15 @@ def sample_duration(spec: Dict[str, Any]) -> int:
     mean = float(spec.get("duration [s]", 0))
     std = float(spec.get("std", 0))
     dur = mean if std <= 0 else random.normalvariate(mean, std)
-
-    rng = spec.get("range")
-    if isinstance(rng, (list, tuple)) and len(rng) == 2:
-        dur = clamp(dur, float(rng[0]), float(rng[1]))
+    if Range == True and spec.get("range") is not None:    
+        rng = spec.get("range")
+        if isinstance(rng, (list, tuple)) and len(rng) == 2:
+            dur = clamp(dur, float(rng[0]), float(rng[1]))
 
     return max(1, round_half_up(dur))
 
 
-def sample_efficiency_percentage(spec: Dict[str, Any]) -> int:
+def sample_efficiency_percentage(spec: Dict[str, Any], Range: bool = False) -> int:
     """For efficiency loss, sample the resulting efficiency percentage (1..100).
 
     Reads:
@@ -101,9 +101,10 @@ def sample_efficiency_percentage(spec: Dict[str, Any]) -> int:
     std = float(spec.get("efficiency drop std", 0))
     drop = mean if std <= 0 else random.normalvariate(mean, std)
 
-    rng = spec.get("efficiency drop range")
-    if isinstance(rng, (list, tuple)) and len(rng) == 2:
-        drop = clamp(drop, float(rng[0]), float(rng[1]))
+    if Range == True and spec.get("efficiency drop range") is not None:
+        rng = spec.get("efficiency drop range")
+        if isinstance(rng, (list, tuple)) and len(rng) == 2:
+            drop = clamp(drop, float(rng[0]), float(rng[1]))
 
     eff = 100.0 - clamp(drop, 0.0, 100.0)
     return int(clamp(round_half_up(eff), 1, 100))
@@ -183,11 +184,12 @@ def sample_event_count_from_time_fraction(target_downtime: float, mean_duration:
 
 def create_setting_json(output_path: Path) -> Dict[str, Any]:
     setting = {
-        "sim_time [s]": 36000,
+        "sim_time [s]": 3600,
         "seed": datetime.now().strftime("%Y%m%d%H%M%S"),
         "random based disruptions": {"enabled": 2},
         "line_layout_file": "line_layout_single_path.json",
         "carriers": {"number of carriers": 8},
+        "lowest acceptable standard deviation [std below]": 3,
     }
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(setting, f, indent=4)
@@ -200,7 +202,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
             "1": {
                 "breakdown": {
                     "Machine breakdown chance [%]": 0.05,
-                    "duration [s]": 60,
+                    "duration [s]": 300,
                     "range": [30, 90],
                     "std": 10,
                 },
@@ -652,6 +654,7 @@ def plot_disruption_gantt(order_dir: Path,
 
     ax.set_yticks([station_to_y[st] for st in stations])
     ax.set_yticklabels([str(st) for st in stations])
+    ax.invert_yaxis()
 
     ax.set_xlim(0, sim_time)
 
@@ -711,7 +714,6 @@ def main():
     sim_time = int(settings.get("sim_time [s]", 36000))
     seed = settings["seed"]
     random.seed(seed)
-    disruption_settings = read_disruption_json(output_path_disruptionjson)
 
     # Generate orderlist
 
