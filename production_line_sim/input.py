@@ -4,6 +4,8 @@ import random
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 
 # ============================================================
 # CSV writers
@@ -546,8 +548,128 @@ def generate_disruption_list(sim_time: int, output_path: Path) -> None:
         print(f"Station {station_id}: {total} events (" + ", ".join(parts) + ")")
 
     print(f"\nTotal events written: {len(rows)}")
-    print(f"CSV: {output_path}")
 
+# ============================================================
+# Gantt plot for disruptions
+# ============================================================
+
+def plot_disruption_gantt(order_dir: Path,
+    disruptions_csv: str | Path,
+    sim_time: int | None = None,
+    title: str = "Disruptions Gantt Chart",
+    figsize=(14, 6),
+    lane_height: float = 0.8,
+    sort_stations: bool = True,
+    show: bool = False,
+    ax=None,
+):
+    """
+    Plot a Gantt chart of disruptions per station from a disruptions.csv file.
+
+    Expected CSV fields:
+      - disruption_type: e.g. 'breakdown' or 'efficiency_loss' (or similar)
+      - station_id
+      - start_time
+      - end_time
+
+    Colors:
+      - breakdown -> green
+      - efficiency loss / efficiency reduction -> red
+    """
+
+    disruptions_csv = Path(disruptions_csv)
+
+    # --- Read disruptions CSV ---
+    events = []
+    with disruptions_csv.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                station = int(row["station_id"])
+                start = float(row["start_time"])
+                end = float(row["end_time"])
+                dtype = (row["disruption_type"] or "").strip().lower()
+            except (KeyError, ValueError, TypeError):
+                continue
+
+            if end <= start:
+                continue
+
+            events.append({"station": station, "start": start, "end": end, "type": dtype})
+
+    if not events:
+        raise ValueError(f"No valid disruptions found in: {disruptions_csv}")
+
+    # --- Determine station ordering ---
+    stations = sorted({e["station"] for e in events}) if sort_stations else list({e["station"] for e in events})
+    station_to_y = {st: i for i, st in enumerate(stations)}
+
+    # --- If sim_time not provided, infer from max end_time ---
+    if sim_time is None:
+        sim_time = int(max(e["end"] for e in events))
+
+    # --- Create axes if needed ---
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+
+    # --- Color mapping ---
+    def color_for(dtype: str) -> str:
+        # accept multiple naming conventions
+        if "break" in dtype:
+            return "green"
+        if "eff" in dtype or "reduc" in dtype or "loss" in dtype:
+            return "red"
+        return "gray"  # fallback
+
+    # --- Plot as broken_barh per station ---
+    # broken_barh expects [(xmin, width), ...] per lane
+    by_station = {st: [] for st in stations}
+    by_station_color = {st: [] for st in stations}
+
+    # Sort by start time for nicer rendering
+    events.sort(key=lambda e: (e["start"], e["station"]))
+
+    for e in events:
+        st = e["station"]
+        start = e["start"]
+        width = e["end"] - e["start"]
+        by_station[st].append((start, width))
+        by_station_color[st].append(color_for(e["type"]))
+
+    # Draw each event as its own broken_barh to allow different colors in same lane
+    for st in stations:
+        y = station_to_y[st]
+        y0 = y - lane_height / 2
+        for (start, width), c in zip(by_station[st], by_station_color[st]):
+            ax.broken_barh([(start, width)], (y0, lane_height), facecolors=c, edgecolors="black", linewidth=0.3)
+
+    # --- Formatting ---
+    ax.set_title(title)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Station")
+
+    ax.set_yticks([station_to_y[st] for st in stations])
+    ax.set_yticklabels([str(st) for st in stations])
+
+    ax.set_xlim(0, sim_time)
+
+    # Legend
+    legend_items = [
+        Patch(facecolor="green", edgecolor="black", label="Breakdown"),
+        Patch(facecolor="red", edgecolor="black", label="Efficiency reduction"),
+    ]
+    ax.legend(handles=legend_items, loc="upper right")
+
+    ax.grid(True, axis="x", linestyle="--", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(f"{order_dir / title}.png", dpi=300)
+
+    if show:
+        plt.show()
+
+    return ax
 # ============================================================
 # Main
 # ============================================================
@@ -598,6 +720,8 @@ def main():
     if settings["random based disruptions"]["enabled"] == 2:
         print("Generating event based disruptions")
         generate_disruption_list(sim_time, output_path_disruptioncsv)
+        plot_disruption_gantt(order_dir, output_path_disruptioncsv, sim_time=sim_time, title=f"Disruptions Gantt Chart for {orderfoldername}", show=False)
+
     print(f"--- Created order file: {orderfoldername} ----")
 
 
