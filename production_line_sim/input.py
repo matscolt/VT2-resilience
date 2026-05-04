@@ -928,7 +928,7 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
     
 
     # Sort by start_time (then station_id for stable ordering)
-    rows.sort(key=lambda r: (int(r["start_time"]), int(r["station_id"])))
+    rows.sort(key=lambda r: (int(r["start_time"])))
 
     write_disruption_csv(rows, output_path)
 
