@@ -70,7 +70,7 @@ def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(x, hi))
 
 
-def sample_duration(spec: Dict[str, Any]) -> int:
+def sample_duration(spec: Dict[str, Any],Range = False) -> int:
     """Sample a disruption duration in seconds as an int >= 1.
 
     Uses normal distribution with mean 'duration [s]' and std 'std'.
@@ -79,10 +79,10 @@ def sample_duration(spec: Dict[str, Any]) -> int:
     mean = float(spec.get("duration [s]", 0))
     std = float(spec.get("std", 0))
     dur = mean if std <= 0 else random.normalvariate(mean, std)
-
-    rng = spec.get("range")
-    if isinstance(rng, (list, tuple)) and len(rng) == 2:
-        dur = clamp(dur, float(rng[0]), float(rng[1]))
+    if Range == True and spec.get("range") is not None:    
+        rng = spec.get("range")
+        if isinstance(rng, (list, tuple)) and len(rng) == 2:
+            dur = clamp(dur, float(rng[0]), float(rng[1]))
 
     return max(1, round_half_up(dur))
 
@@ -652,6 +652,7 @@ def plot_disruption_gantt(order_dir: Path,
 
     ax.set_yticks([station_to_y[st] for st in stations])
     ax.set_yticklabels([str(st) for st in stations])
+    ax.invert_yaxis()
 
     ax.set_xlim(0, sim_time)
 
