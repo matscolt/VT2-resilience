@@ -229,7 +229,7 @@ def iter_breakdown_specs_v2(station_cfg: Dict[str, Any]):
 
 def create_setting_json(output_path: Path) -> Dict[str, Any]:
     setting = {
-        "sim_time [s]": 3600,
+        "sim_time [s]": 36000,
         "seed": datetime.now().strftime("%Y%m%d%H%M%S"),
         "random based disruptions": {"enabled": 2},
         "line_layout_file": "line_layout_single_path.json",
@@ -643,25 +643,39 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
     rows = []
     sum = []
     priosum = []
-    ordermean = num_units/num_orders
-    orderstd = ordermean * 0.1
-    unitstd =  0.1
+    if num_units < num_orders:
+        print(f"Warning: num_units ({num_units}) is less than num_orders ({num_orders}).\nRemoving empty orders and adjusting num_orders to {num_units}.")
+        num_orders = num_units
 
-    earliest_due_date = ordermean * 76.4
-    for order_id in range(1, num_orders):
-        units = round_half_up(max(random.normalvariate(ordermean, orderstd), 1))
-        due_date = round_half_up(random.uniform(earliest_due_date, sim_time))
+    unitstd =  0.1
+    units_left = num_units
+
+    for order_id in range(1, num_orders+1):
+        units = max(1, round_half_up(random.normalvariate(units_left / (num_orders - order_id+1),
+                                                        (units_left / (num_orders - order_id+1)) * 0.1)))
+        if units > units_left:
+            units = units_left
+        if order_id == num_orders:
+            units = units_left
+        units_left -= units
+        due_date = round_half_up(random.uniform(min(units * 76.4, sim_time), sim_time))
         priority = round_half_up(min(max(random.expovariate(1/1.5), 1), 5))
         variant0 = "FUSE0"
-        quantity0 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
+        quantity0 = round_half_up(max(random.normalvariate(units * 0.33, unitstd), 0))
         variant1 = "FUSE1"
-        quantity1 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
+        quantity1 = round_half_up(max(random.normalvariate(units * 0.33, unitstd), 0))
         variant2 = "FUSE2"
         quantity2 = round_half_up(units - quantity0 - quantity1)
-        while quantity2 < 0:
-            quantity0 = quantity0 - 1
-            quantity1 = quantity1 - 1
-            quantity2 = units - quantity0 - quantity1
+        if units <= 2:
+            quantity0, quantity1, quantity2 = 0, 0, 0
+            for i in range(units):
+                n = random.uniform(0, 1)
+                if n <= 0.33:
+                    quantity0 += 1
+                elif n <= 0.66:
+                    quantity1 += 1
+                else:
+                    quantity2 += 1
             
         row = {
             "order_id": order_id,
@@ -684,39 +698,10 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
     priority_sum = 0
     for p in priosum:
         priority_sum += p
-    print(f"Total units in orders: {total_sum}")
-    units = num_units-total_sum
-    due_date = round_half_up(random.uniform(earliest_due_date, sim_time))
-    priority = round_half_up(max(random.normalvariate(2.5, 1), 1))
-    variant0 = "FUSE0"
-    quantity0 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
-    variant1 = "FUSE1"
-    quantity1 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
-    variant2 = "FUSE2"
-    quantity2 = round_half_up(units - quantity0 - quantity1)
-    while quantity2 < 0:
-        quantity0 = quantity0 - 1
-        quantity1 = quantity1 - 1
-        quantity2 = units - quantity0 - quantity1
-
-    row = {
-        "order_id": order_id+1,
-        "due date": due_date,
-        "priority": priority,
-        "variant0": variant0,
-        "quantity0": quantity0,
-        "variant1": variant1,
-        "quantity1": quantity1,
-        "variant2": variant2,
-        "quantity2": quantity2
-    }
-    rows.append(row)
-    total_sum += quantity0 + quantity1 + quantity2
-    priority_sum += priority
-
+    
     print(f"Total priority in orders: {priority_sum} with a mean of {priority_sum/num_orders}")
     print(f"Generated {num_orders} orders with a total of {total_sum} units.\n Average units per order: {total_sum/num_orders}")
-    print(f"average phone per hour: {total_sum/sim_time*3600}")
+    print(f"average phone per hour(if possible): {total_sum/sim_time*3600}")
     write_order_csv(rows, output_path)
 
 # -----------------------------
@@ -895,23 +880,50 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
         # so it does not fit the downtime-% approach. If you add a duration spec, you can generate it similarly.
 
     #emergancy orders
-    eorders = random.normalvariate(num_orders, num_orders * 0.1)
-    for i in range(round_half_up(eorders)):
+    eorders = round_half_up(random.normalvariate(num_orders*0.1, num_orders * 0.01))
+    eunits = round_half_up(random.normalvariate(num_units*0.1, num_units * 0.01))
+    if eunits < eorders:
+        eorders = eunits
+    print(f"Generating {eorders} emergency orders with {eunits} units (10% of total orders with some variance).")
+    eunits_left = eunits
+    for i in range(eorders):
         order_id = num_orders + i + 1
-        due_date = round_half_up(random.uniform(0, sim_time))
+        eunits_per_order = max(1, round_half_up(random.normalvariate((eunits_left / (eorders - i)),
+                                                        (eunits_left / (eorders - i)*0.1))))
+        if eunits_per_order > eunits_left:
+            eunits_per_order = eunits_left
+        if i == eorders-1:
+            eunits_per_order = eunits_left
+        eunits_left -= eunits_per_order
+        start_time = round_half_up(random.uniform(0, max(sim_time-eunits_per_order*76.4, 0)))
+        due_date = round_half_up(random.uniform(min(start_time+eunits_per_order*76.4, sim_time), sim_time))
+        alpha = 1.7776863333154025  # Example shape parameter for gamma distribution (k)
+        beta = eunits_per_order*76.4*1.5/alpha # Example scale parameter for gamma distribution (theta)
+        due_date = round_half_up(start_time+random.gammavariate(alpha, beta))
         priority = 5
         variant0 = "FUSE0"
-        quantity0 = 0
+        quantity0 = max(0, round_half_up(random.normalvariate(eunits_per_order*0.33, eunits_per_order * 0.033)))
         variant1 = "FUSE1"
-        quantity1 = 0
+        quantity1 = max(0, round_half_up(random.normalvariate(eunits_per_order*0.33, eunits_per_order * 0.033)))
         variant2 = "FUSE2"
-        quantity2 = round_half_up(random.uniform(1, 5))
+        quantity2 = max(0, eunits_per_order - quantity0 - quantity1)
+        if eunits_per_order <= 2:
+            quantity0, quantity1, quantity2 = 0, 0, 0
+            for i in range(eunits_per_order):
+                n = random.uniform(0, 1)
+                if n <= 0.33:
+                    quantity0 += 1
+                elif n <= 0.66:
+                    quantity1 += 1
+                else:
+                    quantity2 += 1
 
+            
         rows.append(
             {
                 "disruption_type": "emergency_order",
                 "station_id": "",
-                "start_time": due_date,
+                "start_time": start_time,
                 "end_time": "",
                 "efficiency_percentage": "",
                 "order_id": order_id,
