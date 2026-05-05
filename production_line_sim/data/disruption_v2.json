@@ -5,63 +5,55 @@
       "machine breakdowns": [
         {
           "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
+          "chance [%]": 0.005,
+          "chance of sim time [%]": 0.45,
           "range [s]": [
-            30,
-            60
+            60,
+            120
           ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
+          "mean [s]": 90,
+          "std [% of mean]": 5
         },
         {
           "name": "Bottom Cover Misaligned",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 0.55,
+          "chance [%]": 0.0025,
+          "chance of sim time [%]": 0.275,
           "range [s]": [
-            30,
-            80
+            60,
+            160
           ],
-          "mean [s]": 55,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
+          "mean [s]": 110,
+          "std [% of mean]": 10
         },
         {
           "name": "Bottom Cover Stuck",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 0.65,
+          "chance [%]": 0.0025,
+          "chance of sim time [%]": 0.325,
           "range [s]": [
-            40,
-            90
+            80,
+            180
           ],
-          "mean [s]": 65,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
+          "mean [s]": 130,
+          "std [% of mean]": 5
         },
         {
           "name": "Piston Broke",
-          "chance [%]": 0.002,
-          "chance of sim time [%]": 2.4,
+          "chance [%]": 0.0005,
+          "chance of sim time [%]": 1.2,
           "range [s]": [
-            600,
-            1800
+            1200,
+            3600
           ],
-          "mean [s]": 1200,
-          "std [% of mean]": 20,
-          "std [0-1 of mean]": 0.2
+          "mean [s]": 2400,
+          "std [% of mean]": 20
         }
       ],
       "efficiency loss": {
-        "chance [%]": 0.076,
-        "chance of sim time [%]": 0.5016,
+        "chance [%]": 0.019,
+        "chance of sim time [%]": 0.2508,
         "range [%]": [
           10,
           90
-        ],
-        "range [0-1]": [
-          0.1,
-          0.9
         ]
       }
     },
@@ -70,51 +62,44 @@
       "machine breakdowns": [
         {
           "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
+          "chance [%]": 0.005,
+          "chance of sim time [%]": 0.45,
           "range [s]": [
-            30,
-            60
+            60,
+            120
           ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
+          "mean [s]": 90,
+          "std [% of mean]": 5
         },
         {
           "name": "Drill To Dull",
-          "chance [%]": 0.005,
-          "chance of sim time [%]": 1.1,
+          "chance [%]": 0.00125,
+          "chance of sim time [%]": 0.55,
           "range [s]": [
-            120,
-            320
+            240,
+            640
           ],
-          "mean [s]": 220,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
+          "mean [s]": 440,
+          "std [% of mean]": 10
         },
         {
           "name": "Drill Broke",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 2.5,
+          "chance [%]": 0.0025,
+          "chance of sim time [%]": 1.25,
           "range [s]": [
-            160,
-            340
+            320,
+            680
           ],
-          "mean [s]": 250,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
+          "mean [s]": 500,
+          "std [% of mean]": 10
         }
       ],
       "efficiency loss": {
-        "chance [%]": 0.048,
-        "chance of sim time [%]": 0.4992,
+        "chance [%]": 0.012,
+        "chance of sim time [%]": 0.2496,
         "range [%]": [
           10,
           90
-        ],
-        "range [0-1]": [
-          0.1,
-          0.9
         ]
       }
     },
@@ -123,99 +108,88 @@
       "machine breakdowns": [
         {
           "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
+          "chance [%]": 0.005,
+          "chance of sim time [%]": 0.45,
           "range [s]": [
-            30,
-            60
+            60,
+            120
           ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
+          "mean [s]": 90,
+          "std [% of mean]": 5
         },
         {
           "name": "Cover Wrong Orientation",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 2.1,
+          "chance [%]": 0.0025,
+          "chance of sim time [%]": 1.05,
           "range [s]": [
-            120,
-            300
+            240,
+            600
           ],
-          "mean [s]": 210,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
+          "mean [s]": 420,
+          "std [% of mean]": 10
         },
         {
           "name": "Arm Movement Misaligned",
-          "chance [%]": 0.005,
-          "chance of sim time [%]": 4.5,
+          "chance [%]": 0.00125,
+          "chance of sim time [%]": 2.25,
+          "range [s]": [
+            1200,
+            2400
+          ],
+          "mean [s]": 1800,
+          "std [% of mean]": 15
+        },
+        {
+          "name": "Cart Relised To Early",
+          "chance [%]": 0.00125,
+          "chance of sim time [%]": 1.125,
           "range [s]": [
             600,
             1200
           ],
           "mean [s]": 900,
-          "std [% of mean]": 15,
-          "std [0-1 of mean]": 0.15
-        },
-        {
-          "name": "Cart Relised To Early",
-          "chance [%]": 0.005,
-          "chance of sim time [%]": 2.25,
-          "range [s]": [
-            300,
-            600
-          ],
-          "mean [s]": 450,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
+          "std [% of mean]": 10
         },
         {
           "name": "Misaligned Material",
-          "chance [%]": 0.005,
-          "chance of sim time [%]": 1.7,
+          "chance [%]": 0.00125,
+          "chance of sim time [%]": 0.85,
           "range [s]": [
-            200,
-            480
+            400,
+            960
           ],
-          "mean [s]": 340,
-          "std [% of mean]": 15,
-          "std [0-1 of mean]": 0.15
+          "mean [s]": 680,
+          "std [% of mean]": 15
         },
         {
           "name": "Tool Broke",
-          "chance [%]": 0.001,
-          "chance of sim time [%]": 1.35,
+          "chance [%]": 0.00025,
+          "chance of sim time [%]": 0.675,
           "range [s]": [
-            900,
-            1800
+            1800,
+            3600
           ],
-          "mean [s]": 1350,
-          "std [% of mean]": 20,
-          "std [0-1 of mean]": 0.2
+          "mean [s]": 2700,
+          "std [% of mean]": 20
         },
         {
           "name": "Robot Arm Broke",
-          "chance [%]": 0.001,
-          "chance of sim time [%]": 5.2,
+          "chance [%]": 0.00025,
+          "chance of sim time [%]": 2.6,
           "range [s]": [
-            3400,
-            7000
+            6800,
+            14000
           ],
-          "mean [s]": 5200,
-          "std [% of mean]": 25,
-          "std [0-1 of mean]": 0.25
+          "mean [s]": 10400,
+          "std [% of mean]": 25
         }
       ],
       "efficiency loss": {
-        "chance [%]": 0.027,
-        "chance of sim time [%]": 1.9962,
+        "chance [%]": 0.00675,
+        "chance of sim time [%]": 0.9981,
         "range [%]": [
           10,
           90
-        ],
-        "range [0-1]": [
-          0.1,
-          0.9
         ]
       }
     },
@@ -224,30 +198,6 @@
       "machine breakdowns": [
         {
           "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
-          "range [s]": [
-            30,
-            60
-          ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
-        },
-        {
-          "name": "Camera Broken",
-          "chance [%]": 0.002,
-          "chance of sim time [%]": 0.9,
-          "range [s]": [
-            300,
-            600
-          ],
-          "mean [s]": 450,
-          "std [% of mean]": 15,
-          "std [0-1 of mean]": 0.15
-        },
-        {
-          "name": "Camera Dirty",
           "chance [%]": 0.005,
           "chance of sim time [%]": 0.45,
           "range [s]": [
@@ -255,20 +205,37 @@
             120
           ],
           "mean [s]": 90,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
+          "std [% of mean]": 5
+        },
+        {
+          "name": "Camera Broken",
+          "chance [%]": 0.0005,
+          "chance of sim time [%]": 0.45,
+          "range [s]": [
+            600,
+            1200
+          ],
+          "mean [s]": 900,
+          "std [% of mean]": 15
+        },
+        {
+          "name": "Camera Dirty",
+          "chance [%]": 0.00125,
+          "chance of sim time [%]": 0.225,
+          "range [s]": [
+            120,
+            240
+          ],
+          "mean [s]": 180,
+          "std [% of mean]": 10
         }
       ],
       "efficiency loss": {
-        "chance [%]": 0.119,
-        "chance of sim time [%]": 0.2499,
+        "chance [%]": 0.02975,
+        "chance of sim time [%]": 0.12495,
         "range [%]": [
           10,
           90
-        ],
-        "range [0-1]": [
-          0.1,
-          0.9
         ]
       }
     },
@@ -277,63 +244,55 @@
       "machine breakdowns": [
         {
           "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
+          "chance [%]": 0.005,
+          "chance of sim time [%]": 0.45,
           "range [s]": [
-            30,
-            60
+            60,
+            120
           ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
+          "mean [s]": 90,
+          "std [% of mean]": 5
         },
         {
           "name": "Top Cover Misaligned",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 0.55,
+          "chance [%]": 0.0025,
+          "chance of sim time [%]": 0.275,
           "range [s]": [
-            30,
-            80
+            60,
+            160
           ],
-          "mean [s]": 55,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
+          "mean [s]": 110,
+          "std [% of mean]": 10
         },
         {
           "name": "Top Cover Stuck",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 0.65,
+          "chance [%]": 0.0025,
+          "chance of sim time [%]": 0.325,
           "range [s]": [
-            40,
-            90
+            80,
+            180
           ],
-          "mean [s]": 65,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
+          "mean [s]": 130,
+          "std [% of mean]": 5
         },
         {
           "name": "Piston Broke",
-          "chance [%]": 0.002,
-          "chance of sim time [%]": 2.4,
+          "chance [%]": 0.0005,
+          "chance of sim time [%]": 1.2,
           "range [s]": [
-            600,
-            1800
+            1200,
+            3600
           ],
-          "mean [s]": 1200,
-          "std [% of mean]": 20,
-          "std [0-1 of mean]": 0.2
+          "mean [s]": 2400,
+          "std [% of mean]": 20
         }
       ],
       "efficiency loss": {
-        "chance [%]": 0.109,
-        "chance of sim time [%]": 0.5014,
+        "chance [%]": 0.02725,
+        "chance of sim time [%]": 0.2507,
         "range [%]": [
           10,
           90
-        ],
-        "range [0-1]": [
-          0.1,
-          0.9
         ]
       }
     },
@@ -342,34 +301,29 @@
       "machine breakdowns": [
         {
           "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
+          "chance [%]": 0.005,
+          "chance of sim time [%]": 0.45,
           "range [s]": [
-            30,
-            60
+            60,
+            120
           ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
+          "mean [s]": 90,
+          "std [% of mean]": 5
         }
       ],
       "inspection failure": {
         "name": "Inspection Failure",
         "effect": "cancel_and_redo_unit",
-        "chance [%]": 0.0068,
-        "chance of sim time [%]": 1.3507,
+        "chance [%]": 0.0017,
+        "chance of sim time [%]": 0.67535,
         "action": "The unit is cancelled and redone."
       },
       "efficiency loss": {
-        "chance [%]": 0.0625,
-        "chance of sim time [%]": 0.25,
+        "chance [%]": 0.015625,
+        "chance of sim time [%]": 0.125,
         "range [%]": [
           10,
           90
-        ],
-        "range [0-1]": [
-          0.1,
-          0.9
         ]
       }
     }
