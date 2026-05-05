@@ -1,11 +1,18 @@
 import json
 import csv
 import random
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
+# ============================================================
+# Constants
+# ============================================================
+
+PRIO_LOW = 1
+PRIO_HIGH = 5
 
 # ============================================================
 # CSV writers
@@ -659,7 +666,7 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
             units = units_left
         units_left -= units
         due_date = round_half_up(random.uniform(min(units * 76.4, sim_time), sim_time))
-        priority = round_half_up(min(max(random.expovariate(1/1.5), 1), 5))
+        priority = round_half_up(min(max(random.expovariate(1/1.5), PRIO_LOW), PRIO_HIGH))
         variant0 = "FUSE0"
         quantity0 = round_half_up(max(random.normalvariate(units * 0.33, unitstd), 0))
         variant1 = "FUSE1"
@@ -897,10 +904,16 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
         eunits_left -= eunits_per_order
         start_time = round_half_up(random.uniform(0, max(sim_time-eunits_per_order*76.4, 0)))
         due_date = round_half_up(random.uniform(min(start_time+eunits_per_order*76.4, sim_time), sim_time))
-        alpha = 1.7776863333154025  # Example shape parameter for gamma distribution (k)
-        beta = eunits_per_order*76.4*1.5/alpha # Example scale parameter for gamma distribution (theta)
-        due_date = round_half_up(start_time+random.gammavariate(alpha, beta))
-        priority = 5
+        
+        x50 = 0.5 # 50th percentile of the distribution (median)
+        x90 = 2.0 # 90th percentile of the distribution (chosen to create a long tail for emergency orders)
+
+        k = math.log(math.log(10)/math.log(2)) / math.log(x90/x50) # shape parameter for weibull distribution (k)
+        lam = x50 / (math.log(2)**(1.0/k)) # scale parameter for weibull distribution (lambda)
+
+        due_date = min(round_half_up(start_time+eunits_per_order*76.4*(1+random.weibullvariate(lam, k))), sim_time)
+        
+        priority = PRIO_HIGH  # Emergency orders get highest priority
         variant0 = "FUSE0"
         quantity0 = max(0, round_half_up(random.normalvariate(eunits_per_order*0.33, eunits_per_order * 0.033)))
         variant1 = "FUSE1"
