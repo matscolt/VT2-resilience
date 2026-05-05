@@ -34,7 +34,7 @@ def write_disruption_csv(rows: List[Dict[str, Any]], output_path: Path) -> None:
             f,
             fieldnames=[
                 "disruption_type", "station_id", "start_time", "end_time", "efficiency_percentage",
-                "order_id", "Order_time", "priority",
+                "order_id", "due_date", "priority",
                 "variant0", "quantity0",
                 "variant1", "quantity1",
                 "variant2", "quantity2",
@@ -51,20 +51,6 @@ def write_disruption_csv(rows: List[Dict[str, Any]], output_path: Path) -> None:
 def round_half_up(x: float) -> int:
     """Round half up for non-negative values."""
     return int(x + 0.5)
-
-
-def normalize_chance(v: Any) -> float:
-    """Accept either fraction (0.05) or percent (5) and return a fraction [0..1]."""
-    if v is None:
-        return 0.0
-    try:
-        x = float(v)
-    except (TypeError, ValueError):
-        return 0.0
-    if x > 1.0:
-        x /= 100.0
-    return max(0.0, min(x, 1.0))
-
 
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(x, hi))
@@ -217,15 +203,8 @@ def iter_breakdown_specs_v2(station_cfg: Dict[str, Any]):
                 continue
             name = str(spec.get("name", "breakdown")).strip() or "breakdown"
             dtype = f"breakdown:{name}"
-
-            # Prefer explicit fraction field
-            if spec.get("chance [0-1]") is not None:
-                chance = float(spec.get("chance [0-1]", 0))
-            elif spec.get("chance [%]") is not None:
-                # v2 chance[%] is a percent value (e.g., 0.02 means 0.02%)
-                chance = float(spec.get("chance [%]", 0)) / 100.0
-            else:
-                chance = 0.0
+            # Use ONLY 'chance of sim time [%]' (percentage, e.g. 2.4 = 2.4%)
+            chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
 
             mean_dur = float(spec.get("mean [s]", 0))
             if mean_dur <= 0 and isinstance(spec.get("range [s]"), (list, tuple)) and len(spec["range [s]"]) == 2:
@@ -238,7 +217,7 @@ def iter_breakdown_specs_v2(station_cfg: Dict[str, Any]):
     if isinstance(station_cfg.get("breakdown"), dict):
         spec = station_cfg["breakdown"]
         dtype = "breakdown"
-        chance = normalize_chance(spec.get("Machine breakdown chance [%]", 0))
+        chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
         mean_dur = float(spec.get("duration [s]", 0))
         yield dtype, spec, chance, mean_dur
 
@@ -271,7 +250,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "PLC Failure",
           "chance [%]": 0.02,
-          "chance [0-1]": 0.0002,
+          "chance of sim time [%]": 0.9,
           "range [s]": [
             30,
             60
@@ -283,7 +262,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Bottom Cover Misaligned",
           "chance [%]": 0.01,
-          "chance [0-1]": 0.0001,
+          "chance of sim time [%]": 0.55,
           "range [s]": [
             30,
             80
@@ -295,7 +274,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Bottom Cover Stuck",
           "chance [%]": 0.01,
-          "chance [0-1]": 0.0001,
+          "chance of sim time [%]": 0.65,
           "range [s]": [
             40,
             90
@@ -307,7 +286,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Piston Broke",
           "chance [%]": 0.002,
-          "chance [0-1]": 2e-05,
+          "chance of sim time [%]": 2.4,
           "range [s]": [
             600,
             1800
@@ -319,7 +298,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
       ],
       "efficiency loss": {
         "chance [%]": 0.076,
-        "chance [0-1]": 0.00076,
+        "chance of sim time [%]": 0.5016,
         "range [%]": [
           10,
           90
@@ -336,7 +315,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "PLC Failure",
           "chance [%]": 0.02,
-          "chance [0-1]": 0.0002,
+          "chance of sim time [%]": 0.9,
           "range [s]": [
             30,
             60
@@ -348,7 +327,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Drill To Dull",
           "chance [%]": 0.005,
-          "chance [0-1]": 5e-05,
+          "chance of sim time [%]": 1.1,
           "range [s]": [
             120,
             320
@@ -360,7 +339,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Drill Broke",
           "chance [%]": 0.01,
-          "chance [0-1]": 0.0001,
+          "chance of sim time [%]": 2.5,
           "range [s]": [
             160,
             340
@@ -372,7 +351,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
       ],
       "efficiency loss": {
         "chance [%]": 0.048,
-        "chance [0-1]": 0.00048,
+        "chance of sim time [%]": 0.4992,
         "range [%]": [
           10,
           90
@@ -389,7 +368,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "PLC Failure",
           "chance [%]": 0.02,
-          "chance [0-1]": 0.0002,
+          "chance of sim time [%]": 0.9,
           "range [s]": [
             30,
             60
@@ -401,7 +380,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Cover Wrong Orientation",
           "chance [%]": 0.01,
-          "chance [0-1]": 0.0001,
+          "chance of sim time [%]": 2.1,
           "range [s]": [
             120,
             300
@@ -413,7 +392,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Arm Movement Misaligned",
           "chance [%]": 0.005,
-          "chance [0-1]": 5e-05,
+          "chance of sim time [%]": 4.5,
           "range [s]": [
             600,
             1200
@@ -425,7 +404,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Cart Relised To Early",
           "chance [%]": 0.005,
-          "chance [0-1]": 5e-05,
+          "chance of sim time [%]": 2.25,
           "range [s]": [
             300,
             600
@@ -437,7 +416,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Misaligned Material",
           "chance [%]": 0.005,
-          "chance [0-1]": 5e-05,
+          "chance of sim time [%]": 1.7,
           "range [s]": [
             200,
             480
@@ -449,7 +428,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Tool Broke",
           "chance [%]": 0.001,
-          "chance [0-1]": 1e-05,
+          "chance of sim time [%]": 1.35,
           "range [s]": [
             900,
             1800
@@ -461,7 +440,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Robot Arm Broke",
           "chance [%]": 0.001,
-          "chance [0-1]": 1e-05,
+          "chance of sim time [%]": 5.2,
           "range [s]": [
             3400,
             7000
@@ -473,7 +452,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
       ],
       "efficiency loss": {
         "chance [%]": 0.027,
-        "chance [0-1]": 0.00027,
+        "chance of sim time [%]": 1.9962,
         "range [%]": [
           10,
           90
@@ -490,7 +469,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "PLC Failure",
           "chance [%]": 0.02,
-          "chance [0-1]": 0.0002,
+          "chance of sim time [%]": 0.9,
           "range [s]": [
             30,
             60
@@ -502,7 +481,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Camera Broken",
           "chance [%]": 0.002,
-          "chance [0-1]": 2e-05,
+          "chance of sim time [%]": 0.9,
           "range [s]": [
             300,
             600
@@ -514,7 +493,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Camera Dirty",
           "chance [%]": 0.005,
-          "chance [0-1]": 5e-05,
+          "chance of sim time [%]": 0.45,
           "range [s]": [
             60,
             120
@@ -526,7 +505,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
       ],
       "efficiency loss": {
         "chance [%]": 0.119,
-        "chance [0-1]": 0.00119,
+        "chance of sim time [%]": 0.2499,
         "range [%]": [
           10,
           90
@@ -543,7 +522,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "PLC Failure",
           "chance [%]": 0.02,
-          "chance [0-1]": 0.0002,
+          "chance of sim time [%]": 0.9,
           "range [s]": [
             30,
             60
@@ -555,7 +534,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Top Cover Misaligned",
           "chance [%]": 0.01,
-          "chance [0-1]": 0.0001,
+          "chance of sim time [%]": 0.55,
           "range [s]": [
             30,
             80
@@ -567,7 +546,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Top Cover Stuck",
           "chance [%]": 0.01,
-          "chance [0-1]": 0.0001,
+          "chance of sim time [%]": 0.65,
           "range [s]": [
             40,
             90
@@ -579,7 +558,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "Piston Broke",
           "chance [%]": 0.002,
-          "chance [0-1]": 2e-05,
+          "chance of sim time [%]": 2.4,
           "range [s]": [
             600,
             1800
@@ -591,7 +570,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
       ],
       "efficiency loss": {
         "chance [%]": 0.109,
-        "chance [0-1]": 0.00109,
+        "chance of sim time [%]": 0.5014,
         "range [%]": [
           10,
           90
@@ -608,7 +587,7 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         {
           "name": "PLC Failure",
           "chance [%]": 0.02,
-          "chance [0-1]": 0.0002,
+          "chance of sim time [%]": 0.9,
           "range [s]": [
             30,
             60
@@ -622,12 +601,12 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         "name": "Inspection Failure",
         "effect": "cancel_and_redo_unit",
         "chance [%]": 0.0068,
-        "chance [0-1]": 6.8e-05,
+        "chance of sim time [%]": 1.3507,
         "action": "The unit is cancelled and redone."
       },
       "efficiency loss": {
         "chance [%]": 0.0625,
-        "chance [0-1]": 0.000625,
+        "chance of sim time [%]": 0.25,
         "range [%]": [
           10,
           90
@@ -639,7 +618,8 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
       }
     }
   }
-}
+    }
+
 
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(disruption, f, indent=4)
@@ -743,7 +723,7 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
 # Disruption generation
 # ============================================================
 
-def generate_disruption_list(sim_time: int, output_path: Path) -> None:
+def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,num_units: int) -> None:
     """Generate disruptions.csv based on settings.json and disruption.json.
 
     Your requested semantics implemented:
@@ -803,7 +783,7 @@ def generate_disruption_list(sim_time: int, output_path: Path) -> None:
                         "end_time": end,
                         "efficiency_percentage": 0,
                         "order_id": "",
-                        "Order_time": "",
+                        "due_date": "",
                         "priority": "",
                         "variant0": "",
                         "quantity0": "",
@@ -823,12 +803,9 @@ def generate_disruption_list(sim_time: int, output_path: Path) -> None:
             spec = station_cfg["efficiency loss"]
 
             # v2 format: has keys like 'chance [0-1]' and 'range [0-1]' or 'range [%]' (no duration given)
-            if spec.get("chance [0-1]") is not None or spec.get("chance [%]") is not None:
-                if spec.get("chance [0-1]") is not None:
-                    chance = float(spec.get("chance [0-1]", 0))
-                else:
-                    # v2 chance[%] is a percent value (e.g., 0.076 means 0.076%)
-                    chance = float(spec.get("chance [%]", 0)) / 100.0
+            if spec.get("chance of sim time [%]") is not None:
+                # Use ONLY 'chance of sim time [%]' (percentage, e.g. 2.4 = 2.4%)
+                chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
 
                 target_downtime = chance * sim_time
                 duration = max(1, round_half_up(target_downtime))
@@ -857,7 +834,7 @@ def generate_disruption_list(sim_time: int, output_path: Path) -> None:
                             "end_time": end,
                             "efficiency_percentage": eff,
                             "order_id": "",
-                            "Order_time": "",
+                            "due_date": "",
                             "priority": "",
                             "variant0": "",
                             "quantity0": "",
@@ -872,7 +849,7 @@ def generate_disruption_list(sim_time: int, output_path: Path) -> None:
 
             # v1 format: has duration and std for efficiency loss
             else:
-                chance = normalize_chance(spec.get("efficiency drop chance [%]", 0))
+                chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
                 target_downtime = chance * sim_time
                 mean_dur = float(spec.get("duration [s]", 0))
 
@@ -899,7 +876,7 @@ def generate_disruption_list(sim_time: int, output_path: Path) -> None:
                             "end_time": end,
                             "efficiency_percentage": eff,
                             "order_id": "",
-                            "Order_time": "",
+                            "due_date": "",
                             "priority": "",
                             "variant0": "",
                             "quantity0": "",
@@ -917,8 +894,41 @@ def generate_disruption_list(sim_time: int, output_path: Path) -> None:
         # NOTE: "failed inspection" in your current JSON is probability-based without duration,
         # so it does not fit the downtime-% approach. If you add a duration spec, you can generate it similarly.
 
+    #emergancy orders
+    eorders = random.normalvariate(num_orders, num_orders * 0.1)
+    for i in range(round_half_up(eorders)):
+        order_id = num_orders + i + 1
+        due_date = round_half_up(random.uniform(0, sim_time))
+        priority = 5
+        variant0 = "FUSE0"
+        quantity0 = 0
+        variant1 = "FUSE1"
+        quantity1 = 0
+        variant2 = "FUSE2"
+        quantity2 = round_half_up(random.uniform(1, 5))
+
+        rows.append(
+            {
+                "disruption_type": "emergency_order",
+                "station_id": "",
+                "start_time": due_date,
+                "end_time": "",
+                "efficiency_percentage": "",
+                "order_id": order_id,
+                "due_date": due_date,
+                "priority": priority,
+                "variant0": variant0,
+                "quantity0": quantity0,
+                "variant1": variant1,
+                "quantity1": quantity1,
+                "variant2": variant2,
+                "quantity2": quantity2,
+            }
+        )
+    
+
     # Sort by start_time (then station_id for stable ordering)
-    rows.sort(key=lambda r: (int(r["start_time"]), int(r["station_id"])))
+    rows.sort(key=lambda r: (int(r["start_time"])))
 
     write_disruption_csv(rows, output_path)
 
@@ -1102,11 +1112,11 @@ def main():
 
     # Generate orderlist
 
-    # should be in format: order_id, Order_time, priority, variant0, quantity, variant1, quantity, variant2, quantity
+    # should be in format: order_id, due_date, priority, variant0, quantity, variant1, quantity, variant2, quantity
     generate_orderlist(num_orders, num_units, sim_time, output_path_ordercsv)
     if settings["random based disruptions"]["enabled"] == 2:
         print("Generating event based disruptions")
-        generate_disruption_list(sim_time, output_path_disruptioncsv)
+        generate_disruption_list(sim_time, output_path_disruptioncsv, num_orders, num_units)
         plot_disruption_gantt(order_dir, output_path_disruptioncsv, sim_time=sim_time, title=f"Disruptions Gantt Chart for {orderfoldername}", show=False)
 
     print(f"--- Created order file: {orderfoldername} ----")
