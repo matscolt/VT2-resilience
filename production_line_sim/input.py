@@ -446,56 +446,56 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
         }
         },
         "4": {
-        "station_type": "Inspection",
-        "machine breakdowns": [
-            {
-            "name": "PLC Failure",
-            "chance [%]": 0.005,
-            "chance of sim time [%]": 0.45,
-            "range [s]": [
-                60,
-                120
-            ],
-            "mean [s]": 90,
-            "std [% of mean]": 5
-            },
-            {
-            "name": "Camera Broken",
-            "chance [%]": 0.0005,
-            "chance of sim time [%]": 0.45,
-            "range [s]": [
-                600,
-                1200
-            ],
-            "mean [s]": 900,
-            "std [% of mean]": 15
-            },
-            {
-            "name": "Camera Dirty",
-            "chance [%]": 0.00125,
-            "chance of sim time [%]": 0.225,
-            "range [s]": [
-                120,
-                240
-            ],
-            "mean [s]": 180,
-            "std [% of mean]": 10
-            }
-        ],
-        "inspection failure": {
+      "station_type": "Inspection",
+      "machine breakdowns": [
+        {
+          "name": "PLC Failure",
+          "chance [%]": 0.005,
+          "chance of sim time [%]": 0.45,
+          "range [s]": [
+            60,
+            120
+          ],
+          "mean [s]": 90,
+          "std [% of mean]": 5
+        },
+        {
+          "name": "Camera Broken",
+          "chance [%]": 0.000278,
+          "chance of sim time [%]": 0.25,
+          "range [s]": [
+            600,
+            1200
+          ],
+          "mean [s]": 900,
+          "std [% of mean]": 15
+        },
+        {
+          "name": "Camera Dirty",
+          "chance [%]": 0.00125,
+          "chance of sim time [%]": 0.225,
+          "range [s]": [
+            120,
+            240
+          ],
+          "mean [s]": 180,
+          "std [% of mean]": 10
+        }
+      ],
+      "inspection failure": {
         "name": "Inspection Failure",
         "effect": "cancel_and_redo_unit",
-        "chance [%]": 0.0017,
-        "chance of sim time [%]": 0.67535,
+        "chance [%]": 0.001,
+        "chance of sim time [%]": 0.2,
         "action": "The unit is cancelled and redone."
-        },
-        "efficiency loss": {
-            "chance [%]": 0.02975,
-            "chance of sim time [%]": 0.12495,
-            "range [%]": [
-            10,
-            90
-            ]
+      },
+      "efficiency loss": {
+        "chance [%]": 0.02975,
+        "chance of sim time [%]": 0.12495,
+        "range [%]": [
+          10,
+          90
+        ]
         }
         },
         "5": {
