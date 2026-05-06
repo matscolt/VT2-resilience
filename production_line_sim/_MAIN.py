@@ -16,4 +16,13 @@ Wants and wishes
 
 
 """
-from input import create_input_file
+import A_input
+
+def main():
+
+   num_orders = int(input("Enter amount of orders: "))
+   num_units = int(input("Enter amount of units: "))
+   A_input.main(num_orders, num_units)
+
+if __name__ == "__main__":
+   main()
