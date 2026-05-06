@@ -1150,6 +1150,7 @@ def main(num_orders = None, num_units = None):
         plot_disruption_gantt(order_dir, output_path_disruptioncsv, sim_time=sim_time, title=f"Disruptions Gantt Chart for {orderfoldername}", show=False)
 
     print(f"--- Created order file: {orderfoldername} ----")
+    return order_dir
 
 
 if __name__ == "__main__":

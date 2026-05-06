@@ -13,16 +13,15 @@
 Wants and wishes
 - display a capacity and actual units in queue 
 
-
-
 """
-import A_input
+import A_input, B_production_planning
 
 def main():
-
    num_orders = int(input("Enter amount of orders: "))
    num_units = int(input("Enter amount of units: "))
-   A_input.main(num_orders, num_units)
+   order_dir = A_input.main(num_orders, num_units)
+   B_production_planning.main(order_dir)
+
 
 if __name__ == "__main__":
    main()
