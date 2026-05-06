@@ -9,5 +9,11 @@
 4. production_line_sim.py: simulates the actual production process based on the IPPS and the disruptions.
 5. graphgen.py: creates the graphs based on the output from the production line simulation.
 6. after_movie.py: creates the movie based on the output from the production line simulation.
+
+Wants and wishes
+- display a capacity and actual units in queue 
+
+
+
 """
 from input import create_input_file
