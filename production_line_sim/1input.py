@@ -64,7 +64,7 @@ def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(x, hi))
 
 
-def sample_duration(spec: Dict[str, Any], Range: bool = False) -> int:
+def sample_duration(settings_dir,spec: Dict[str, Any], Range: bool = False) -> int:
     """Sample a disruption duration in seconds as an int >= 1.
 
     Supports two spec formats:
@@ -83,9 +83,10 @@ def sample_duration(spec: Dict[str, Any], Range: bool = False) -> int:
             std_pct = spec.get("std [% of mean]")
             std_frac = float(std_pct) / 100.0 if std_pct is not None else 0.0
         std = float(std_frac) * mean
-
-        dur = mean if std <= 0 else random.normalvariate(mean, std)
-
+        
+        settings = read_settings_json(settings_dir / "settings.json")
+        dur = mean if std <= 0 else max(random.normalvariate(mean, std), mean - settings["lowest acceptable standard deviation [std below]"] * std)
+        
         rng = spec.get("range [s]")
         if isinstance(rng, (list, tuple)) and len(rng) == 2:
             dur = clamp(dur, float(rng[0]), float(rng[1]))
@@ -720,7 +721,7 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
             placed = 0
             for _ in range(n_events):
                 # v2 durations are clamped automatically; v1 uses Range flag to clamp
-                duration = sample_duration(spec, Range=True)
+                duration =  sample_duration(input_dir,spec, Range=True)
                 start = pick_random_start_non_overlapping(duration, occupied, sim_time)
                 if start is None:
                     break
