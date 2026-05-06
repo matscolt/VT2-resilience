@@ -230,6 +230,13 @@
           "std [% of mean]": 10
         }
       ],
+      "inspection failure": {
+        "name": "Inspection Failure",
+        "effect": "cancel_and_redo_unit",
+        "chance [%]": 0.0017,
+        "chance of sim time [%]": 0.67535,
+        "action": "The unit is cancelled and redone."
+      },
       "efficiency loss": {
         "chance [%]": 0.02975,
         "chance of sim time [%]": 0.12495,

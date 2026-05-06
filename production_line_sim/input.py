@@ -13,6 +13,7 @@ from matplotlib.patches import Patch
 
 PRIO_LOW = 1
 PRIO_HIGH = 5
+AVE_FLOW_TIME_PER_UNIT = 76.4  # seconds per unit, used for due date generation
 
 # ============================================================
 # CSV writers
@@ -481,6 +482,13 @@ def create_disruption_json(output_path: Path) -> Dict[str, Any]:
             "std [% of mean]": 10
             }
         ],
+        "inspection failure": {
+        "name": "Inspection Failure",
+        "effect": "cancel_and_redo_unit",
+        "chance [%]": 0.0017,
+        "chance of sim time [%]": 0.67535,
+        "action": "The unit is cancelled and redone."
+        },
         "efficiency loss": {
             "chance [%]": 0.02975,
             "chance of sim time [%]": 0.12495,
@@ -619,7 +627,7 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
         if order_id == num_orders:
             units = units_left
         units_left -= units
-        due_date = round_half_up(random.uniform(min(units * 76.4, sim_time), sim_time))
+        due_date = round_half_up(random.uniform(min(units * AVE_FLOW_TIME_PER_UNIT, sim_time), sim_time))
         priority = round_half_up(min(max(random.expovariate(1/1.5), PRIO_LOW), PRIO_HIGH))
         variant0 = "FUSE0"
         quantity0 = round_half_up(max(random.normalvariate(units * 0.33, unitstd), 0))
@@ -835,10 +843,43 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
 
                 if placed:
                     summary[station_id]["efficiency_loss"] = summary[station_id].get("efficiency_loss", 0) + placed
+                    
+        if "inspection failure" in station_cfg:
+             spec = station_cfg["inspection failure"]
+             chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
+             target_downtime = chance * sim_time
+             mean_duration = AVE_FLOW_TIME_PER_UNIT
 
+             # For a purely probability-based event without duration, we can sample occurrences directly from the target downtime fraction.
+             n_events = sample_event_count_from_time_fraction(target_downtime, mean_duration)  
 
-        # NOTE: "failed inspection" in your current JSON is probability-based without duration,
-        # so it does not fit the downtime-% approach. If you add a duration spec, you can generate it similarly.
+             for _ in range(n_events):
+                 start = random.randint(0, sim_time - 1)  # Random start time for the event
+                 rows.append(
+                     {
+                         "disruption_type": "inspection_failure",
+                         "station_id": station_id,
+                         "start_time": start,
+                         "end_time": "", 
+                         "efficiency_percentage": "",
+                         "order_id": "",
+                         "due_date": "",
+                         "priority": "",
+                         "variant0": "",
+                         "quantity0": "",
+                         "variant1": "",
+                         "quantity1": "",
+                         "variant2": "",
+                         "quantity2": "",
+                     }
+                 )
+
+             summary[station_id]["inspection_failure"] = summary[station_id].get("inspection_failure", 0) + n_events
+
+        
+
+        
+
 
     #emergancy orders
     eorders = round_half_up(random.normalvariate(num_orders*0.1, num_orders * 0.01))
@@ -856,8 +897,8 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
         if i == eorders-1:
             eunits_per_order = eunits_left
         eunits_left -= eunits_per_order
-        start_time = round_half_up(random.uniform(0, max(sim_time-eunits_per_order*76.4, 0)))
-        due_date = round_half_up(random.uniform(min(start_time+eunits_per_order*76.4, sim_time), sim_time))
+        start_time = round_half_up(random.uniform(0, max(sim_time-eunits_per_order*AVE_FLOW_TIME_PER_UNIT, 0)))
+        due_date = round_half_up(random.uniform(min(start_time+eunits_per_order*AVE_FLOW_TIME_PER_UNIT, sim_time), sim_time))
         
         x50 = 0.5 # 50th percentile of the distribution (median)
         x90 = 2.0 # 90th percentile of the distribution (chosen to create a long tail for emergency orders)
@@ -865,7 +906,7 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
         k = math.log(math.log(10)/math.log(2)) / math.log(x90/x50) # shape parameter for weibull distribution (k)
         lam = x50 / (math.log(2)**(1.0/k)) # scale parameter for weibull distribution (lambda)
 
-        due_date = min(round_half_up(start_time+eunits_per_order*76.4*(1+random.weibullvariate(lam, k))), sim_time)
+        due_date = min(round_half_up(start_time+eunits_per_order*AVE_FLOW_TIME_PER_UNIT*(1+random.weibullvariate(lam, k))), sim_time)
         print(f"Due date for order {order_id}: {due_date}")
 
         priority = PRIO_HIGH  # Emergency orders get highest priority
@@ -964,7 +1005,10 @@ def plot_disruption_gantt(order_dir: Path,
             try:
                 station = int(row["station_id"])
                 start = float(row["start_time"])
-                end = float(row["end_time"])
+                if row["end_time"] == "":
+                    end = start+AVE_FLOW_TIME_PER_UNIT
+                else:
+                    end = float(row["end_time"])
                 dtype = (row["disruption_type"] or "").strip().lower()
             except (KeyError, ValueError, TypeError):
                 continue
@@ -998,6 +1042,8 @@ def plot_disruption_gantt(order_dir: Path,
             return "green"
         if "eff" in dtype or "reduc" in dtype or "loss" in dtype:
             return "red"
+        if "inspection" in dtype:
+            return "blue"
         return "gray"  # fallback
 
     # --- Plot as broken_barh per station ---
@@ -1037,6 +1083,7 @@ def plot_disruption_gantt(order_dir: Path,
     legend_items = [
         Patch(facecolor="green", edgecolor="black", label="Breakdown"),
         Patch(facecolor="red", edgecolor="black", label="Efficiency reduction"),
+        Patch(facecolor="blue", edgecolor="black", label="Inspection failure"),
     ]
     ax.legend(handles=legend_items, loc="upper right")
 
