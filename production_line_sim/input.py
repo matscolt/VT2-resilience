@@ -1,11 +1,19 @@
 import json
 import csv
 import random
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
+# ============================================================
+# Constants
+# ============================================================
+
+PRIO_LOW = 1
+PRIO_HIGH = 5
+AVE_FLOW_TIME_PER_UNIT = 76.4  # seconds per unit, used for due date generation
 
 # ============================================================
 # CSV writers
@@ -229,7 +237,7 @@ def iter_breakdown_specs_v2(station_cfg: Dict[str, Any]):
 
 def create_setting_json(output_path: Path) -> Dict[str, Any]:
     setting = {
-        "sim_time [s]": 3600,
+        "sim_time [s]": 36000,
         "seed": datetime.now().strftime("%Y%m%d%H%M%S"),
         "random based disruptions": {"enabled": 2},
         "line_layout_file": "line_layout_single_path.json",
@@ -242,384 +250,345 @@ def create_setting_json(output_path: Path) -> Dict[str, Any]:
 
 
 def create_disruption_json(output_path: Path) -> Dict[str, Any]:
-    disruption = {
-  "Stations": {
-    "1": {
-      "station_type": "Bottom cover",
-      "machine breakdowns": [
-        {
-          "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
-          "range [s]": [
-            30,
-            60
-          ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
-        },
-        {
-          "name": "Bottom Cover Misaligned",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 0.55,
-          "range [s]": [
-            30,
-            80
-          ],
-          "mean [s]": 55,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
-        },
-        {
-          "name": "Bottom Cover Stuck",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 0.65,
-          "range [s]": [
-            40,
+    disruption ={ 
+    "Stations": {
+        "1": {
+        "station_type": "Bottom cover",
+        "machine breakdowns": [
+            {
+            "name": "PLC Failure",
+            "chance [%]": 0.005,
+            "chance of sim time [%]": 0.45,
+            "range [s]": [
+                60,
+                120
+            ],
+            "mean [s]": 90,
+            "std [% of mean]": 5
+            },
+            {
+            "name": "Bottom Cover Misaligned",
+            "chance [%]": 0.0025,
+            "chance of sim time [%]": 0.275,
+            "range [s]": [
+                60,
+                160
+            ],
+            "mean [s]": 110,
+            "std [% of mean]": 10
+            },
+            {
+            "name": "Bottom Cover Stuck",
+            "chance [%]": 0.0025,
+            "chance of sim time [%]": 0.325,
+            "range [s]": [
+                80,
+                180
+            ],
+            "mean [s]": 130,
+            "std [% of mean]": 5
+            },
+            {
+            "name": "Piston Broke",
+            "chance [%]": 0.0005,
+            "chance of sim time [%]": 1.2,
+            "range [s]": [
+                1200,
+                3600
+            ],
+            "mean [s]": 2400,
+            "std [% of mean]": 20
+            }
+        ],
+        "efficiency loss": {
+            "chance [%]": 0.019,
+            "chance of sim time [%]": 0.2508,
+            "range [%]": [
+            10,
             90
-          ],
-          "mean [s]": 65,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
-        },
-        {
-          "name": "Piston Broke",
-          "chance [%]": 0.002,
-          "chance of sim time [%]": 2.4,
-          "range [s]": [
-            600,
-            1800
-          ],
-          "mean [s]": 1200,
-          "std [% of mean]": 20,
-          "std [0-1 of mean]": 0.2
+            ]
         }
-      ],
-      "efficiency loss": {
-        "chance [%]": 0.076,
-        "chance of sim time [%]": 0.5016,
-        "range [%]": [
-          10,
-          90
+        },
+        "2": {
+        "station_type": "Drilling",
+        "machine breakdowns": [
+            {
+            "name": "PLC Failure",
+            "chance [%]": 0.005,
+            "chance of sim time [%]": 0.45,
+            "range [s]": [
+                60,
+                120
+            ],
+            "mean [s]": 90,
+            "std [% of mean]": 5
+            },
+            {
+            "name": "Drill To Dull",
+            "chance [%]": 0.00125,
+            "chance of sim time [%]": 0.55,
+            "range [s]": [
+                240,
+                640
+            ],
+            "mean [s]": 440,
+            "std [% of mean]": 10
+            },
+            {
+            "name": "Drill Broke",
+            "chance [%]": 0.0025,
+            "chance of sim time [%]": 1.25,
+            "range [s]": [
+                320,
+                680
+            ],
+            "mean [s]": 500,
+            "std [% of mean]": 10
+            }
         ],
-        "range [0-1]": [
-          0.1,
-          0.9
-        ]
-      }
-    },
-    "2": {
-      "station_type": "Drilling",
-      "machine breakdowns": [
-        {
-          "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
-          "range [s]": [
-            30,
-            60
-          ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
-        },
-        {
-          "name": "Drill To Dull",
-          "chance [%]": 0.005,
-          "chance of sim time [%]": 1.1,
-          "range [s]": [
-            120,
-            320
-          ],
-          "mean [s]": 220,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
-        },
-        {
-          "name": "Drill Broke",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 2.5,
-          "range [s]": [
-            160,
-            340
-          ],
-          "mean [s]": 250,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
-        }
-      ],
-      "efficiency loss": {
-        "chance [%]": 0.048,
-        "chance of sim time [%]": 0.4992,
-        "range [%]": [
-          10,
-          90
-        ],
-        "range [0-1]": [
-          0.1,
-          0.9
-        ]
-      }
-    },
-    "3": {
-      "station_type": "Robot cell",
-      "machine breakdowns": [
-        {
-          "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
-          "range [s]": [
-            30,
-            60
-          ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
-        },
-        {
-          "name": "Cover Wrong Orientation",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 2.1,
-          "range [s]": [
-            120,
-            300
-          ],
-          "mean [s]": 210,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
-        },
-        {
-          "name": "Arm Movement Misaligned",
-          "chance [%]": 0.005,
-          "chance of sim time [%]": 4.5,
-          "range [s]": [
-            600,
-            1200
-          ],
-          "mean [s]": 900,
-          "std [% of mean]": 15,
-          "std [0-1 of mean]": 0.15
-        },
-        {
-          "name": "Cart Relised To Early",
-          "chance [%]": 0.005,
-          "chance of sim time [%]": 2.25,
-          "range [s]": [
-            300,
-            600
-          ],
-          "mean [s]": 450,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
-        },
-        {
-          "name": "Misaligned Material",
-          "chance [%]": 0.005,
-          "chance of sim time [%]": 1.7,
-          "range [s]": [
-            200,
-            480
-          ],
-          "mean [s]": 340,
-          "std [% of mean]": 15,
-          "std [0-1 of mean]": 0.15
-        },
-        {
-          "name": "Tool Broke",
-          "chance [%]": 0.001,
-          "chance of sim time [%]": 1.35,
-          "range [s]": [
-            900,
-            1800
-          ],
-          "mean [s]": 1350,
-          "std [% of mean]": 20,
-          "std [0-1 of mean]": 0.2
-        },
-        {
-          "name": "Robot Arm Broke",
-          "chance [%]": 0.001,
-          "chance of sim time [%]": 5.2,
-          "range [s]": [
-            3400,
-            7000
-          ],
-          "mean [s]": 5200,
-          "std [% of mean]": 25,
-          "std [0-1 of mean]": 0.25
-        }
-      ],
-      "efficiency loss": {
-        "chance [%]": 0.027,
-        "chance of sim time [%]": 1.9962,
-        "range [%]": [
-          10,
-          90
-        ],
-        "range [0-1]": [
-          0.1,
-          0.9
-        ]
-      }
-    },
-    "4": {
-      "station_type": "Inspection",
-      "machine breakdowns": [
-        {
-          "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
-          "range [s]": [
-            30,
-            60
-          ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
-        },
-        {
-          "name": "Camera Broken",
-          "chance [%]": 0.002,
-          "chance of sim time [%]": 0.9,
-          "range [s]": [
-            300,
-            600
-          ],
-          "mean [s]": 450,
-          "std [% of mean]": 15,
-          "std [0-1 of mean]": 0.15
-        },
-        {
-          "name": "Camera Dirty",
-          "chance [%]": 0.005,
-          "chance of sim time [%]": 0.45,
-          "range [s]": [
-            60,
-            120
-          ],
-          "mean [s]": 90,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
-        }
-      ],
-      "efficiency loss": {
-        "chance [%]": 0.119,
-        "chance of sim time [%]": 0.2499,
-        "range [%]": [
-          10,
-          90
-        ],
-        "range [0-1]": [
-          0.1,
-          0.9
-        ]
-      }
-    },
-    "5": {
-      "station_type": "Top cover",
-      "machine breakdowns": [
-        {
-          "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
-          "range [s]": [
-            30,
-            60
-          ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
-        },
-        {
-          "name": "Top Cover Misaligned",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 0.55,
-          "range [s]": [
-            30,
-            80
-          ],
-          "mean [s]": 55,
-          "std [% of mean]": 10,
-          "std [0-1 of mean]": 0.1
-        },
-        {
-          "name": "Top Cover Stuck",
-          "chance [%]": 0.01,
-          "chance of sim time [%]": 0.65,
-          "range [s]": [
-            40,
+        "efficiency loss": {
+            "chance [%]": 0.012,
+            "chance of sim time [%]": 0.2496,
+            "range [%]": [
+            10,
             90
-          ],
-          "mean [s]": 65,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
+            ]
+        }
         },
-        {
-          "name": "Piston Broke",
-          "chance [%]": 0.002,
-          "chance of sim time [%]": 2.4,
-          "range [s]": [
-            600,
-            1800
-          ],
-          "mean [s]": 1200,
-          "std [% of mean]": 20,
-          "std [0-1 of mean]": 0.2
-        }
-      ],
-      "efficiency loss": {
-        "chance [%]": 0.109,
-        "chance of sim time [%]": 0.5014,
-        "range [%]": [
-          10,
-          90
+        "3": {
+        "station_type": "Robot cell",
+        "machine breakdowns": [
+            {
+            "name": "PLC Failure",
+            "chance [%]": 0.005,
+            "chance of sim time [%]": 0.45,
+            "range [s]": [
+                60,
+                120
+            ],
+            "mean [s]": 90,
+            "std [% of mean]": 5
+            },
+            {
+            "name": "Cover Wrong Orientation",
+            "chance [%]": 0.0025,
+            "chance of sim time [%]": 1.05,
+            "range [s]": [
+                240,
+                600
+            ],
+            "mean [s]": 420,
+            "std [% of mean]": 10
+            },
+            {
+            "name": "Arm Movement Misaligned",
+            "chance [%]": 0.00125,
+            "chance of sim time [%]": 2.25,
+            "range [s]": [
+                1200,
+                2400
+            ],
+            "mean [s]": 1800,
+            "std [% of mean]": 15
+            },
+            {
+            "name": "Cart Relised To Early",
+            "chance [%]": 0.00125,
+            "chance of sim time [%]": 1.125,
+            "range [s]": [
+                600,
+                1200
+            ],
+            "mean [s]": 900,
+            "std [% of mean]": 10
+            },
+            {
+            "name": "Misaligned Material",
+            "chance [%]": 0.00125,
+            "chance of sim time [%]": 0.85,
+            "range [s]": [
+                400,
+                960
+            ],
+            "mean [s]": 680,
+            "std [% of mean]": 15
+            },
+            {
+            "name": "Tool Broke",
+            "chance [%]": 0.00025,
+            "chance of sim time [%]": 0.675,
+            "range [s]": [
+                1800,
+                3600
+            ],
+            "mean [s]": 2700,
+            "std [% of mean]": 20
+            },
+            {
+            "name": "Robot Arm Broke",
+            "chance [%]": 0.00025,
+            "chance of sim time [%]": 2.6,
+            "range [s]": [
+                6800,
+                14000
+            ],
+            "mean [s]": 10400,
+            "std [% of mean]": 25
+            }
         ],
-        "range [0-1]": [
-          0.1,
-          0.9
-        ]
-      }
-    },
-    "6": {
-      "station_type": "Packaging",
-      "machine breakdowns": [
-        {
-          "name": "PLC Failure",
-          "chance [%]": 0.02,
-          "chance of sim time [%]": 0.9,
-          "range [s]": [
-            30,
-            60
-          ],
-          "mean [s]": 45,
-          "std [% of mean]": 5,
-          "std [0-1 of mean]": 0.05
+        "efficiency loss": {
+            "chance [%]": 0.00675,
+            "chance of sim time [%]": 0.9981,
+            "range [%]": [
+            10,
+            90
+            ]
         }
-      ],
-      "inspection failure": {
+        },
+        "4": {
+        "station_type": "Inspection",
+        "machine breakdowns": [
+            {
+            "name": "PLC Failure",
+            "chance [%]": 0.005,
+            "chance of sim time [%]": 0.45,
+            "range [s]": [
+                60,
+                120
+            ],
+            "mean [s]": 90,
+            "std [% of mean]": 5
+            },
+            {
+            "name": "Camera Broken",
+            "chance [%]": 0.0005,
+            "chance of sim time [%]": 0.45,
+            "range [s]": [
+                600,
+                1200
+            ],
+            "mean [s]": 900,
+            "std [% of mean]": 15
+            },
+            {
+            "name": "Camera Dirty",
+            "chance [%]": 0.00125,
+            "chance of sim time [%]": 0.225,
+            "range [s]": [
+                120,
+                240
+            ],
+            "mean [s]": 180,
+            "std [% of mean]": 10
+            }
+        ],
+        "inspection failure": {
         "name": "Inspection Failure",
         "effect": "cancel_and_redo_unit",
-        "chance [%]": 0.0068,
-        "chance of sim time [%]": 1.3507,
+        "chance [%]": 0.0017,
+        "chance of sim time [%]": 0.67535,
         "action": "The unit is cancelled and redone."
-      },
-      "efficiency loss": {
-        "chance [%]": 0.0625,
-        "chance of sim time [%]": 0.25,
-        "range [%]": [
-          10,
-          90
+        },
+        "efficiency loss": {
+            "chance [%]": 0.02975,
+            "chance of sim time [%]": 0.12495,
+            "range [%]": [
+            10,
+            90
+            ]
+        }
+        },
+        "5": {
+        "station_type": "Top cover",
+        "machine breakdowns": [
+            {
+            "name": "PLC Failure",
+            "chance [%]": 0.005,
+            "chance of sim time [%]": 0.45,
+            "range [s]": [
+                60,
+                120
+            ],
+            "mean [s]": 90,
+            "std [% of mean]": 5
+            },
+            {
+            "name": "Top Cover Misaligned",
+            "chance [%]": 0.0025,
+            "chance of sim time [%]": 0.275,
+            "range [s]": [
+                60,
+                160
+            ],
+            "mean [s]": 110,
+            "std [% of mean]": 10
+            },
+            {
+            "name": "Top Cover Stuck",
+            "chance [%]": 0.0025,
+            "chance of sim time [%]": 0.325,
+            "range [s]": [
+                80,
+                180
+            ],
+            "mean [s]": 130,
+            "std [% of mean]": 5
+            },
+            {
+            "name": "Piston Broke",
+            "chance [%]": 0.0005,
+            "chance of sim time [%]": 1.2,
+            "range [s]": [
+                1200,
+                3600
+            ],
+            "mean [s]": 2400,
+            "std [% of mean]": 20
+            }
         ],
-        "range [0-1]": [
-          0.1,
-          0.9
-        ]
-      }
+        "efficiency loss": {
+            "chance [%]": 0.02725,
+            "chance of sim time [%]": 0.2507,
+            "range [%]": [
+            10,
+            90
+            ]
+        }
+        },
+        "6": {
+        "station_type": "Packaging",
+        "machine breakdowns": [
+            {
+            "name": "PLC Failure",
+            "chance [%]": 0.005,
+            "chance of sim time [%]": 0.45,
+            "range [s]": [
+                60,
+                120
+            ],
+            "mean [s]": 90,
+            "std [% of mean]": 5
+            }
+        ],
+        "inspection failure": {
+            "name": "Inspection Failure",
+            "effect": "cancel_and_redo_unit",
+            "chance [%]": 0.0017,
+            "chance of sim time [%]": 0.67535,
+            "action": "The unit is cancelled and redone."
+        },
+        "efficiency loss": {
+            "chance [%]": 0.015625,
+            "chance of sim time [%]": 0.125,
+            "range [%]": [
+            10,
+            90
+            ]
+        }
+        }
     }
-  }
     }
-
+    
 
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(disruption, f, indent=4)
@@ -643,25 +612,39 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
     rows = []
     sum = []
     priosum = []
-    ordermean = num_units/num_orders
-    orderstd = ordermean * 0.1
-    unitstd =  0.1
+    if num_units < num_orders:
+        print(f"Warning: num_units ({num_units}) is less than num_orders ({num_orders}).\nRemoving empty orders and adjusting num_orders to {num_units}.")
+        num_orders = num_units
 
-    earliest_due_date = ordermean * 76.4
-    for order_id in range(1, num_orders):
-        units = round_half_up(max(random.normalvariate(ordermean, orderstd), 1))
-        due_date = round_half_up(random.uniform(earliest_due_date, sim_time))
-        priority = round_half_up(min(max(random.expovariate(1/1.5), 1), 5))
+    unitstd =  0.1
+    units_left = num_units
+
+    for order_id in range(1, num_orders+1):
+        units = max(1, round_half_up(random.normalvariate(units_left / (num_orders - order_id+1),
+                                                        (units_left / (num_orders - order_id+1)) * 0.1)))
+        if units > units_left:
+            units = units_left
+        if order_id == num_orders:
+            units = units_left
+        units_left -= units
+        due_date = round_half_up(random.uniform(min(units * AVE_FLOW_TIME_PER_UNIT, sim_time), sim_time))
+        priority = round_half_up(min(max(random.expovariate(1/1.5), PRIO_LOW), PRIO_HIGH))
         variant0 = "FUSE0"
-        quantity0 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
+        quantity0 = round_half_up(max(random.normalvariate(units * 0.33, unitstd), 0))
         variant1 = "FUSE1"
-        quantity1 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
+        quantity1 = round_half_up(max(random.normalvariate(units * 0.33, unitstd), 0))
         variant2 = "FUSE2"
         quantity2 = round_half_up(units - quantity0 - quantity1)
-        while quantity2 < 0:
-            quantity0 = quantity0 - 1
-            quantity1 = quantity1 - 1
-            quantity2 = units - quantity0 - quantity1
+        if units <= 2:
+            quantity0, quantity1, quantity2 = 0, 0, 0
+            for i in range(units):
+                n = random.uniform(0, 1)
+                if n <= 0.33:
+                    quantity0 += 1
+                elif n <= 0.66:
+                    quantity1 += 1
+                else:
+                    quantity2 += 1
             
         row = {
             "order_id": order_id,
@@ -684,39 +667,10 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
     priority_sum = 0
     for p in priosum:
         priority_sum += p
-    print(f"Total units in orders: {total_sum}")
-    units = num_units-total_sum
-    due_date = round_half_up(random.uniform(earliest_due_date, sim_time))
-    priority = round_half_up(max(random.normalvariate(2.5, 1), 1))
-    variant0 = "FUSE0"
-    quantity0 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
-    variant1 = "FUSE1"
-    quantity1 = round_half_up(units * max(random.normalvariate(0.33, unitstd), 0))
-    variant2 = "FUSE2"
-    quantity2 = round_half_up(units - quantity0 - quantity1)
-    while quantity2 < 0:
-        quantity0 = quantity0 - 1
-        quantity1 = quantity1 - 1
-        quantity2 = units - quantity0 - quantity1
-
-    row = {
-        "order_id": order_id+1,
-        "due date": due_date,
-        "priority": priority,
-        "variant0": variant0,
-        "quantity0": quantity0,
-        "variant1": variant1,
-        "quantity1": quantity1,
-        "variant2": variant2,
-        "quantity2": quantity2
-    }
-    rows.append(row)
-    total_sum += quantity0 + quantity1 + quantity2
-    priority_sum += priority
-
+    
     print(f"Total priority in orders: {priority_sum} with a mean of {priority_sum/num_orders}")
-    print(f"Generated {num_orders} orders with a total of {total_sum} units.\n Average units per order: {total_sum/num_orders}")
-    print(f"average phone per hour: {total_sum/sim_time*3600}")
+    print(f"Generated {num_orders} orders with a total of {total_sum} units.\nAverage units per order: {total_sum/num_orders}")
+    print(f"Average phone per hour(if possible): {total_sum/sim_time*3600}\n==============================")
     write_order_csv(rows, output_path)
 
 # -----------------------------
@@ -889,29 +843,96 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
 
                 if placed:
                     summary[station_id]["efficiency_loss"] = summary[station_id].get("efficiency_loss", 0) + placed
+                    
+        if "inspection failure" in station_cfg:
+             spec = station_cfg["inspection failure"]
+             chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
+             target_downtime = chance * sim_time
+             mean_duration = AVE_FLOW_TIME_PER_UNIT
 
+             # For a purely probability-based event without duration, we can sample occurrences directly from the target downtime fraction.
+             n_events = sample_event_count_from_time_fraction(target_downtime, mean_duration)  
 
-        # NOTE: "failed inspection" in your current JSON is probability-based without duration,
-        # so it does not fit the downtime-% approach. If you add a duration spec, you can generate it similarly.
+             for _ in range(n_events):
+                 start = random.randint(0, sim_time - 1)  # Random start time for the event
+                 rows.append(
+                     {
+                         "disruption_type": "inspection_failure",
+                         "station_id": station_id,
+                         "start_time": start,
+                         "end_time": "", 
+                         "efficiency_percentage": "",
+                         "order_id": "",
+                         "due_date": "",
+                         "priority": "",
+                         "variant0": "",
+                         "quantity0": "",
+                         "variant1": "",
+                         "quantity1": "",
+                         "variant2": "",
+                         "quantity2": "",
+                     }
+                 )
+
+             summary[station_id]["inspection_failure"] = summary[station_id].get("inspection_failure", 0) + n_events
+
+        
+
+        
+
 
     #emergancy orders
-    eorders = random.normalvariate(num_orders, num_orders * 0.1)
-    for i in range(round_half_up(eorders)):
+    eorders = round_half_up(random.normalvariate(num_orders*0.1, num_orders * 0.01))
+    eunits = round_half_up(random.normalvariate(num_units*0.1, num_units * 0.01))
+    if eunits < eorders:
+        eorders = eunits
+    print(f"Generating {eorders} emergency orders with {eunits} units (10% of total orders with some variance).")
+    eunits_left = eunits
+    for i in range(eorders):
         order_id = num_orders + i + 1
-        due_date = round_half_up(random.uniform(0, sim_time))
-        priority = 5
-        variant0 = "FUSE0"
-        quantity0 = 0
-        variant1 = "FUSE1"
-        quantity1 = 0
-        variant2 = "FUSE2"
-        quantity2 = round_half_up(random.uniform(1, 5))
+        eunits_per_order = max(1, round_half_up(random.normalvariate((eunits_left / (eorders - i)),
+                                                        (eunits_left / (eorders - i)*0.1))))
+        if eunits_per_order > eunits_left:
+            eunits_per_order = eunits_left
+        if i == eorders-1:
+            eunits_per_order = eunits_left
+        eunits_left -= eunits_per_order
+        start_time = round_half_up(random.uniform(0, max(sim_time-eunits_per_order*AVE_FLOW_TIME_PER_UNIT, 0)))
+        due_date = round_half_up(random.uniform(min(start_time+eunits_per_order*AVE_FLOW_TIME_PER_UNIT, sim_time), sim_time))
+        
+        x50 = 0.5 # 50th percentile of the distribution (median)
+        x90 = 2.0 # 90th percentile of the distribution (chosen to create a long tail for emergency orders)
 
+        k = math.log(math.log(10)/math.log(2)) / math.log(x90/x50) # shape parameter for weibull distribution (k)
+        lam = x50 / (math.log(2)**(1.0/k)) # scale parameter for weibull distribution (lambda)
+
+        due_date = min(round_half_up(start_time+eunits_per_order*AVE_FLOW_TIME_PER_UNIT*(1+random.weibullvariate(lam, k))), sim_time)
+        print(f"Due date for order {order_id}: {due_date}")
+
+        priority = PRIO_HIGH  # Emergency orders get highest priority
+        variant0 = "FUSE0"
+        quantity0 = max(0, round_half_up(random.normalvariate(eunits_per_order*0.33, eunits_per_order * 0.033)))
+        variant1 = "FUSE1"
+        quantity1 = max(0, round_half_up(random.normalvariate(eunits_per_order*0.33, eunits_per_order * 0.033)))
+        variant2 = "FUSE2"
+        quantity2 = max(0, eunits_per_order - quantity0 - quantity1)
+        if eunits_per_order <= 2:
+            quantity0, quantity1, quantity2 = 0, 0, 0
+            for i in range(eunits_per_order):
+                n = random.uniform(0, 1)
+                if n <= 0.33:
+                    quantity0 += 1
+                elif n <= 0.66:
+                    quantity1 += 1
+                else:
+                    quantity2 += 1
+
+            
         rows.append(
             {
                 "disruption_type": "emergency_order",
                 "station_id": "",
-                "start_time": due_date,
+                "start_time": start_time,
                 "end_time": "",
                 "efficiency_percentage": "",
                 "order_id": order_id,
@@ -984,7 +1005,10 @@ def plot_disruption_gantt(order_dir: Path,
             try:
                 station = int(row["station_id"])
                 start = float(row["start_time"])
-                end = float(row["end_time"])
+                if row["end_time"] == "":
+                    end = start+AVE_FLOW_TIME_PER_UNIT
+                else:
+                    end = float(row["end_time"])
                 dtype = (row["disruption_type"] or "").strip().lower()
             except (KeyError, ValueError, TypeError):
                 continue
@@ -1018,6 +1042,8 @@ def plot_disruption_gantt(order_dir: Path,
             return "green"
         if "eff" in dtype or "reduc" in dtype or "loss" in dtype:
             return "red"
+        if "inspection" in dtype:
+            return "blue"
         return "gray"  # fallback
 
     # --- Plot as broken_barh per station ---
@@ -1057,6 +1083,7 @@ def plot_disruption_gantt(order_dir: Path,
     legend_items = [
         Patch(facecolor="green", edgecolor="black", label="Breakdown"),
         Patch(facecolor="red", edgecolor="black", label="Efficiency reduction"),
+        Patch(facecolor="blue", edgecolor="black", label="Inspection failure"),
     ]
     ax.legend(handles=legend_items, loc="upper right")
 
