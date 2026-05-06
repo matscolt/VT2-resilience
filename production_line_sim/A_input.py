@@ -1113,7 +1113,7 @@ def main(num_orders = None, num_units = None):
         n=n+1
         orderfoldername = f"orders_{timestamp}_{n}"
     
-    ordername_csv = f"order_list_{timestamp}_{n}.csv"
+    ordername_csv = f"unsorted_orders.csv"
         
     order_dir = input_dir / orderfoldername
     order_dir.mkdir(parents=True, exist_ok=True)

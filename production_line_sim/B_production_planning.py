@@ -24,7 +24,7 @@ def main(order_dir):
     order_dir = Path(order_dir)
     settings = read_settings_json(order_dir / "settings.json")
     # read order csv file
-    order_csv_path = order_dir / "orders.csv"
+    order_csv_path = order_dir / "unsorted_orders.csv"
 
 
 
