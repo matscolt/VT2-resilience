@@ -14,7 +14,7 @@ Wants and wishes
 - display a capacity and actual units in queue 
 
 """
-import A_input, B_production_planning
+import A_input, B_production_planning, C_IPPS, D_algo
 from pathlib import Path
 
 # ================================================================================
@@ -37,6 +37,7 @@ def main():
    num_units = int(input("Enter amount of units: "))
    order_dir = A_input.main(num_orders, num_units)
    B_production_planning.main(order_dir,SECONDS_PER_WEEK)
+   C_IPPS.main()
 
 
 

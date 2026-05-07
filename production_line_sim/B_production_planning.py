@@ -12,6 +12,9 @@
 # a rough sorted production plan csv file for the 4 weeks (unsorted within the week)
 # production plan for the line in form of a csv file 
 import csv
+import json
+import re
+from copy import deepcopy
 from pathlib import Path
 from A_input import read_settings_json
 
@@ -23,79 +26,232 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 LAYOUT_DIR = DATA_DIR / "Layouts"
 
+
+
+# -----------------------------
+# Helpers for layout + times
+# -----------------------------
+def canonical_station_name(station_name: str) -> str:
+    """
+    Map 'Station 3.2: Robot cell' -> 'Station 3: Robot cell'
+    Keep other stations unchanged.
+    """
+    return re.sub(r"(Station\s+\d+)\.\d+:", r"\1:", station_name)
+
+
+def load_process_times(process_times_path: Path) -> dict:
+    with open(process_times_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def build_bottleneck_instances(layout_json: dict, bottleneck_base: str) -> list[dict]:
+    """
+    Extract all station instances whose canonical name equals bottleneck_base.
+    Uses time_scale_factor if present, otherwise defaults to 1.0.
+    Transport fields are ignored (per your wish).
+    """
+    instances = []
+    for inst in layout_json.get("station_instances", []):
+        name = inst.get("station_name", "")
+        base = canonical_station_name(name)
+        if base == bottleneck_base:
+            instances.append(
+                {
+                    "instance_name": name,
+                    "time_scale_factor": float(inst.get("time_scale_factor", 1.0)),
+                    "week": 1,
+                    "remaining_s": None,  # set later
+                }
+            )
+    return instances
+
+
+def iter_variant_qty(order: dict, max_pairs: int = 3):
+    """
+    Yields (variant, qty_int) from fields: variant0/quantity0, variant1/quantity1, variant2/quantity2
+    """
+    for i in range(max_pairs):
+        v = (order.get(f"variant{i}") or "").strip()
+        q_raw = order.get(f"quantity{i}")
+        if not v or q_raw in (None, "", "0"):
+            continue
+        # handle "10" or "10.0"
+        qty = int(float(q_raw))
+        if qty > 0:
+            yield v, qty
+
+
+# -----------------------------
+# Core planning (split across instances & weeks)
+# -----------------------------
+def plan_orders_across_robotcells(
+    orders: list[dict],
+    process_times_json: dict,
+    layout_json: dict,
+    seconds_per_week: float,
+    bottleneck_base: str = "Station 3: Robot cell",
+    variant_key_normalizer=str.upper,   # set to None if you don't want normalizing
+    max_variant_pairs: int = 3,
+):
+    """
+    Plans orders across all bottleneck station instances found in layout_json.
+    - Uses bottleneck processing times from process_times_json at bottleneck_base.
+    - Applies time_scale_factor per instance (multiplicative).
+    - Ignores transport time completely (your wish).
+    - Splits quantities freely across instances and weeks.
+    Returns: (orders_out, schedule)
+      schedule[week][instance_name][variant] = qty produced
+    """
+    process_times = process_times_json["process_times"]
+
+    instances = build_bottleneck_instances(layout_json, bottleneck_base=bottleneck_base)
+    if not instances:
+        raise ValueError(f"No station instances found matching bottleneck '{bottleneck_base}'")
+
+    # init remaining capacity per instance
+    for inst in instances:
+        inst["remaining_s"] = float(seconds_per_week)
+
+    schedule = {}  # schedule[week][instance][variant] = qty
+
+    def ensure_bucket(week: int, instance_name: str):
+        schedule.setdefault(week, {})
+        schedule[week].setdefault(instance_name, {})
+        return schedule[week][instance_name]
+
+    def eff_cycle_time(variant: str, inst: dict) -> float:
+        # base cycle time for the bottleneck station comes from process_times.json
+        base_t = float(process_times[variant][bottleneck_base])
+        return base_t * inst["time_scale_factor"]
+
+    orders_out = deepcopy(orders)
+
+    for o in orders_out:
+        # Remaining quantities to allocate for this order
+        remaining = {}
+        for v, q in iter_variant_qty(o, max_pairs=max_variant_pairs):
+            v_norm = variant_key_normalizer(v) if variant_key_normalizer else v
+            remaining[v_norm] = remaining.get(v_norm, 0) + q
+
+        # If order has no content, just set week 1
+        if not remaining:
+            o["planned_week"] = 1
+            continue
+
+        completion_week = 1
+
+        # Allocate until all variants completed
+        while any(q > 0 for q in remaining.values()):
+            progressed = False
+
+            # allocate variant by variant. (You can change ordering if you want priority rules.)
+            for variant, q_left in list(remaining.items()):
+                if q_left <= 0:
+                    continue
+                if variant not in process_times:
+                    raise KeyError(f"Variant '{variant}' is not defined in process_times.json")
+
+                # rank instances by fastest effective cycle time for this variant
+                ranked = sorted(instances, key=lambda inst: eff_cycle_time(variant, inst))
+
+                for inst in ranked:
+                    t = eff_cycle_time(variant, inst)
+                    can_make = int(inst["remaining_s"] // t)
+                    if can_make <= 0:
+                        continue
+
+                    make = min(q_left, can_make)
+                    inst["remaining_s"] -= make * t
+                    remaining[variant] -= make
+                    q_left -= make
+                    progressed = True
+
+                    bucket = ensure_bucket(inst["week"], inst["instance_name"])
+                    bucket[variant] = bucket.get(variant, 0) + make
+
+                    completion_week = max(completion_week, inst["week"])
+
+                    if q_left <= 0:
+                        break
+
+            if not progressed:
+                # nothing fits anywhere -> advance the instance with the smallest remaining time
+                # (simple way to open next-week capacity)
+                stuck = min(instances, key=lambda inst: inst["remaining_s"])
+                stuck["week"] += 1
+                stuck["remaining_s"] = float(seconds_per_week)
+                completion_week = max(completion_week, stuck["week"])
+
+        o["planned_week"] = completion_week
+
+    return orders_out, schedule
+
+
+# -----------------------------
+# Your main function, combined
+# -----------------------------
 def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
-    # read order csv file
+    order_dir = Path(order_dir)
     order_csv_path = order_dir / "unsorted_orders.csv"
-    
+
+    # read orders
     orders = []
-    with open(order_csv_path, mode='r') as csvfile:
+    with open(order_csv_path, mode="r", newline="", encoding="utf-8") as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
             orders.append(row)
 
-    # create production plan based on the orders and the settings
-    # for now we will just sort the orders based on the due date and the variant
-    # we can later add more complex sorting algorithms based on the capacity of the line and the processing times of the variants
+    # sort orders by due date (numeric)
+    # if due date can be empty, add a fallback
+    def due_key(x):
+        v = (x.get("due date") or "").strip()
+        return int(v) if v else 10**9
 
-    orders.sort(key=lambda x: int(x['due date']))
+    orders.sort(key=due_key)
 
-    #after sort now we need to calculate the capacity for each week and assign the orderline a week number
-    # we can calculate the capacity based on the settings and the layout of the line
-
-    #capacity for the week is 
+    # load layout + process times
     layout_name = settings["line_layout_file"]
-    layout_settings = read_settings_json(LAYOUT_DIR / layout_name) # this is the time it takes to process one unit at the bottleneck station, we can later calculate this based on the layout and the processing times of the variants
+    layout_json = read_settings_json(LAYOUT_DIR / layout_name)
     process_times_json = read_settings_json(DATA_DIR / "process_times.json")
-    process_times = process_times_json["process_times"]
 
-    bottleneck_station = layout_settings["bottleneck_station"]
-    
+    # Determine bottleneck station from your settings/layout
+    # If you already have this in layout_settings, use it.
+    bottleneck_base = layout_json["bottleneck_station"] if layout_json.get("bottleneck_station") is not None else "Station 3: Robot cell" 
 
-    cycle_time_common = {}
-    for variant, stations in process_times.items():
-        if bottleneck_station not in stations:
-            raise KeyError(f"Station '{bottleneck_station}' not found for variant '{variant}'")
-        cycle_time_common[variant] = float(stations[bottleneck_station])
-        return cycle_time_common
-    print("hello")
-    print(f"Cycle times at bottleneck station '{bottleneck_station}': {cycle_time_common}")
+    # plan across robotcell instances, ignoring transport time by design
+    planned_orders, schedule = plan_orders_across_robotcells(
+        orders=orders,
+        process_times_json=process_times_json,
+        layout_json=layout_json,
+        seconds_per_week=SECONDS_PER_WEEK,
+        bottleneck_base=bottleneck_base,
+        variant_key_normalizer=str.upper,  # helps if CSV uses "fuse0" etc.
+        max_variant_pairs=3,
+    )
 
-    def order_work_slow_seconds(order):
-        return sum(order.get(v, 0) * cycle_time_common[v] for v in cycle_time_common)
-
-    def assign_completion_week_pooled(orders, start_week=1, slow_cap_s=5000, fast_cap_s=5000, fast_speed=2.0):
-        pooled_cap = slow_cap_s * 1.0 + fast_cap_s * fast_speed  # in "slow-equivalent seconds"
-        week = start_week
-        remaining = pooled_cap
-
-        out = []
-        for o in orders:
-            work = order_work_slow_seconds(o)
-
-            while work > remaining:
-                week += 1
-                remaining = pooled_cap
-
-            remaining -= work
-
-            o2 = dict(o)
-            o2["work_slow_seconds"] = work
-            o2["planned_week"] = week      # completion week
-            out.append(o2)
-
-        return out
-    orders = assign_completion_week_pooled(orders, start_week=1, slow_cap_s=SECONDS_PER_WEEK, fast_cap_s=SECONDS_PER_WEEK, fast_speed=2.0)
-
-    # write production plan to csv file
+    # write production plan to csv
     production_plan_csv_path = order_dir / "production_plan.csv"
-    with open(production_plan_csv_path, mode='w', newline='') as csvfile:
-        fieldnames = ['order_id', 'due date', 'priority', 'variant0', 'quantity0', 'variant1', 'quantity1', 'variant2', 'quantity2']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    fieldnames = [
+        "order_id", "due date", "priority",
+        "variant0", "quantity0", "variant1", "quantity1", "variant2", "quantity2",
+        "planned_week",
+    ]
 
+    with open(production_plan_csv_path, mode="w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
-        for order in orders:
+        for order in planned_orders:
             writer.writerow(order)
 
+    # OPTIONAL: write the week/instance schedule for debugging
+    schedule_path = order_dir / "robotcell_schedule_debug.csv"
+    with open(schedule_path, mode="w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["week", "instance", "variant", "qty"])
+        for week in sorted(schedule):
+            for inst in schedule[week]:
+                for variant, qty in schedule[week][inst].items():
+                    w.writerow([week, inst, variant, qty])
 
 
 def main(order_dir,SECONDS_PER_WEEK):
@@ -117,5 +273,6 @@ def main(order_dir,SECONDS_PER_WEEK):
 
 if __name__ == "__main__":
    #THIS CANT RUN ON ITS OWN AS ORDER_DIR IS MISSING, IT NEEDS TO BE CALLED FROM THE MAIN SCRIPT
-   custom_order_dir = r"C:\Users\mathi\OneDrive\Dokumenter\1.UNI\8. semester\Projekt\Github\VT2-resilience\production_line_sim\input\orders_07-05_10-51_1"
+   ordername = r"\orders_07-05_10-51_1"
+   custom_order_dir = r"C:\Users\mathi\OneDrive\Dokumenter\1.UNI\8. semester\Projekt\Github\VT2-resilience\production_line_sim\input" + ordername
    main(custom_order_dir, 144000)
