@@ -20,3 +20,11 @@
 # -  OUTPUT  -
 # a sorted schedule (running 5 days ahead) for the production sim to run (with disruptions) 
 # based on the optimized IPPS in form of a csv file
+
+
+def main():
+   print("this is the IPPS")
+
+
+if __name__ == "__main__":
+   main()

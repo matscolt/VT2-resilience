@@ -14,6 +14,7 @@
 import csv
 import json
 import re
+from prettytable import PrettyTable
 from copy import deepcopy
 from pathlib import Path
 from A_input import read_settings_json
@@ -243,19 +244,178 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
         for order in planned_orders:
             writer.writerow(order)
 
-    # OPTIONAL: write the week/instance schedule for debugging
-    schedule_path = order_dir / "robotcell_schedule_debug.csv"
-    with open(schedule_path, mode="w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["week", "instance", "variant", "qty"])
-        for week in sorted(schedule):
-            for inst in schedule[week]:
-                for variant, qty in schedule[week][inst].items():
-                    w.writerow([week, inst, variant, qty])
+import pandas as pd
+
+def build_schedule_summary_df(
+    schedule: dict,
+    variants_order=None,
+    weeks_order=None,
+    station_name_fn=None,
+    show_zero_variant_rows=True,
+):
+    """
+    Build a summary DataFrame from:
+      schedule[week][instance][variant] = qty
+
+    Returns DataFrame:
+      rows: Total + variants + station totals + station variant subtotals
+      cols: week 1, week 2, ...
+
+    Parameters
+    ----------
+    schedule : dict
+        Nested dict schedule[week][station][variant] = qty.
+    variants_order : list[str] | None
+        Desired ordering of variants (e.g., ["FUSE0","FUSE1","FUSE2"]).
+        If None, inferred from schedule.
+    weeks_order : list[int] | None
+        Which weeks to show and ordering (e.g., [1,2,3,4]).
+        If None, inferred from schedule.
+    station_name_fn : callable | None
+        Optional formatting fn for station names (e.g., lambda s: s.split(":")[0]).
+    show_zero_variant_rows : bool
+        If True, show variant rows even when 0 under a station.
+    """
+    # Flatten schedule to records
+    records = []
+    for week, inst_map in schedule.items():
+        for inst, var_map in inst_map.items():
+            for variant, qty in var_map.items():
+                records.append({
+                    "week": int(week),
+                    "station": inst,
+                    "variant": str(variant),
+                    "qty": int(qty),
+                })
+
+    if not records:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(records)
+
+    # Optional station formatting
+    if station_name_fn:
+        df["station"] = df["station"].map(station_name_fn)
+
+    # Infer ordering
+    if variants_order is None:
+        variants_order = sorted(df["variant"].unique().tolist())
+    if weeks_order is None:
+        weeks_order = sorted(df["week"].unique().tolist())
+
+    col_labels = [f"week {w}" for w in weeks_order]
+
+    # Totals per week
+    total_by_week = (
+        df.groupby("week")["qty"].sum()
+          .reindex(weeks_order, fill_value=0)
+    )
+
+    # Totals per variant per week
+    total_by_variant_week = (
+        df.groupby(["variant", "week"])["qty"].sum()
+          .reset_index()
+          .pivot_table(index="variant", columns="week", values="qty", fill_value=0, aggfunc="sum")
+    )
+    total_by_variant_week = (
+        total_by_variant_week
+        .reindex(index=variants_order, fill_value=0)
+        .reindex(columns=weeks_order, fill_value=0)
+    )
+    total_by_variant_week.columns = col_labels
+
+    # Station totals per week
+    station_total = (
+        df.groupby(["station", "week"])["qty"].sum()
+          .reset_index()
+          .pivot_table(index="station", columns="week", values="qty", fill_value=0, aggfunc="sum")
+    )
+    station_total = station_total.reindex(columns=weeks_order, fill_value=0)
+    station_total.columns = col_labels
+
+    # Station + variant breakdown per week
+    station_variant = (
+        df.groupby(["station", "variant", "week"])["qty"].sum()
+          .reset_index()
+          .pivot_table(index=["station", "variant"], columns="week", values="qty", fill_value=0, aggfunc="sum")
+    )
+    station_variant = station_variant.reindex(columns=weeks_order, fill_value=0)
+    station_variant.columns = col_labels
+
+    # Build final table
+    rows = []
+    values = []
+
+    # Total row
+    rows.append("Total")
+    values.append([int(x) for x in total_by_week.values])
+
+    # Total by variant
+    for v in variants_order:
+        rows.append(f" - {v.lower()}")
+        values.append([int(x) for x in total_by_variant_week.loc[v].values])
+
+    # Station rows
+    for station in sorted(df["station"].unique().tolist()):
+        rows.append(station)
+        values.append([int(x) for x in station_total.loc[station].values])
+
+        for v in variants_order:
+            idx = (station, v)
+            if idx in station_variant.index:
+                rows.append(f" - {v.lower()}")
+                values.append([int(x) for x in station_variant.loc[idx].values])
+            elif show_zero_variant_rows:
+                rows.append(f" - {v.lower()}")
+                values.append([0 for _ in weeks_order])
+
+    out = pd.DataFrame(values, index=rows, columns=col_labels)
+    return out
+
+def print_df_prettytable(df, title=None, left_align_first_col=True):
+    """
+    Print a pandas DataFrame using PrettyTable.
+    """
+    if df is None or df.empty:
+        print("Nothing to display (empty table).")
+        return
+
+    pt = PrettyTable()
+    pt.field_names = [""] + list(df.columns)
+
+    if title:
+        print(title)
+
+    # Alignment
+    if left_align_first_col:
+        pt.align[""] = "l"
+    for c in df.columns:
+        pt.align[c] = "r"
+
+    # Add rows
+    for idx, row in df.iterrows():
+        pt.add_row([idx] + [int(v) if float(v).is_integer() else v for v in row.values])
+
+    print(pt)
+
+def print_schedule_summary_prettytable(
+    schedule: dict,
+    variants_order=None,
+    weeks_order=None,
+    station_name_fn=None,
+    title="Weekly capacity allocation (units)",
+):
+    df = build_schedule_summary_df(
+        schedule=schedule,
+        variants_order=variants_order,
+        weeks_order=weeks_order,
+        station_name_fn=station_name_fn,
+    )
+    print_df_prettytable(df, title=title)
 
 
 def main(order_dir,SECONDS_PER_WEEK):
-    print("Reading settings and order file...")
+    print("\n \n--- Starting production planning ---")
     # read settings json file
     order_dir = Path(order_dir)
     settings = read_settings_json(order_dir / "settings.json")
@@ -265,6 +425,7 @@ def main(order_dir,SECONDS_PER_WEEK):
         print(f"Error: Order file {order_csv_path} does not exist.")
         return
     create_production_plan(order_dir, settings,SECONDS_PER_WEEK)
+    print_df_prettytable()
     print(f"Production plan created for orders in {order_dir.name}.")
 
 
