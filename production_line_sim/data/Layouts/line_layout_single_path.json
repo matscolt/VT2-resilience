@@ -19,5 +19,6 @@
     {
       "station_name": "Station 6: Packaging"
     }
-  ]
+  ],
+  "bottleneck_station": "Station 3: Robot cell"
 }

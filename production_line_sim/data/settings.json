@@ -1,0 +1,13 @@
+{
+    "sim_time [s]": 144000,
+    "plan_time [s]": 576000,
+    "seed": "",
+    "random based disruptions": {
+        "enabled": 2
+    },
+    "line_layout_file": "line_layout_single_path.json",
+    "carriers": {
+        "number of carriers": 8
+    },
+    "lowest acceptable standard deviation [std below]": 3
+}

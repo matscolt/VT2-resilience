@@ -238,7 +238,8 @@ def iter_breakdown_specs_v2(station_cfg: Dict[str, Any]):
 
 def create_setting_json(output_path: Path) -> Dict[str, Any]:
     setting = {
-        "sim_time [s]": 36000,
+        "sim_time [s]": 144000,
+        "plan_time [s]": 576000,
         "seed": datetime.now().strftime("%Y%m%d%H%M%S"),
         "random based disruptions": {"enabled": 2},
         "line_layout_file": "line_layout_single_path.json",
@@ -1127,7 +1128,6 @@ def main(num_orders = None, num_units = None):
     # Generate settings and disruption json files
     create_setting_json(output_path_settingsjson)
     create_disruption_json(output_path_disruptionjson)
-
     print("\n>>Do you wish to change the input settings?\n>>Press 'Enter' to continue when done changing the settings in settings.json")
     input()
     if num_orders is None or num_units is None:
@@ -1136,7 +1136,7 @@ def main(num_orders = None, num_units = None):
     # read settings json file
 
     settings = read_settings_json(output_path_settingsjson)
-    sim_time = int(settings.get("sim_time [s]", 36000))
+    sim_time = int(settings.get("plan_time [s]", 576000))
     seed = settings["seed"]
     random.seed(seed)
 
