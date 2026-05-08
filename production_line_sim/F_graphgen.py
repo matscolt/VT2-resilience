@@ -361,7 +361,7 @@ def plot_station_utilization(station_data, graphfolder):
     print(f">> Generated {graphname}")
 
 #main
-def main(starttime):
+def main(starttime = time.perf_counter()):
     specific_folder = "20260420_131845"#enter the wanted foldername(only the first timestamp) in the output folder
     
     specific_folder_choice = 0 #yes = 1, no = 0
