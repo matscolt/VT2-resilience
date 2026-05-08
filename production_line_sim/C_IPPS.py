@@ -32,6 +32,7 @@ def main():
 
    # define convergence demand
    # max iter or better solution is not found within x
+   iter = 0
    max_iter = 1000
    best_iter = 100
 
@@ -48,7 +49,7 @@ def main():
     #feed last score to generate a new iter
     #if last score is = None then its a starting guess
 
-    guess = D_algo
+    guess = D_algo.test_algo()
 
     #generate schedule
     generate_schedule(guess)
@@ -59,7 +60,7 @@ def main():
     current_score = kpi_calc_to_score()
     
         
-    if record_score > current_score:
+    if record_score > current_score or record_score is None:
        record_score = current_score
        record_iter = iter
     #convergence update

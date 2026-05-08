@@ -14,7 +14,7 @@ Wants and wishes
 - display a capacity and actual units in queue 
 
 """
-import A_input, B_production_planning, C_IPPS, D_algo, E_production_line_sim
+import A_input, B_production_planning, C_IPPS, D_algo, E_production_line_sim, F_graphgen, G_after_movie
 from pathlib import Path
 
 # ================================================================================
@@ -42,6 +42,11 @@ def main():
    # the IPPS should come up with a new solution to the disrupted line and continue the sim with disruptions
    C_IPPS.main() #creates new plan
    E_production_line_sim.run_simulation() #with disruptions
+
+   F_graphgen.main()
+   G_after_movie.main()
+
+
 
 
 
