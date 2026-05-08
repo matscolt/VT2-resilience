@@ -41,3 +41,10 @@
 
 # 3. [MAYBE] Complex optimazation
 # This is the box complex method 
+
+# 4. test algo in order to ensure the loop works
+# the algorithm is sorting by due date and smallest order size
+def test_algo(production_plan):
+    # sort the production plan by due date and order size
+    production_plan = production_plan.sort_values(by=["due_date", "order_size"])
+    return production_plan

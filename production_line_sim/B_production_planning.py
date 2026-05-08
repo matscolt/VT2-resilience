@@ -16,10 +16,8 @@ import json
 import re
 from copy import deepcopy
 from pathlib import Path
-
 import pandas as pd
 from prettytable import PrettyTable
-
 from A_input import read_settings_json
 
 # ==============================================================================

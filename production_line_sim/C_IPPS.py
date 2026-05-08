@@ -21,9 +21,59 @@
 # a sorted schedule (running 5 days ahead) for the production sim to run (with disruptions) 
 # based on the optimized IPPS in form of a csv file
 
+import D_algo, E_production_line_sim, process_routes
+
+   
+
 
 def main():
    print("this is the IPPS")
+   print("this uses the algo script, the simulation script and the process planning script")
+
+   # define convergence demand
+   # max iter or better solution is not found within x
+   max_iter = 1000
+   best_iter = 100
+
+
+   record_score = None
+   current_score = None
+
+    #Rough sort of the plan in order assign days to the orders we want in the schedule
+    
+
+   while convergence == False:
+    iter += 1
+
+    #feed last score to generate a new iter
+    #if last score is = None then its a starting guess
+
+    guess = D_algo
+
+    #generate schedule
+    generate_schedule(guess)
+
+    E_production_line_sim.run_simulation()
+    E_production_line_sim.calculate_kpis()
+
+    current_score = kpi_calc_to_score()
+    
+        
+    if record_score > current_score:
+       record_score = current_score
+       record_iter = iter
+    #convergence update
+
+    #stop the loop
+    if max_iter == iter or iter == record_iter + best_iter:
+        convergence = True
+
+
+
+   # run while loop until convergence 
+
+
+
 
 
 if __name__ == "__main__":

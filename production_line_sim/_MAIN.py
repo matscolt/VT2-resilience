@@ -14,7 +14,7 @@ Wants and wishes
 - display a capacity and actual units in queue 
 
 """
-import A_input, B_production_planning, C_IPPS, D_algo
+import A_input, B_production_planning, C_IPPS, D_algo, E_production_line_sim
 from pathlib import Path
 
 # ================================================================================
@@ -37,7 +37,11 @@ def main():
    num_units = int(input("Enter amount of units: "))
    order_dir = A_input.main(num_orders, num_units)
    B_production_planning.main(order_dir,SECONDS_PER_WEEK)
-   C_IPPS.main()
+   #sim with disruption loop
+   # the sim should pause when a disruption happens and then 
+   # the IPPS should come up with a new solution to the disrupted line and continue the sim with disruptions
+   C_IPPS.main() #creates new plan
+   E_production_line_sim.run_simulation() #with disruptions
 
 
 
