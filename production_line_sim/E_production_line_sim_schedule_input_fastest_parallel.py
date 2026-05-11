@@ -9,13 +9,18 @@ import math
 import re
 import shutil
 import time
-import importlib.util
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
 from typing import Any
+
+try:
+    import matplotlib.pyplot as plt
+except ModuleNotFoundError:
+    plt = None
+
 
 @dataclass
 class OperationRecord:
@@ -32,6 +37,7 @@ class OperationRecord:
     wait_time_s: float
     queue_length_on_arrival: int
 
+
 @dataclass
 class TransportRecord:
     unit_id: str
@@ -44,6 +50,7 @@ class TransportRecord:
     start_time_s: float
     finish_time_s: float
     transport_time_s: float
+
 
 @dataclass
 class UnitSummary:
@@ -59,6 +66,7 @@ class UnitSummary:
     throughput_efficiency: float
     attempts: int
 
+
 @dataclass
 class StationSummary:
     station_index: int
@@ -73,6 +81,7 @@ class StationSummary:
     utilization_overall: float
     utilization_active_window: float
 
+
 @dataclass
 class StationState:
     queue: list[tuple[int, float, int, int, int]]
@@ -85,6 +94,7 @@ class StationState:
     total_wait_time_s: float = 0.0
     queue_area: float = 0.0
     last_queue_change_time_s: float = 0.0
+
 
 EVENT_FINISH = "finish"
 EVENT_ARRIVAL = "arrival"
@@ -124,12 +134,14 @@ MATERIAL_STAGE_TO_MATERIAL = {
 INSPECTION_STAGE_NUMBER = 6
 BROKEN_MATERIAL_EXTRA_TIME_DEFAULT_S = 30.0
 
+
 # -----------------------------
 # Data loading / order parsing
 # -----------------------------
 def load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
 
 def parse_order(order_text: str, valid_variants: set[str]) -> list[str]:
     matches = re.findall(r"(\d+)\s*[xX]\s*([A-Za-z0-9_\-]+)", order_text)
@@ -148,6 +160,7 @@ def parse_order(order_text: str, valid_variants: set[str]) -> list[str]:
             )
         units.extend([variant] * qty)
     return units
+
 
 def build_transport_lookup(
     station_sequence: list[str], transport_data: dict[str, Any]
@@ -170,6 +183,7 @@ def build_transport_lookup(
 
     return lookup
 
+
 def _extract_station_name_parts(station_name: str) -> tuple[int | None, int | None, str]:
     match = STATION_NAME_NUMBER_RE.match(str(station_name).strip())
     if not match:
@@ -180,6 +194,7 @@ def _extract_station_name_parts(station_name: str) -> tuple[int | None, int | No
     copy_number = int(copy_number_s) if copy_number_s is not None else None
     return stage_number, copy_number, label.strip()
 
+
 def _make_station_instance_name(base_station_name: str, copy_index: int, total_copies: int) -> str:
     stage_number, _, label = _extract_station_name_parts(base_station_name)
     if total_copies <= 1:
@@ -188,11 +203,13 @@ def _make_station_instance_name(base_station_name: str, copy_index: int, total_c
         return f"Station {stage_number}.{copy_index}: {label}"
     return f"{base_station_name}.{copy_index}"
 
+
 def _transport_stage_number_from_name(transport_name: str) -> int | None:
     match = TRANSPORT_NAME_NUMBER_RE.match(str(transport_name).strip())
     if not match:
         return None
     return int(match.group(1))
+
 
 def _make_default_line_layout(process_time_data: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -207,6 +224,7 @@ def _make_default_line_layout(process_time_data: dict[str, Any]) -> dict[str, An
         ],
     }
 
+
 def _build_base_station_number_lookup(process_time_data: dict[str, Any]) -> dict[int, str]:
     lookup: dict[int, str] = {}
     for base_station_name in process_time_data["station_sequence"]:
@@ -217,6 +235,7 @@ def _build_base_station_number_lookup(process_time_data: dict[str, Any]) -> dict
             )
         lookup[stage_number] = base_station_name
     return lookup
+
 
 def _build_effective_line_layout_from_stage_definitions(
     process_time_data: dict[str, Any],
@@ -329,6 +348,7 @@ def _build_effective_line_layout_from_stage_definitions(
         "base_station_sequence": base_station_sequence,
     }
 
+
 def _normalize_station_instance_entries(
     process_time_data: dict[str, Any],
     line_layout_config: dict[str, Any],
@@ -395,6 +415,7 @@ def _normalize_station_instance_entries(
         )
 
     return normalized_entries
+
 
 def _build_effective_line_layout_from_station_instances(
     process_time_data: dict[str, Any],
@@ -497,12 +518,14 @@ def _build_effective_line_layout_from_station_instances(
         "station_instances": normalized_entries,
     }
 
+
 def load_line_layout_config(layout_path: Path | None, process_time_data: dict[str, Any]) -> tuple[dict[str, Any], Path | None]:
     if layout_path is not None:
         if not layout_path.exists():
             raise FileNotFoundError(f"Line layout file not found: {layout_path}")
         return load_json(layout_path), layout_path
     return _make_default_line_layout(process_time_data), None
+
 
 def build_effective_line_layout(
     process_time_data: dict[str, Any],
@@ -530,6 +553,7 @@ def build_effective_line_layout(
         "Line layout config must contain either 'station_instances' or 'stages'."
     )
 
+
 def _resolve_line_layout_filename_from_settings(settings_data: dict[str, Any]) -> str | None:
     for key in LINE_LAYOUT_SETTINGS_KEYS:
         value = settings_data.get(key)
@@ -537,22 +561,25 @@ def _resolve_line_layout_filename_from_settings(settings_data: dict[str, Any]) -
             return value.strip()
     return None
 
+
 def resolve_line_layout_path(
     selected_layout_name: str | None,
     input_root: Path | None,
     batch_dir: Path | None,
     data_dir: Path,
 ) -> Path | None:
-    layouts_dir = data_dir / "Layouts"
-
     if selected_layout_name is None or str(selected_layout_name).strip() == "":
-        for candidate in [
-            (batch_dir / LINE_LAYOUT_FILENAME) if batch_dir is not None else None,
-            data_dir / LINE_LAYOUT_FILENAME,
-            layouts_dir / LINE_LAYOUT_FILENAME,
-        ]:
-            if candidate is not None and candidate.exists():
-                return candidate
+        batch_default = (batch_dir / LINE_LAYOUT_FILENAME) if batch_dir is not None else None
+        if batch_default is not None and batch_default.exists():
+            return batch_default
+
+        input_default = (input_root / LINE_LAYOUT_FILENAME) if input_root is not None else None
+        if input_default is not None and input_default.exists():
+            return input_default
+
+        data_default = data_dir / LINE_LAYOUT_FILENAME
+        if data_default.exists():
+            return data_default
         return None
 
     candidate_text = str(selected_layout_name).strip()
@@ -564,8 +591,10 @@ def resolve_line_layout_path(
 
     search_locations: list[Path] = []
     if batch_dir is not None:
-        search_locations.append(batch_dir)
-    search_locations.extend([layouts_dir, data_dir])
+        search_locations.extend([batch_dir, batch_dir / "layouts"])
+    if input_root is not None:
+        search_locations.extend([input_root, input_root / "layouts"])
+    search_locations.extend([data_dir, data_dir / "layouts"])
 
     checked_paths: list[Path] = []
     for location in search_locations:
@@ -574,10 +603,33 @@ def resolve_line_layout_path(
         if resolved.exists():
             return resolved
 
+    recursive_matches: list[Path] = []
+    if input_root is not None and input_root.exists():
+        recursive_matches.extend(sorted(path for path in input_root.rglob(candidate_text) if path.is_file()))
+    recursive_matches.extend(sorted(path for path in data_dir.rglob(candidate_text) if path.is_file()))
+
+    unique_matches: list[Path] = []
+    seen_match_keys: set[str] = set()
+    for match in recursive_matches:
+        match_key = str(match.resolve())
+        if match_key not in seen_match_keys:
+            unique_matches.append(match)
+            seen_match_keys.add(match_key)
+
+    if len(unique_matches) == 1:
+        return unique_matches[0]
+    if len(unique_matches) > 1:
+        raise FileNotFoundError(
+            "Multiple line layout files matched "
+            f"'{candidate_text}': {', '.join(str(path) for path in unique_matches)}. "
+            "Choose a more specific file name or path."
+        )
+
     checked_text = ", ".join(str(path) for path in checked_paths)
     raise FileNotFoundError(
         f"Could not find line layout file '{candidate_text}'. Checked: {checked_text}"
     )
+
 
 def _parse_input_batch_sort_key(name: str) -> tuple[int, int, int, int, int]:
     stem = Path(name).stem
@@ -595,6 +647,7 @@ def _parse_input_batch_sort_key(name: str) -> tuple[int, int, int, int, int]:
     sequence = int(sequence_s)
     return (month, day, hour, minute, sequence)
 
+
 def _read_int(cell_value: str, default: int = 0) -> int:
     text_value = str(cell_value).strip()
     if text_value == "" or text_value.casefold() == "nan":
@@ -604,6 +657,7 @@ def _read_int(cell_value: str, default: int = 0) -> int:
         return default
     return int(numeric_value)
 
+
 def _read_float(cell_value: str, default: float = 0.0) -> float:
     text_value = str(cell_value).strip()
     if text_value == "" or text_value.casefold() == "nan":
@@ -612,6 +666,7 @@ def _read_float(cell_value: str, default: float = 0.0) -> float:
     if math.isnan(numeric_value):
         return default
     return numeric_value
+
 
 def find_newest_input_batch_dir(input_root: Path) -> Path:
     if not input_root.exists():
@@ -629,7 +684,12 @@ def find_newest_input_batch_dir(input_root: Path) -> Path:
 
     return max(candidate_dirs, key=lambda path: _parse_input_batch_sort_key(path.name))
 
+
 def find_newest_orders_csv(batch_dir: Path) -> Path:
+    schedule_candidate = batch_dir / "schedule.csv"
+    if schedule_candidate.exists() and schedule_candidate.is_file():
+        return schedule_candidate
+
     candidate_csv_files = [
         path
         for path in batch_dir.iterdir()
@@ -645,6 +705,7 @@ def find_newest_orders_csv(batch_dir: Path) -> Path:
         if path.is_file()
         and path.suffix.lower() == ".csv"
         and path.name.casefold() != TIMED_DISRUPTION_FILENAME.casefold()
+        and path.name.casefold() != "schedule.csv"
         and not path.name.casefold().startswith("disruption_list")
         and not path.name.casefold().startswith("disruptions")
     ]
@@ -652,6 +713,73 @@ def find_newest_orders_csv(batch_dir: Path) -> Path:
         return max(fallback_csv_files, key=lambda path: path.stat().st_mtime)
 
     raise FileNotFoundError(f"No order CSV file was found in {batch_dir}")
+
+
+def _load_schedule_csv(
+    orders_csv_path: Path,
+    valid_variants: set[str],
+) -> dict[str, Any]:
+    scheduled_rows: list[dict[str, Any]] = []
+
+    with orders_csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None:
+            raise ValueError(f"Schedule CSV is empty: {orders_csv_path}")
+
+        normalized_header = [re.sub(r"[^a-z0-9]", "", str(value).strip().lower()) for value in header]
+        if normalized_header[:5] != ["unitseq", "orderid", "unitid", "variant", "routeid"]:
+            raise ValueError(
+                "schedule.csv must start with columns: unit_seq, order_id, unit_id, variant, route_id"
+            )
+
+        for row_index, row in enumerate(reader, start=2):
+            if not row or not any(str(cell).strip() for cell in row):
+                continue
+
+            padded_row = list(row) + [""] * max(0, 5 - len(row))
+            unit_seq = _read_int(padded_row[0], row_index - 1)
+            order_id = str(padded_row[1]).strip() if str(padded_row[1]).strip() != "" else str(row_index - 1)
+            unit_id = str(padded_row[2]).strip() if str(padded_row[2]).strip() != "" else f"U{unit_seq:03d}"
+            variant = str(padded_row[3]).strip().upper()
+            route_id = _read_int(padded_row[4], 0)
+
+            if variant not in valid_variants:
+                raise ValueError(
+                    f"Unknown variant '{variant}' in {orders_csv_path.name}. Valid options: {', '.join(sorted(valid_variants))}"
+                )
+
+            scheduled_rows.append(
+                {
+                    "unit_seq": int(unit_seq),
+                    "order_id": order_id,
+                    "unit_id": unit_id,
+                    "variant": variant,
+                    "route_id": int(route_id),
+                    "row_index": int(row_index),
+                }
+            )
+
+    scheduled_rows.sort(key=lambda row: (int(row["unit_seq"]), int(row["row_index"])))
+
+    ordered_units = [str(row["variant"]) for row in scheduled_rows]
+    unit_release_times = [0.0] * len(scheduled_rows)
+    unit_priorities = [1] * len(scheduled_rows)
+    unit_order_ids = [str(row["order_id"]) for row in scheduled_rows]
+    unit_custom_ids = [str(row["unit_id"]) for row in scheduled_rows]
+    unit_route_ids = [int(row["route_id"]) for row in scheduled_rows]
+    unit_sequences = [int(row["unit_seq"]) for row in scheduled_rows]
+
+    return {
+        "ordered_units": ordered_units,
+        "unit_release_times": unit_release_times,
+        "unit_priorities": unit_priorities,
+        "unit_order_ids": unit_order_ids,
+        "unit_custom_ids": unit_custom_ids,
+        "unit_route_ids": unit_route_ids,
+        "unit_sequences": unit_sequences,
+    }
+
 
 def load_latest_generated_input(
     input_root: Path, valid_variants: set[str]
@@ -667,11 +795,36 @@ def load_latest_generated_input(
     simulation_time_s = float(settings_data.get("sim_time [s]", settings_data.get("Sim_time [s]", 0.0)))
     carriers = int(float(settings_data.get("carriers", {}).get("number of carriers", MAX_UNITS_IN_SYSTEM)))
 
+    if orders_csv_path.name.casefold() == "schedule.csv":
+        schedule_payload = _load_schedule_csv(orders_csv_path, valid_variants)
+        batch_name = batch_dir.name
+        ordered_units = list(schedule_payload["ordered_units"])
+        order_text = f"{batch_name}__scheduled_{len(ordered_units)}units"
+        return {
+            "order_text": order_text,
+            "ordered_units": ordered_units,
+            "unit_release_times": list(schedule_payload["unit_release_times"]),
+            "unit_priorities": list(schedule_payload["unit_priorities"]),
+            "unit_order_ids": list(schedule_payload["unit_order_ids"]),
+            "unit_custom_ids": list(schedule_payload["unit_custom_ids"]),
+            "unit_route_ids": list(schedule_payload["unit_route_ids"]),
+            "unit_sequences": list(schedule_payload["unit_sequences"]),
+            "simulation_time_s": simulation_time_s,
+            "carriers": carriers,
+            "settings_data": settings_data,
+            "selected_line_layout_name": _resolve_line_layout_filename_from_settings(settings_data),
+            "input_root": input_root,
+            "batch_dir": batch_dir,
+            "orders_csv_path": orders_csv_path,
+            "settings_path": settings_path,
+        }
+
     expanded_units: list[str] = []
     unit_release_times: list[float] = []
     unit_priorities: list[int] = []
     unit_order_ids: list[str] = []
-    unit_due_dates: list[float] = []
+    unit_custom_ids: list[str] = []
+    unit_route_ids: list[int] = []
     order_rows: list[dict[str, Any]] = []
 
     with orders_csv_path.open("r", encoding="utf-8-sig", newline="") as f:
@@ -680,27 +833,16 @@ def load_latest_generated_input(
         if header is None:
             raise ValueError(f"Order CSV is empty: {orders_csv_path}")
 
-        normalized_header = [re.sub(r"[^a-z0-9]", "", str(value).strip().lower()) for value in header]
-        due_date_mode = len(normalized_header) > 1 and normalized_header[1] in {"duedate", "due"}
-
         for row_index, row in enumerate(reader, start=1):
             if not row or not any(str(cell).strip() for cell in row):
                 continue
 
             order_id = str(row[0]).strip() if len(row) > 0 else str(row_index)
-            if due_date_mode:
-                order_time_s = 0.0
-                due_date_s = _read_float(row[1], float("inf")) if len(row) > 1 else float("inf")
-                priority = max(1, _read_int(row[2], 1)) if len(row) > 2 else 1
-                variant_start_idx = 3
-            else:
-                order_time_s = _read_float(row[1], 0.0) if len(row) > 1 else 0.0
-                due_date_s = float("inf")
-                priority = max(1, _read_int(row[2], 1)) if len(row) > 2 else 1
-                variant_start_idx = 3
+            order_time_s = _read_float(row[1], 0.0) if len(row) > 1 else 0.0
+            priority = max(1, _read_int(row[2], 1)) if len(row) > 2 else 1
 
             row_variants: list[dict[str, Any]] = []
-            for col_idx in range(variant_start_idx, len(row), 2):
+            for col_idx in range(3, len(row), 2):
                 variant_text = str(row[col_idx]).strip().upper() if col_idx < len(row) else ""
                 quantity = _read_int(row[col_idx + 1], 0) if col_idx + 1 < len(row) else 0
 
@@ -719,7 +861,7 @@ def load_latest_generated_input(
                     {
                         "variant": variant_text,
                         "quantity": quantity,
-                        "variant_slot_index": (col_idx - variant_start_idx) // 2,
+                        "variant_slot_index": (col_idx - 3) // 2,
                     }
                 )
 
@@ -727,18 +869,15 @@ def load_latest_generated_input(
                 {
                     "order_id": order_id,
                     "order_time_s": order_time_s,
-                    "due_date_s": float(due_date_s),
                     "priority": priority,
                     "variants": row_variants,
                     "row_index": row_index,
                 }
             )
 
-    if due_date_mode:
-        order_rows.sort(key=lambda row: row["row_index"])
-    else:
-        order_rows.sort(key=lambda row: (row["order_time_s"], -row["priority"], row["row_index"], str(row["order_id"])))
+    order_rows.sort(key=lambda row: (row["order_time_s"], -row["priority"], row["row_index"], str(row["order_id"])))
 
+    generated_unit_counter = 1
     for row in order_rows:
         if row["order_time_s"] > simulation_time_s:
             continue
@@ -751,7 +890,9 @@ def load_latest_generated_input(
                 unit_release_times.append(float(row["order_time_s"]))
                 unit_priorities.append(int(row["priority"]))
                 unit_order_ids.append(str(row["order_id"]))
-                unit_due_dates.append(float(row.get("due_date_s", float("inf"))))
+                unit_custom_ids.append(f"U{generated_unit_counter:03d}")
+                unit_route_ids.append(0)
+                generated_unit_counter += 1
 
     batch_name = batch_dir.name
     order_text = batch_name
@@ -766,7 +907,8 @@ def load_latest_generated_input(
         "unit_release_times": unit_release_times,
         "unit_priorities": unit_priorities,
         "unit_order_ids": unit_order_ids,
-        "unit_due_dates": unit_due_dates,
+        "unit_custom_ids": unit_custom_ids,
+        "unit_route_ids": unit_route_ids,
         "simulation_time_s": simulation_time_s,
         "carriers": carriers,
         "settings_data": settings_data,
@@ -788,6 +930,7 @@ def _normalize_probability(value: Any) -> float:
         probability = probability / 100.0
     return min(1.0, probability)
 
+
 def _seed_to_rng(seed_value: Any) -> np.random.Generator:
     if seed_value is None:
         return np.random.default_rng()
@@ -795,6 +938,7 @@ def _seed_to_rng(seed_value: Any) -> np.random.Generator:
     if seed_text.isdigit():
         return np.random.default_rng(int(seed_text))
     return np.random.default_rng(abs(hash(seed_text)) % (2**32))
+
 
 def _sample_linear_from_range(
     rng: np.random.Generator,
@@ -808,6 +952,7 @@ def _sample_linear_from_range(
         return low + (high - low) * draw, draw
     return float(default_value), 0.0
 
+
 def _settings_disruption_mode(settings_data: dict[str, Any]) -> int:
     raw_settings = settings_data.get("random based disruptions", {})
     if isinstance(raw_settings, dict):
@@ -817,11 +962,14 @@ def _settings_disruption_mode(settings_data: dict[str, Any]) -> int:
             return 0
     return 0
 
+
 def _settings_random_disruptions_enabled(settings_data: dict[str, Any]) -> bool:
     return _settings_disruption_mode(settings_data) == 1
 
+
 def _settings_timed_disruptions_enabled(settings_data: dict[str, Any]) -> bool:
     return _settings_disruption_mode(settings_data) == 2
+
 
 def _broken_material_extra_time_s(disruption_config: dict[str, Any] | None) -> float:
     if not isinstance(disruption_config, dict):
@@ -835,25 +983,34 @@ def _broken_material_extra_time_s(disruption_config: dict[str, Any] | None) -> f
     except (TypeError, ValueError):
         return BROKEN_MATERIAL_EXTRA_TIME_DEFAULT_S
 
-def resolve_disruption_path(batch_dir: Path | None) -> Path | None:
-    if batch_dir is None:
-        return None
-    candidate = batch_dir / DISRUPTION_FILENAME
-    return candidate if candidate.exists() else None
 
-def resolve_timed_disruption_csv_path(batch_dir: Path | None) -> Path | None:
-    if batch_dir is None:
-        return None
+def resolve_disruption_path(input_root: Path | None, batch_dir: Path | None) -> Path | None:
+    candidates: list[Path] = []
+    if batch_dir is not None:
+        candidates.append(batch_dir / DISRUPTION_FILENAME)
+    if input_root is not None:
+        candidates.append(input_root / DISRUPTION_FILENAME)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
-    exact_candidate = batch_dir / TIMED_DISRUPTION_FILENAME
-    if exact_candidate.exists() and exact_candidate.is_file():
-        return exact_candidate
+
+def resolve_timed_disruption_csv_path(input_root: Path | None, batch_dir: Path | None) -> Path | None:
+    exact_candidates: list[Path] = []
+    if batch_dir is not None:
+        exact_candidates.append(batch_dir / TIMED_DISRUPTION_FILENAME)
+    if input_root is not None:
+        exact_candidates.append(input_root / TIMED_DISRUPTION_FILENAME)
+
+    for candidate in exact_candidates:
+        if candidate.exists():
+            return candidate
 
     fuzzy_candidates: list[Path] = []
-    fuzzy_candidates.extend(sorted(path for path in batch_dir.glob("disruption_list*.csv") if path.is_file()))
-    fuzzy_candidates.extend(sorted(path for path in batch_dir.glob("disruptions*.csv") if path.is_file()))
-    fuzzy_candidates.extend(sorted(path for path in batch_dir.glob("disruption_list*") if path.is_file()))
-    fuzzy_candidates.extend(sorted(path for path in batch_dir.glob("disruptions*") if path.is_file()))
+    for search_dir in [path for path in (batch_dir, input_root) if path is not None]:
+        fuzzy_candidates.extend(sorted(path for path in search_dir.glob("disruption_list*.csv") if path.is_file()))
+        fuzzy_candidates.extend(sorted(path for path in search_dir.glob("disruptions*.csv") if path.is_file()))
 
     unique_candidates: list[Path] = []
     seen: set[str] = set()
@@ -868,11 +1025,13 @@ def resolve_timed_disruption_csv_path(batch_dir: Path | None) -> Path | None:
 
     return max(unique_candidates, key=lambda path: path.stat().st_mtime)
 
+
 def copy_file_if_exists(source_path: Path | None, target_path: Path) -> bool:
     if source_path is None or not source_path.exists():
         return False
     shutil.copy2(source_path, target_path)
     return True
+
 
 def build_material_report(
     requested_units: list[str],
@@ -918,6 +1077,7 @@ def build_material_report(
         }
     return material_report
 
+
 def _materials_relevant_for_stage(variant: str, stage_number: int, bom_data: dict[str, Any]) -> list[str]:
     material_names = MATERIAL_STAGE_TO_MATERIAL.get(int(stage_number))
     if material_names is None:
@@ -930,6 +1090,7 @@ def _materials_relevant_for_stage(variant: str, stage_number: int, bom_data: dic
         for material_name in material_names
         if int(variant_bom.get(str(material_name), 0)) > 0
     ]
+
 
 def evaluate_operation_disruptions(
     stage_number: int,
@@ -1043,11 +1204,14 @@ def evaluate_operation_disruptions(
             result["terminal_failure_type"] = "failed_inspection"
             return result
 
+
     return result
+
 
 def _is_nan_like(value: Any) -> bool:
     value_text = str(value).strip()
     return value_text == "" or value_text.casefold() == "nan"
+
 
 def _normalize_station_disruption_id(station_id_value: Any) -> str | None:
     if _is_nan_like(station_id_value):
@@ -1061,6 +1225,7 @@ def _normalize_station_disruption_id(station_id_value: Any) -> str | None:
         return str(int(numeric_value))
     return f"{numeric_value:.12f}".rstrip("0").rstrip(".")
 
+
 def _station_disruption_id_from_station_name(station_name: str) -> str:
     stage_number, copy_number, _ = _extract_station_name_parts(station_name)
     if stage_number is None:
@@ -1068,6 +1233,7 @@ def _station_disruption_id_from_station_name(station_name: str) -> str:
     if copy_number is None:
         return str(stage_number)
     return f"{stage_number}.{copy_number}"
+
 
 def _assign_missing_emergency_order_ids(
     timed_disruption_records: list[dict[str, Any]],
@@ -1097,62 +1263,51 @@ def _assign_missing_emergency_order_ids(
 
     return timed_disruption_records
 
+
 def load_timed_disruption_csv(csv_path: Path, valid_variants: set[str]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    last_decode_error: Exception | None = None
-
-    for encoding_name in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
-        try:
-            with csv_path.open("r", encoding=encoding_name, newline="") as f:
-                reader = csv.reader(f)
-                header = next(reader, None)
-                if header is None:
-                    return records
-                for row_index, row in enumerate(reader, start=2):
-                    if not row or not any(str(cell).strip() for cell in row):
-                        continue
-                    padded_row = list(row) + [""] * max(0, 14 - len(row))
-                    disruption_type = str(padded_row[0]).strip().lower()
-                    if disruption_type == "":
-                        continue
-
-                    emergency_variants: list[tuple[str, int]] = []
-                    for variant_col_idx, quantity_col_idx in ((8, 9), (10, 11), (12, 13)):
-                        variant_text = str(padded_row[variant_col_idx]).strip().upper()
-                        quantity_value = 0 if _is_nan_like(padded_row[quantity_col_idx]) else _read_int(padded_row[quantity_col_idx], 0)
-                        if variant_text == "" or variant_text.casefold() == "nan" or quantity_value <= 0:
-                            continue
-                        if variant_text not in valid_variants:
-                            raise ValueError(
-                                f"Unknown variant '{variant_text}' in timed disruption CSV row {row_index}. "
-                                f"Valid options: {', '.join(sorted(valid_variants))}"
-                            )
-                        emergency_variants.append((variant_text, int(quantity_value)))
-
-                    records.append(
-                        {
-                            "disruption_type": disruption_type,
-                            "station_id": _normalize_station_disruption_id(padded_row[1]),
-                            "start_time_s": _read_float(padded_row[2], 0.0),
-                            "end_time_s": None if _is_nan_like(padded_row[3]) else _read_float(padded_row[3], 0.0),
-                            "efficiency_percentage": None if _is_nan_like(padded_row[4]) else _read_float(padded_row[4], 100.0),
-                            "order_id": None if _is_nan_like(padded_row[5]) else str(padded_row[5]).strip(),
-                            "due_date_s": None if _is_nan_like(padded_row[6]) else _read_float(padded_row[6], float("inf")),
-                            "order_time_s": _read_float(padded_row[2], 0.0),
-                            "priority": None if _is_nan_like(padded_row[7]) else max(1, _read_int(padded_row[7], 1)),
-                            "emergency_variants": emergency_variants,
-                            "row_index": int(row_index),
-                        }
-                    )
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None:
             return records
-        except UnicodeDecodeError as exc:
-            last_decode_error = exc
-            records = []
-            continue
+        for row_index, row in enumerate(reader, start=2):
+            if not row or not any(str(cell).strip() for cell in row):
+                continue
+            padded_row = list(row) + [""] * max(0, 14 - len(row))
+            disruption_type = str(padded_row[0]).strip().lower()
+            if disruption_type == "":
+                continue
 
-    if last_decode_error is not None:
-        raise last_decode_error
+            emergency_variants: list[tuple[str, int]] = []
+            for variant_col_idx, quantity_col_idx in ((8, 9), (10, 11), (12, 13)):
+                variant_text = str(padded_row[variant_col_idx]).strip().upper()
+                quantity_value = 0 if _is_nan_like(padded_row[quantity_col_idx]) else _read_int(padded_row[quantity_col_idx], 0)
+                if variant_text == "" or variant_text.casefold() == "nan" or quantity_value <= 0:
+                    continue
+                if variant_text not in valid_variants:
+                    raise ValueError(
+                        f"Unknown variant '{variant_text}' in timed disruption CSV row {row_index}. "
+                        f"Valid options: {', '.join(sorted(valid_variants))}"
+                    )
+                emergency_variants.append((variant_text, int(quantity_value)))
+
+            records.append(
+                {
+                    "disruption_type": disruption_type,
+                    "station_id": _normalize_station_disruption_id(padded_row[1]),
+                    "start_time_s": _read_float(padded_row[2], 0.0),
+                    "end_time_s": None if _is_nan_like(padded_row[3]) else _read_float(padded_row[3], 0.0),
+                    "efficiency_percentage": None if _is_nan_like(padded_row[4]) else _read_float(padded_row[4], 100.0),
+                    "order_id": None if _is_nan_like(padded_row[5]) else str(padded_row[5]).strip(),
+                    "order_time_s": None if _is_nan_like(padded_row[6]) else _read_float(padded_row[6], _read_float(padded_row[2], 0.0)),
+                    "priority": None if _is_nan_like(padded_row[7]) else max(1, _read_int(padded_row[7], 1)),
+                    "emergency_variants": emergency_variants,
+                    "row_index": int(row_index),
+                }
+            )
     return records
+
 
 def prepare_timed_disruption_data(
     station_sequence: list[str],
@@ -1170,10 +1325,6 @@ def prepare_timed_disruption_data(
 
     for record in timed_disruption_records:
         disruption_type = str(record.get("disruption_type", "")).strip().lower()
-        if disruption_type.startswith("breakdown:"):
-            disruption_type = "machine_breakdown"
-        elif disruption_type in {"inspection_failure", "failed_inspection"}:
-            disruption_type = "failed_inspection"
         station_id = record.get("station_id")
         station_index: int | None = None
         if station_id is not None:
@@ -1215,7 +1366,6 @@ def prepare_timed_disruption_data(
                 {
                     "order_id": str(order_id),
                     "order_time_s": float(order_time_s),
-                    "due_date_s": float(record.get("due_date_s", float("inf")) if record.get("due_date_s") is not None else float("inf")),
                     "priority": int(priority_value),
                     "variants": list(record.get("emergency_variants", [])),
                 }
@@ -1242,6 +1392,7 @@ def prepare_timed_disruption_data(
         "emergency_orders": emergency_orders,
     }
 
+
 def _station_speed_factor_at_time(
     time_s: float,
     breakdown_windows: list[tuple[float, float]],
@@ -1259,6 +1410,7 @@ def _station_speed_factor_at_time(
     if active_efficiency_fractions:
         return max(0.0, min(active_efficiency_fractions))
     return 1.0
+
 
 def _next_station_schedule_change_after(
     time_s: float,
@@ -1279,6 +1431,7 @@ def _next_station_schedule_change_after(
     if not candidate_times:
         return None
     return min(candidate_times)
+
 
 def calculate_timed_operation_disruption_result(
     station_index: int,
@@ -1373,6 +1526,7 @@ def calculate_timed_operation_disruption_result(
 
     return result
 
+
 # -----------------------------
 # Materials
 # -----------------------------
@@ -1389,6 +1543,7 @@ def calculate_material_requirements(
             requirements[material] += int(qty)
 
     return dict(requirements)
+
 
 def determine_producible_units(
     ordered_units: list[str],
@@ -1492,6 +1647,7 @@ def determine_producible_units(
 
     return produced_units, unproduced_units, material_report, production_status
 
+
 # -----------------------------
 # Event-based simulation with FIFO queues
 # -----------------------------
@@ -1501,6 +1657,7 @@ def _update_queue_area(station_state: StationState, current_time_s: float) -> No
         raise ValueError("Queue statistics received a negative time step.")
     station_state.queue_area += len(station_state.queue) * delta_t
     station_state.last_queue_change_time_s = current_time_s
+
 
 def _calculate_active_production_line_time_s(
     operations: list[OperationRecord],
@@ -1539,6 +1696,7 @@ def _calculate_active_production_line_time_s(
     merged_total += max(0.0, current_end - current_start)
     return merged_total
 
+
 def run_simulation(
     ordered_units: list[str],
     process_time_data: dict[str, Any],
@@ -1546,7 +1704,8 @@ def run_simulation(
     unit_release_times: list[float] | None = None,
     unit_priorities: list[int] | None = None,
     unit_order_ids: list[str] | None = None,
-    unit_due_dates: list[float] | None = None,
+    unit_custom_ids: list[str] | None = None,
+    unit_route_ids: list[int] | None = None,
     max_units_in_system: int = MAX_UNITS_IN_SYSTEM,
     return_to_station_1_time_s: float = RETURN_TO_STATION_1_TIME_S,
     line_layout_config: dict[str, Any] | None = None,
@@ -1557,8 +1716,6 @@ def run_simulation(
     disruption_seed: Any | None = None,
     simulation_time_s: float | None = None,
     timed_disruption_data: dict[str, Any] | None = None,
-    optimizer_module: Any | None = None,
-    optimizer_config: dict[str, Any] | None = None,
 ) -> tuple[list[OperationRecord], list[TransportRecord], list[UnitSummary], list[StationSummary], dict[str, float], dict[str, Any]]:
     effective_line_layout = build_effective_line_layout(
         process_time_data=process_time_data,
@@ -1590,10 +1747,18 @@ def run_simulation(
     else:
         unit_order_ids = [str(value) for value in unit_order_ids]
 
-    if unit_due_dates is None:
-        unit_due_dates = [float("inf")] * len(ordered_units)
+    if unit_custom_ids is None:
+        unit_custom_ids = [f"U{idx + 1:03d}" for idx in range(len(ordered_units))]
     else:
-        unit_due_dates = [float(value) for value in unit_due_dates]
+        unit_custom_ids = [
+            str(value).strip() if str(value).strip() != "" else f"U{idx + 1:03d}"
+            for idx, value in enumerate(unit_custom_ids)
+        ]
+
+    if unit_route_ids is None:
+        unit_route_ids = [0] * len(ordered_units)
+    else:
+        unit_route_ids = [_read_int(value, 0) for value in unit_route_ids]
 
     timed_breakdown_windows_by_station: dict[int, list[tuple[float, float]]] = {}
     timed_efficiency_windows_by_station: dict[int, list[tuple[float, float, float]]] = {}
@@ -1621,7 +1786,8 @@ def run_simulation(
                     unit_release_times.append(emergency_order_time_s)
                     unit_priorities.append(emergency_priority)
                     unit_order_ids.append(emergency_order_id)
-                    unit_due_dates.append(float(emergency_order.get("due_date_s", float("inf"))))
+                    unit_custom_ids.append(f"U{len(unit_custom_ids) + 1:03d}")
+                    unit_route_ids.append(0)
 
     initial_requested_unit_count = len(ordered_units)
 
@@ -1631,8 +1797,10 @@ def run_simulation(
         raise ValueError("unit_priorities must have the same length as ordered_units")
     if len(unit_order_ids) != len(ordered_units):
         raise ValueError("unit_order_ids must have the same length as ordered_units")
-    if len(unit_due_dates) != len(ordered_units):
-        raise ValueError("unit_due_dates must have the same length as ordered_units")
+    if len(unit_custom_ids) != len(ordered_units):
+        raise ValueError("unit_custom_ids must have the same length as ordered_units")
+    if len(unit_route_ids) != len(ordered_units):
+        raise ValueError("unit_route_ids must have the same length as ordered_units")
     if max_units_in_system <= 0:
         raise ValueError("max_units_in_system must be greater than 0")
     if return_to_station_1_time_s < 0:
@@ -1666,6 +1834,13 @@ def run_simulation(
     for unit_index in range(initial_requested_unit_count):
         root_to_attempt_indices[unit_index].append(unit_index)
 
+    def _root_unit_id_text(root_index: int) -> str:
+        if 0 <= int(root_index) < len(unit_custom_ids):
+            unit_id_text = str(unit_custom_ids[int(root_index)]).strip()
+            if unit_id_text != "":
+                return unit_id_text
+        return f"U{int(root_index) + 1:03d}"
+
     replacement_variants_created: list[str] = []
     extra_material_consumed: defaultdict[str, int] = defaultdict(int)
     actual_material_consumed: defaultdict[str, int] = defaultdict(int)
@@ -1686,15 +1861,6 @@ def run_simulation(
     stop_reason: dict[str, Any] | None = None
     material_stop_cutoff_unit_index: int | None = None
     pending_timed_failed_inspection_by_station: defaultdict[int, int] = defaultdict(int)
-    optimizer_enabled = bool(
-        optimizer_module is not None
-        and isinstance(optimizer_config, dict)
-        and int(optimizer_config.get("enabled", 0)) == 1
-    )
-    optimizer_waiting_unit_boosts: dict[int, float] = {}
-    optimizer_station_penalties: dict[int, tuple[float, float, str]] = {}
-    optimizer_event_log: list[dict[str, Any]] = []
-    optimizer_counts: Counter[str] = Counter()
 
     def _unit_blocked_by_material_stop(unit_index: int) -> bool:
         return (
@@ -1717,149 +1883,6 @@ def run_simulation(
         )
         event_sequence += 1
 
-
-
-    def _active_optimizer_station_penalty_s(station_index: int, current_time_s: float) -> float:
-        penalty_payload = optimizer_station_penalties.get(int(station_index))
-        if penalty_payload is None:
-            return 0.0
-        penalty_s, expires_at_s, _reason = penalty_payload
-        if float(current_time_s) >= float(expires_at_s):
-            optimizer_station_penalties.pop(int(station_index), None)
-            return 0.0
-        return float(penalty_s)
-
-
-    def _apply_optimizer_decision(current_time_s: float, decision_payload: dict[str, Any]) -> None:
-        if not isinstance(decision_payload, dict):
-            return
-
-        for unit_key, boost_value in dict(decision_payload.get("waiting_unit_score_boosts", {})).items():
-            try:
-                optimizer_waiting_unit_boosts[int(unit_key)] = float(boost_value)
-            except (TypeError, ValueError):
-                continue
-
-        for station_payload in list(decision_payload.get("station_penalties", [])):
-            if not isinstance(station_payload, dict):
-                continue
-            try:
-                station_index_zero_based = max(0, int(station_payload.get("station_index", 1)) - 1)
-                penalty_s = max(0.0, float(station_payload.get("penalty_s", 0.0)))
-                expires_at_s = max(float(current_time_s), float(station_payload.get("expires_at_s", current_time_s)))
-                reason_text = str(station_payload.get("reason", "optimizer_penalty"))
-            except (TypeError, ValueError):
-                continue
-            if penalty_s <= 0.0:
-                continue
-            existing_payload = optimizer_station_penalties.get(station_index_zero_based)
-            if existing_payload is None or penalty_s >= float(existing_payload[0]) or expires_at_s >= float(existing_payload[1]):
-                optimizer_station_penalties[station_index_zero_based] = (penalty_s, expires_at_s, reason_text)
-
-
-    def _build_optimizer_snapshot(current_time_s: float, disruption_payload: dict[str, Any]) -> dict[str, Any]:
-        unreleased_units: list[dict[str, Any]] = []
-        waiting_unit_index_set = {int(entry[0]) for entry in waiting_for_system_slot}
-
-        for unit_index in range(len(ordered_units)):
-            if unit_index in unit_first_arrival or unit_index in unit_completion:
-                continue
-            if _unit_blocked_by_material_stop(unit_index):
-                continue
-
-            root_index = root_indices[unit_index]
-            variant = str(ordered_units[unit_index])
-            release_time_s = float(unit_release_times[unit_index])
-            waiting_score_boost = float(optimizer_waiting_unit_boosts.get(unit_index, 0.0))
-            unreleased_units.append(
-                {
-                    "unit_index": int(unit_index),
-                    "unit_id": f"U{root_index + 1:03d}",
-                    "root_index": int(root_index),
-                    "order_id": str(unit_order_ids[unit_index]),
-                    "variant": variant,
-                    "release_time_s": release_time_s,
-                    "due_date_s": float(unit_due_dates[unit_index]),
-                    "priority": int(unit_priorities[unit_index]),
-                    "attempt": int(attempt_numbers[unit_index]),
-                    "is_waiting_for_system_slot": bool(unit_index in waiting_unit_index_set),
-                    "already_released_by_time": bool(release_time_s <= float(current_time_s) + 1e-9),
-                    "waiting_score_boost": waiting_score_boost,
-                    "remaining_total_base_process_time_s": float(
-                        sum(float(process_times[variant][base_station_name]) for base_station_name in process_time_data["station_sequence"])
-                    ),
-                }
-            )
-
-        station_state_rows: list[dict[str, Any]] = []
-        for station_index, station_name in enumerate(station_sequence):
-            station_state_rows.append(
-                {
-                    "station_index": int(station_index + 1),
-                    "station_name": str(station_name),
-                    "base_station_name": str(station_instance_base_names[station_index]),
-                    "stage_index": int(station_to_stage_index[station_index]),
-                    "queue_length": int(len(station_states[station_index].queue)),
-                    "busy": bool(station_states[station_index].busy),
-                    "projected_available_time_s": float(projected_station_available_time_s[station_index]),
-                    "active_optimizer_penalty_s": float(_active_optimizer_station_penalty_s(station_index, current_time_s)),
-                }
-            )
-
-        serializable_transport_lookup = {
-            f"{from_station} -> {to_station}": float(transport_time)
-            for (from_station, to_station), transport_time in transport_lookup.items()
-        }
-
-        return {
-            "current_time_s": float(current_time_s),
-            "available_system_slots": int(available_system_slots),
-            "max_units_in_system": int(max_units_in_system),
-            "return_to_station_1_time_s": float(return_to_station_1_time_s),
-            "triggered_disruption": dict(disruption_payload),
-            "waiting_units": unreleased_units,
-            "stations": station_state_rows,
-            "station_sequence": list(station_sequence),
-            "station_instance_base_names": list(station_instance_base_names),
-            "stage_instance_indices": [[int(value) + 1 for value in stage_values] for stage_values in stage_instance_indices],
-            "projected_station_available_time_s": [float(value) for value in projected_station_available_time_s],
-            "transport_lookup": serializable_transport_lookup,
-            "process_times": process_time_data["process_times"],
-            "base_station_sequence": list(process_time_data["station_sequence"]),
-        }
-
-
-    def _invoke_optimizer(current_time_s: float, disruption_payload: dict[str, Any]) -> None:
-        if not optimizer_enabled:
-            return
-        snapshot = _build_optimizer_snapshot(current_time_s, disruption_payload)
-        decision_payload = _call_optimizer_controller(optimizer_module, snapshot, optimizer_config)
-        optimizer_counts["calls"] += 1
-        optimizer_counts[f"calls_for_{str(disruption_payload.get('triggered_disruption_type', 'unknown'))}"] += 1
-
-        decision_payload = decision_payload if isinstance(decision_payload, dict) else {}
-        _apply_optimizer_decision(current_time_s, decision_payload)
-
-        optimizer_event_log.append(
-            {
-                "event": "optimizer_invocation",
-                "timestamp_s": float(current_time_s),
-                "triggered_disruption_type": str(disruption_payload.get("triggered_disruption_type")),
-                "station_name": str(disruption_payload.get("station_name", disruption_payload.get("base_station_name", ""))),
-                "decision_summary": dict(decision_payload.get("summary", {})) if isinstance(decision_payload.get("summary", {}), dict) else {},
-                "waiting_unit_score_boosts": {str(k): float(v) for k, v in optimizer_waiting_unit_boosts.items()},
-                "station_penalties": [
-                    {
-                        "station_index": int(station_index + 1),
-                        "station_name": station_sequence[station_index],
-                        "penalty_s": float(payload[0]),
-                        "expires_at_s": float(payload[1]),
-                        "reason": str(payload[2]),
-                    }
-                    for station_index, payload in sorted(optimizer_station_penalties.items())
-                ],
-            }
-        )
     def choose_station_instance_for_stage(
         target_stage_index: int,
         current_time_s: float,
@@ -1880,13 +1903,11 @@ def run_simulation(
             process_time_s = float(process_times[variant][station_instance_base_names[candidate_station_index]])
             estimated_start_time_s = max(arrival_time_s, projected_station_available_time_s[candidate_station_index])
             estimated_finish_time_s = estimated_start_time_s + process_time_s
-            optimizer_penalty_s = _active_optimizer_station_penalty_s(candidate_station_index, current_time_s)
 
             candidate_score = (
-                estimated_finish_time_s + optimizer_penalty_s,
+                estimated_finish_time_s,
                 estimated_start_time_s,
                 arrival_time_s,
-                projected_station_available_time_s[candidate_station_index],
                 candidate_station_index,
             )
             candidate_payload = (
@@ -1921,21 +1942,19 @@ def run_simulation(
 
     def _pop_best_waiting_unit(current_time_s: float) -> tuple[int, float] | None:
         best_index: int | None = None
-        best_score: tuple[float, int, int, float, int] | None = None
+        best_score: tuple[int, int, float, int] | None = None
         for idx, (unit_index, requested_release_time_s, priority_value, prioritize_front, queue_seq) in enumerate(waiting_for_system_slot):
             if _unit_blocked_by_material_stop(unit_index):
                 continue
             if requested_release_time_s > current_time_s:
                 continue
-            waiting_score_boost = float(optimizer_waiting_unit_boosts.get(unit_index, 0.0))
-            score = (-waiting_score_boost, -int(priority_value), -int(bool(prioritize_front)), float(requested_release_time_s), int(queue_seq))
+            score = (-int(priority_value), -int(bool(prioritize_front)), float(requested_release_time_s), int(queue_seq))
             if best_score is None or score < best_score:
                 best_score = score
                 best_index = idx
         if best_index is None:
             return None
         unit_index, requested_release_time_s, _, _, _ = waiting_for_system_slot.pop(best_index)
-        optimizer_waiting_unit_boosts.pop(int(unit_index), None)
         return unit_index, requested_release_time_s
 
     def _enqueue_station_queue(
@@ -2019,6 +2038,8 @@ def run_simulation(
         unit_release_times.append(float(current_time_s))
         unit_priorities.append(int(unit_priorities[failed_unit_index]))
         unit_order_ids.append(str(unit_order_ids[failed_unit_index]))
+        unit_custom_ids.append(_root_unit_id_text(root_index))
+        unit_route_ids.append(int(unit_route_ids[failed_unit_index]) if failed_unit_index < len(unit_route_ids) else 0)
         root_indices.append(root_index)
         attempt_numbers.append(int(attempt_numbers[failed_unit_index]) + 1)
         root_to_attempt_indices[root_index].append(new_unit_index)
@@ -2036,7 +2057,7 @@ def run_simulation(
         unit_index, arrival_time_s, queue_length_ahead_on_arrival, _priority_value, _queue_seq = station_state.queue.pop(0)
 
         root_index = root_indices[unit_index]
-        unit_id = f"U{root_index + 1:03d}"
+        unit_id = _root_unit_id_text(root_index)
         variant = ordered_units[unit_index]
         station_name = station_sequence[station_index]
         base_station_name = station_instance_base_names[station_index]
@@ -2075,21 +2096,6 @@ def run_simulation(
             disruption_result["terminal_failure_type"] = "failed_inspection"
             disruption_result["inspection_random"] = "timed"
 
-        if optimizer_enabled and disruption_result.get("triggered_disruption_type") is not None:
-            optimizer_payload = {
-                "triggered_disruption_type": str(disruption_result.get("triggered_disruption_type")),
-                "station_index": int(station_index + 1),
-                "station_name": str(station_name),
-                "base_station_name": str(base_station_name),
-                "stage_number": int(stage_number),
-                "unit_id": unit_id,
-                "order_id": str(unit_order_ids[unit_index]),
-                "variant": str(variant),
-                "priority": int(unit_priorities[unit_index]),
-                **dict(disruption_result),
-            }
-            _invoke_optimizer(current_time_s, optimizer_payload)
-
         stage_material_requirements = _stage_material_requirements(variant, int(stage_number))
         broken_extra_material_name = str(disruption_result.get("material_broken_extra_material_name") or "").strip()
         broken_extra_material_qty = int(disruption_result.get("material_broken_extra_material_qty", 0) or 0)
@@ -2119,10 +2125,10 @@ def run_simulation(
                     disruption_counts["material_stockout_stop_events"] += 1
                 unit_attempt_exit_time[unit_index] = float(current_time_s)
                 root_failed_without_replacement[root_indices[unit_index]] = {
-                    "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                    "root_unit_id": _root_unit_id_text(root_indices[unit_index]),
                     "order_id": str(root_order_ids[root_indices[unit_index]]),
                     "variant": ordered_units[unit_index],
-                    "failed_attempt_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                    "failed_attempt_unit_id": _root_unit_id_text(root_indices[unit_index]),
                     "failed_attempt_number": int(attempt_numbers[unit_index]),
                     "failure_type": "material_stockout_at_station",
                     "station_name": station_name,
@@ -2175,7 +2181,7 @@ def run_simulation(
                     "disruption_timestamp_s": float(current_time_s),
                     "unit_id": unit_id,
                     "order_id": str(unit_order_ids[unit_index]),
-                    "root_unit_id": f"U{root_index + 1:03d}",
+                    "root_unit_id": _root_unit_id_text(root_index),
                     "attempt": int(attempt_numbers[unit_index]),
                     "priority": int(unit_priorities[unit_index]),
                     "variant": variant,
@@ -2252,7 +2258,7 @@ def run_simulation(
                             "disruption_timestamp_s": float(time_s),
                             "station_name": station_sequence[station_index],
                             "station_index": int(station_index + 1),
-                            "affected_unit_id": f"U{root_indices[current_processing_unit_index] + 1:03d}",
+                            "affected_unit_id": _root_unit_id_text(root_indices[current_processing_unit_index]),
                             "order_id": str(unit_order_ids[current_processing_unit_index]),
                             "variant": ordered_units[current_processing_unit_index],
                             "timed_action": "scrap_current_unit",
@@ -2286,23 +2292,6 @@ def run_simulation(
         if event_type == EVENT_RELEASE:
             if _unit_blocked_by_material_stop(unit_index):
                 continue
-            if optimizer_enabled:
-                prioritize_front = bool(attempt_numbers[unit_index] > 1)
-                _enqueue_waiting_unit(unit_index, time_s, prioritize_front=prioritize_front)
-                if available_system_slots > 0:
-                    selected_waiting = _pop_best_waiting_unit(time_s)
-                    if selected_waiting is not None:
-                        selected_unit_index, _selected_release_time_s = selected_waiting
-                        available_system_slots -= 1
-                        first_station_index, _, arrival_time_s = choose_station_instance_for_stage(
-                            target_stage_index=0,
-                            current_time_s=time_s,
-                            unit_index=selected_unit_index,
-                            from_station_index=None,
-                        )
-                        push_event(arrival_time_s, EVENT_ARRIVAL, first_station_index, selected_unit_index)
-                continue
-
             if available_system_slots > 0:
                 available_system_slots -= 1
                 first_station_index, _, arrival_time_s = choose_station_instance_for_stage(
@@ -2367,10 +2356,10 @@ def run_simulation(
                     )
                     if replacement_unit_index is None:
                         root_failed_without_replacement[root_indices[unit_index]] = {
-                            "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                            "root_unit_id": _root_unit_id_text(root_indices[unit_index]),
                             "order_id": str(root_order_ids[root_indices[unit_index]]),
                             "variant": ordered_units[unit_index],
-                            "failed_attempt_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                            "failed_attempt_unit_id": _root_unit_id_text(root_indices[unit_index]),
                             "failed_attempt_number": int(attempt_numbers[unit_index]),
                             "failure_type": terminal_failure_type,
                             "station_name": station_sequence[station_index],
@@ -2381,10 +2370,10 @@ def run_simulation(
                         disruption_counts["replacement_units_created"] += 1
                 else:
                     root_failed_without_replacement[root_indices[unit_index]] = {
-                        "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                        "root_unit_id": _root_unit_id_text(root_indices[unit_index]),
                         "order_id": str(root_order_ids[root_indices[unit_index]]),
                         "variant": ordered_units[unit_index],
-                        "failed_attempt_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                        "failed_attempt_unit_id": _root_unit_id_text(root_indices[unit_index]),
                         "failed_attempt_number": int(attempt_numbers[unit_index]),
                         "failure_type": terminal_failure_type,
                         "station_name": station_sequence[station_index],
@@ -2396,15 +2385,15 @@ def run_simulation(
                     {
                         "event": "unit_scrapped_and_released_for_retry" if replacement_unit_index is not None else "unit_scrapped_without_retry",
                         "disruption_timestamp_s": float(time_s),
-                        "unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                        "unit_id": _root_unit_id_text(root_indices[unit_index]),
                         "order_id": str(root_order_ids[root_indices[unit_index]]),
-                        "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
+                        "root_unit_id": _root_unit_id_text(root_indices[unit_index]),
                         "attempt": int(attempt_numbers[unit_index]),
                         "variant": ordered_units[unit_index],
                         "station_name": station_sequence[station_index],
                         "failure_type": terminal_failure_type,
                         "failure_material": disruption_result.get("terminal_failure_material"),
-                        "replacement_unit_id": f"U{root_indices[unit_index] + 1:03d}" if replacement_unit_index is not None else None,
+                        "replacement_unit_id": _root_unit_id_text(root_indices[unit_index]) if replacement_unit_index is not None else None,
                         "replacement_attempt_number": int(attempt_numbers[replacement_unit_index]) if replacement_unit_index is not None else None,
                         "replacement_release_time_s": float(time_s) if replacement_unit_index is not None else None,
                         "replacement_shortages": replacement_shortages,
@@ -2427,7 +2416,7 @@ def run_simulation(
                 next_station_name = station_sequence[next_station_index]
                 transport_records.append(
                     TransportRecord(
-                        unit_id=f"U{root_indices[unit_index] + 1:03d}",
+                        unit_id=_root_unit_id_text(root_indices[unit_index]),
                         order_id=str(unit_order_ids[unit_index]),
                         variant=ordered_units[unit_index],
                         transport_index=current_stage_index + 1,
@@ -2488,7 +2477,7 @@ def run_simulation(
             if idx in unit_first_arrival and idx in unit_attempt_exit_time
         )
         variant = ordered_units[successful_attempt_index]
-        unit_id_text = f"U{root_index + 1:03d}"
+        unit_id_text = _root_unit_id_text(root_index)
         time_spent_producing = sum(
             float(op.base_process_time_s)
             for op in operations
@@ -2560,9 +2549,6 @@ def run_simulation(
         "remaining_stock_after_run": dict(remaining_station_material_stock),
         "disruption_event_log": disruption_event_log,
         "disruption_counts": dict(disruption_counts),
-        "optimizer_enabled": bool(optimizer_enabled),
-        "optimizer_event_log": list(optimizer_event_log),
-        "optimizer_counts": dict(optimizer_counts),
         "root_failed_without_replacement": list(root_failed_without_replacement.values()),
         "unrecoverable_root_count": len(root_failed_without_replacement),
         "disruptions_enabled": bool(disruptions_enabled or timed_disruption_data is not None),
@@ -2574,6 +2560,7 @@ def run_simulation(
     }
 
     return operations, transport_records, unit_summaries, station_summaries, station_available_time, simulation_details
+
 
 # -----------------------------
 # KPI calculation
@@ -2826,6 +2813,7 @@ def calculate_kpis(
 
     return kpis
 
+
 # -----------------------------
 # Output writers
 # -----------------------------
@@ -2835,6 +2823,7 @@ def write_kpis_csv(kpis: dict[str, Any], output_path: Path) -> None:
         writer.writerow(["kpi_name", "value"])
         for key, value in kpis.items():
             writer.writerow([key, value])
+
 
 def write_material_report_csv(
     material_report: dict[str, dict[str, int]], output_path: Path
@@ -2862,6 +2851,7 @@ def write_material_report_csv(
                     values["unmet_for_full_order"],
                 ]
             )
+
 
 def write_operations_csv(operations: list[OperationRecord], output_path: Path) -> None:
     with output_path.open("w", newline="", encoding="utf-8") as f:
@@ -2900,6 +2890,7 @@ def write_operations_csv(operations: list[OperationRecord], output_path: Path) -
                 ]
             )
 
+
 def write_transport_csv(transport_records: list[TransportRecord], output_path: Path) -> None:
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -2932,6 +2923,7 @@ def write_transport_csv(transport_records: list[TransportRecord], output_path: P
                     round(tr.transport_time_s, 4),
                 ]
             )
+
 
 def write_unit_summary_csv(unit_summaries: list[UnitSummary], output_path: Path) -> None:
     with output_path.open("w", newline="", encoding="utf-8") as f:
@@ -2967,6 +2959,7 @@ def write_unit_summary_csv(unit_summaries: list[UnitSummary], output_path: Path)
                     int(summary.attempts),
                 ]
             )
+
 
 def write_station_summary_csv(
     station_summaries: list[StationSummary],
@@ -3032,84 +3025,224 @@ def write_station_summary_csv(
             )
 
 
-
-def _resolve_optimizer_settings(settings_data: dict[str, Any]) -> dict[str, Any]:
-    optimizer_settings = settings_data.get("optimizer", {})
-    return optimizer_settings if isinstance(optimizer_settings, dict) else {}
-
-
-def _resolve_optimizer_module_name(optimizer_settings: dict[str, Any]) -> str:
-    if not isinstance(optimizer_settings, dict):
-        return "D_lookahead_rescheduler_v2.py"
-
-    algorithm_name = str(
-        optimizer_settings.get("algorithm", optimizer_settings.get("type", ""))
-    ).strip().lower()
-    module_name = str(optimizer_settings.get("module", "")).strip()
-
-    if module_name:
-        return module_name
-    if algorithm_name in {"sa", "simulated_annealing", "simulated-annealing"}:
-        return "D_sa_rescheduler.py"
-    return "D_lookahead_rescheduler_v2.py"
-
-
-def _resolve_optimizer_module_path(
-    optimizer_module_name: str | None,
-    script_dir: Path,
-) -> Path | None:
-    if optimizer_module_name is None or str(optimizer_module_name).strip() == "":
-        return None
-
-    candidate_text = str(optimizer_module_name).strip()
-    candidate_path = Path(candidate_text)
-    if candidate_path.is_absolute():
-        return candidate_path if candidate_path.exists() else None
-
-    for candidate in [script_dir / candidate_text, script_dir / "algorithms" / candidate_text]:
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def load_optimizer_controller(optimizer_module_path: Path | None) -> tuple[Any | None, Path | None]:
-    if optimizer_module_path is None or not optimizer_module_path.exists():
-        return None, None
-
-    module_name = f"optimizer_module_{optimizer_module_path.stem}_{abs(hash(str(optimizer_module_path.resolve())))}"
-    spec = importlib.util.spec_from_file_location(module_name, optimizer_module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load optimizer module from {optimizer_module_path}")
-    module = importlib.util.module_from_spec(spec)
-
-    import sys
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception:
-        sys.modules.pop(module_name, None)
-        raise
-
-    return module, optimizer_module_path
-
-
-def _call_optimizer_controller(
-    optimizer_module: Any | None,
-    snapshot: dict[str, Any],
-    optimizer_config: dict[str, Any] | None,
-) -> dict[str, Any]:
-    if optimizer_module is None:
-        return {}
-
-    for function_name in ("optimize_reschedule", "optimize", "reschedule"):
-        function_obj = getattr(optimizer_module, function_name, None)
-        if callable(function_obj):
-            result = function_obj(snapshot, optimizer_config or {})
-            return result if isinstance(result, dict) else {}
-    return {}
 def save_json(payload: dict[str, Any], output_path: Path) -> None:
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
+
+
+# -----------------------------
+# Charts
+# -----------------------------
+def _unit_color_map(unit_ids: list[str]) -> dict[str, Any]:
+    if plt is None:
+        return {}
+    cmap = plt.get_cmap("tab20")
+    sorted_unit_ids = sorted(unit_ids)
+    return {unit_id: cmap(i % cmap.N) for i, unit_id in enumerate(sorted_unit_ids)}
+
+
+def create_gantt_chart(
+    operations: list[OperationRecord],
+    transport_records: list[TransportRecord],
+    output_path: Path,
+) -> bool:
+    if plt is None:
+        return False
+
+    if not operations:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.set_title("Production line Gantt chart")
+        ax.set_xlabel("Time [s]")
+        ax.set_ylabel("Stations / Transport")
+        ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
+    station_entries: list[tuple[int, int, str]] = []
+    seen_station_names: set[str] = set()
+    for op in sorted(operations, key=lambda x: x.station_index):
+        if op.station_name in seen_station_names:
+            continue
+        stage_number, copy_number, _ = _extract_station_name_parts(op.station_name)
+        station_entries.append((stage_number or op.station_index, copy_number or 0, op.station_name))
+        seen_station_names.add(op.station_name)
+
+    transport_entries: dict[int, str] = {}
+    for tr in sorted(transport_records, key=lambda x: x.transport_index):
+        transport_stage_number = _transport_stage_number_from_name(tr.transport_name)
+        if transport_stage_number is None:
+            transport_stage_number = tr.transport_index
+        transport_entries.setdefault(transport_stage_number, tr.transport_name)
+
+    stations_by_stage: defaultdict[int, list[tuple[int, str]]] = defaultdict(list)
+    for stage_number, copy_number, station_name in station_entries:
+        stations_by_stage[stage_number].append((copy_number, station_name))
+
+    row_names: list[str] = []
+    all_stage_numbers = sorted(stations_by_stage.keys())
+    for stage_number in all_stage_numbers:
+        for _, station_name in sorted(stations_by_stage[stage_number], key=lambda item: item[0]):
+            row_names.append(station_name)
+        if stage_number in transport_entries:
+            row_names.append(transport_entries[stage_number])
+
+    row_to_y = {name: idx for idx, name in enumerate(row_names)}
+    unit_colors = _unit_color_map([op.unit_id for op in operations])
+
+    fig, ax = plt.subplots(figsize=(18, 9))
+
+    for op in operations:
+        y = row_to_y[op.station_name]
+        duration = op.finish_time_s - op.start_time_s
+        color = unit_colors.get(op.unit_id)
+        ax.barh(
+            y,
+            duration,
+            left=op.start_time_s,
+            height=0.62,
+            color=color,
+            edgecolor="black",
+            linewidth=0.25,
+        )
+        if duration > 1.0:
+            ax.text(
+                op.start_time_s + duration / 2,
+                y,
+                f"{op.unit_id}-{op.variant}",
+                ha="center",
+                va="center",
+                fontsize=5,
+            )
+
+    for tr in transport_records:
+        y = row_to_y[tr.transport_name]
+        duration = tr.finish_time_s - tr.start_time_s
+        color = unit_colors.get(tr.unit_id)
+        ax.barh(
+            y,
+            duration,
+            left=tr.start_time_s,
+            height=0.42,
+            color=color,
+            edgecolor="black",
+            linewidth=0.25,
+            alpha=0.65,
+        )
+        if duration > 1.0:
+            ax.text(
+                tr.start_time_s + duration / 2,
+                y,
+                f"{tr.unit_id}-{tr.variant}",
+                ha="center",
+                va="center",
+                fontsize=4.5,
+            )
+
+    ax.set_yticks(list(row_to_y.values()))
+    ax.set_yticklabels(list(row_to_y.keys()))
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Stations / Transport")
+    ax.set_title("Production line Gantt chart")
+    ax.grid(True, axis="x", alpha=0.3)
+    # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
+
+def create_gantt_chart_no_transport(
+    operations: list[OperationRecord],
+    transport_records: list[TransportRecord],
+    output_path: Path,
+) -> bool:
+    if plt is None:
+        return False
+
+    if not operations:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.set_title("Production line Gantt chart")
+        ax.set_xlabel("Time [s]")
+        ax.set_ylabel("Stations / Transport")
+        ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+        return True
+
+    station_names = []
+    seen_stations = set()
+    for op in sorted(operations, key=lambda x: x.station_index):
+        if op.station_name not in seen_stations:
+            station_names.append(op.station_name)
+            seen_stations.add(op.station_name)
+
+    row_names: list[str] = []
+    for idx, station_name in enumerate(station_names):
+        row_names.append(station_name)
+
+    row_to_y = {name: idx for idx, name in enumerate(row_names)}
+    unit_colors = _unit_color_map([op.unit_id for op in operations])
+
+    fig, ax = plt.subplots(figsize=(18, 9))
+
+    for op in operations:
+        y = row_to_y[op.station_name]
+        duration = op.finish_time_s - op.start_time_s
+        color = unit_colors.get(op.unit_id)
+        ax.barh(
+            y,
+            duration,
+            left=op.start_time_s,
+            height=0.62,
+            color=color,
+            edgecolor="black",
+            linewidth=0.25,
+        )
+        if duration > 1.0:
+            ax.text(
+                op.start_time_s + duration / 2,
+                y,
+                f"{op.unit_id}-{op.variant}",
+                ha="center",
+                va="center",
+                fontsize=5,
+            )
+
+    ax.set_yticks(list(row_to_y.values()))
+    ax.set_yticklabels(list(row_to_y.keys()))
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Stations / Transport")
+    ax.set_title("Production line Gantt chart")
+    ax.grid(True, axis="x", alpha=0.3)
+    # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
+
+def create_throughput_chart(unit_summaries: list[UnitSummary], output_path: Path) -> bool:
+    if plt is None:
+        return False
+
+    completion_times = sorted(u.completion_time_s for u in unit_summaries)
+    x = [0.0] + completion_times
+    y = [0] + list(range(1, len(completion_times) + 1))
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.step(x, y, where="post")
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Completed units")
+    ax.set_title("Cumulative completed phones over time")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
 
 # -----------------------------
 # Run metadata / output folders
@@ -3117,6 +3250,7 @@ def save_json(payload: dict[str, Any], output_path: Path) -> None:
 def make_order_slug(order_text: str, max_length: int = 80) -> str:
     slug = re.sub(r"[^A-Za-z0-9]+", "_", order_text.strip()).strip("_")
     return (slug or "order")[:max_length]
+
 
 def create_run_output_dir(output_root: Path, order_text: str) -> Path:
     output_root.mkdir(parents=True, exist_ok=True)
@@ -3129,6 +3263,7 @@ def create_run_output_dir(output_root: Path, order_text: str) -> Path:
         run_dir = output_root / f"{timestamp}__{slug}__{counter}"
     run_dir.mkdir(parents=True, exist_ok=False)
     return run_dir
+
 
 def save_run_metadata(
     order_text: str,
@@ -3148,6 +3283,7 @@ def save_run_metadata(
     if extra_payload:
         payload.update(extra_payload)
     save_json(payload, output_path)
+
 
 # -----------------------------
 # Main
@@ -3212,13 +3348,17 @@ def main() -> None:
     settings_path: Path | None = None
     settings_data: dict[str, Any] = {}
 
+    unit_custom_ids: list[str]
+    unit_route_ids: list[int]
+
     if args.order:
         order_text = args.order
         ordered_units = parse_order(order_text, valid_variants)
         unit_release_times = [0.0] * len(ordered_units)
         unit_priorities = [1] * len(ordered_units)
         unit_order_ids = ["manual"] * len(ordered_units)
-        unit_due_dates = [float("inf")] * len(ordered_units)
+        unit_custom_ids = [f"U{idx + 1:03d}" for idx in range(len(ordered_units))]
+        unit_route_ids = [0] * len(ordered_units)
     else:
         generated_input = load_latest_generated_input(input_root, valid_variants)
         order_text = generated_input["order_text"]
@@ -3226,7 +3366,8 @@ def main() -> None:
         unit_release_times = generated_input["unit_release_times"]
         unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
         unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
-        unit_due_dates = generated_input.get("unit_due_dates", [float("inf")] * len(ordered_units))
+        unit_custom_ids = generated_input.get("unit_custom_ids", [f"U{idx + 1:03d}" for idx in range(len(ordered_units))])
+        unit_route_ids = generated_input.get("unit_route_ids", [0] * len(ordered_units))
         simulation_time_s = generated_input["simulation_time_s"]
         carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))
         settings_data = generated_input.get("settings_data", {})
@@ -3244,6 +3385,8 @@ def main() -> None:
             "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
             "unit_priorities": list(unit_priorities),
             "unit_order_ids": list(unit_order_ids),
+            "unit_custom_ids": list(unit_custom_ids),
+            "unit_route_ids": list(unit_route_ids),
         }
 
     line_layout_path_resolved = resolve_line_layout_path(
@@ -3259,8 +3402,8 @@ def main() -> None:
         line_layout_config=line_layout_config,
     )
 
-    disruption_path = resolve_disruption_path(batch_dir=batch_dir_for_layout)
-    timed_disruption_csv_path = resolve_timed_disruption_csv_path(batch_dir=batch_dir_for_layout)
+    disruption_path = resolve_disruption_path(input_root=input_root, batch_dir=batch_dir_for_layout)
+    timed_disruption_csv_path = resolve_timed_disruption_csv_path(input_root=input_root, batch_dir=batch_dir_for_layout)
     disruption_mode = _settings_disruption_mode(settings_data)
     disruptions_enabled = disruption_mode != 0
     chance_based_disruptions_enabled = disruption_mode == 1
@@ -3269,10 +3412,6 @@ def main() -> None:
     disruption_config: dict[str, Any] | None = None
     timed_disruption_records: list[dict[str, Any]] = []
     timed_disruption_data: dict[str, Any] | None = None
-    optimizer_settings = _resolve_optimizer_settings(settings_data)
-    optimizer_module_name = _resolve_optimizer_module_name(optimizer_settings)
-    optimizer_module_path = _resolve_optimizer_module_path(optimizer_module_name, Path(__file__).resolve().parent)
-    optimizer_module, optimizer_module_path = load_optimizer_controller(optimizer_module_path) if optimizer_settings and int(optimizer_settings.get("enabled", 0)) == 1 else (None, None)
 
     if chance_based_disruptions_enabled:
         if disruption_path is None or not disruption_path.exists():
@@ -3312,8 +3451,6 @@ def main() -> None:
         run_metadata_extra["input_disruption_json"] = str(disruption_path.resolve())
     if timed_disruption_csv_path is not None:
         run_metadata_extra["input_timed_disruption_csv"] = str(timed_disruption_csv_path.resolve())
-    run_metadata_extra["optimizer_enabled"] = bool(optimizer_module is not None and int(optimizer_settings.get("enabled", 0)) == 1)
-    run_metadata_extra["optimizer_module"] = str(optimizer_module_path.resolve()) if optimizer_module_path is not None else None
 
     run_output_dir = create_run_output_dir(output_root, order_text)
 
@@ -3322,8 +3459,6 @@ def main() -> None:
         copy_file_if_exists(disruption_path, run_output_dir / "disruption_used.json")
     elif int(disruption_mode) == 2:
         copy_file_if_exists(timed_disruption_csv_path, run_output_dir / "disruption_used.csv")
-    if optimizer_module_path is not None and optimizer_module is not None:
-        copy_file_if_exists(optimizer_module_path, run_output_dir / "optimizer_used.py")
 
     save_run_metadata(
         order_text,
@@ -3348,7 +3483,8 @@ def main() -> None:
         unit_release_times=unit_release_times,
         unit_priorities=unit_priorities,
         unit_order_ids=unit_order_ids,
-        unit_due_dates=unit_due_dates,
+        unit_custom_ids=unit_custom_ids,
+        unit_route_ids=unit_route_ids,
         max_units_in_system=carriers,
         line_layout_config=line_layout_config,
         bom_data=bom_data,
@@ -3358,8 +3494,6 @@ def main() -> None:
         disruption_seed=disruption_seed if chance_based_disruptions_enabled else None,
         simulation_time_s=simulation_time_s,
         timed_disruption_data=timed_disruption_data,
-        optimizer_module=optimizer_module,
-        optimizer_config=optimizer_settings,
     )
     print(">> Done running sim with disruptions")
     sim_with_dtimeend = time.perf_counter()
@@ -3618,6 +3752,8 @@ def main() -> None:
             unit_release_times=unit_release_times,
             unit_priorities=unit_priorities,
             unit_order_ids=unit_order_ids,
+            unit_custom_ids=unit_custom_ids,
+            unit_route_ids=unit_route_ids,
             max_units_in_system=carriers,
             line_layout_config=line_layout_config,
             bom_data=bom_data,
@@ -3627,8 +3763,6 @@ def main() -> None:
             disruption_seed=None,
             simulation_time_s=simulation_time_s,
             timed_disruption_data=None,
-            optimizer_module=None,
-            optimizer_config=None,
         )
         print(">> Done running sim without disruptions")
         sim_no_dtimeend = time.perf_counter()
@@ -3880,18 +4014,6 @@ def main() -> None:
             run_output_dir / "disruption_summary.json",
         )
 
-    if simulation_details.get("optimizer_enabled") or simulation_details.get("optimizer_event_log"):
-        save_json(
-            {
-                "optimizer_enabled": bool(simulation_details.get("optimizer_enabled", False)),
-                "optimizer_module": str(optimizer_module_path.resolve()) if optimizer_module_path is not None else None,
-                "optimizer_config": optimizer_settings,
-                "optimizer_counts": dict(simulation_details.get("optimizer_counts", {})),
-                "events": list(simulation_details.get("optimizer_event_log", [])),
-            },
-            run_output_dir / "optimizer_summary.json",
-        )
-
     print(f"Run folder: {run_output_dir.resolve()}")
     if simulation_time_s is not None:
         print(f"Simulation time: {simulation_time_s} s")
@@ -3906,9 +4028,6 @@ def main() -> None:
         print(f"Disruption file: {disruption_path.resolve()}")
     if timed_disruptions_enabled and timed_disruption_csv_path is not None:
         print(f"Timed disruption file: {timed_disruption_csv_path.resolve()}")
-    print(f"Optimizer enabled: {int(simulation_details.get('optimizer_enabled', False))}")
-    if optimizer_module_path is not None and simulation_details.get('optimizer_enabled', False):
-        print(f"Optimizer module: {optimizer_module_path.resolve()}")
     print(f"Effective station count: {len(effective_line_layout['station_sequence'])}")
     print(f"Requested units: {len(ordered_units)}")
     print(f"Completed good units: {len(completed_good_variants)}")
@@ -3919,6 +4038,7 @@ def main() -> None:
 
     endtime = time.perf_counter()
     print(f"Total execution time: {endtime - starttime:.6f} seconds")
+
 
 if __name__ == "__main__":
     main()
