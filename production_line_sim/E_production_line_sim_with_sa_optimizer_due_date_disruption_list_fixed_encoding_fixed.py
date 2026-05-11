@@ -9,6 +9,7 @@ import math
 import re
 import shutil
 import time
+import importlib.util
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -670,6 +671,7 @@ def load_latest_generated_input(
     unit_release_times: list[float] = []
     unit_priorities: list[int] = []
     unit_order_ids: list[str] = []
+    unit_due_dates: list[float] = []
     order_rows: list[dict[str, Any]] = []
 
     with orders_csv_path.open("r", encoding="utf-8-sig", newline="") as f:
@@ -678,16 +680,27 @@ def load_latest_generated_input(
         if header is None:
             raise ValueError(f"Order CSV is empty: {orders_csv_path}")
 
+        normalized_header = [re.sub(r"[^a-z0-9]", "", str(value).strip().lower()) for value in header]
+        due_date_mode = len(normalized_header) > 1 and normalized_header[1] in {"duedate", "due"}
+
         for row_index, row in enumerate(reader, start=1):
             if not row or not any(str(cell).strip() for cell in row):
                 continue
 
             order_id = str(row[0]).strip() if len(row) > 0 else str(row_index)
-            order_time_s = _read_float(row[1], 0.0) if len(row) > 1 else 0.0
-            priority = max(1, _read_int(row[2], 1)) if len(row) > 2 else 1
+            if due_date_mode:
+                order_time_s = 0.0
+                due_date_s = _read_float(row[1], float("inf")) if len(row) > 1 else float("inf")
+                priority = max(1, _read_int(row[2], 1)) if len(row) > 2 else 1
+                variant_start_idx = 3
+            else:
+                order_time_s = _read_float(row[1], 0.0) if len(row) > 1 else 0.0
+                due_date_s = float("inf")
+                priority = max(1, _read_int(row[2], 1)) if len(row) > 2 else 1
+                variant_start_idx = 3
 
             row_variants: list[dict[str, Any]] = []
-            for col_idx in range(3, len(row), 2):
+            for col_idx in range(variant_start_idx, len(row), 2):
                 variant_text = str(row[col_idx]).strip().upper() if col_idx < len(row) else ""
                 quantity = _read_int(row[col_idx + 1], 0) if col_idx + 1 < len(row) else 0
 
@@ -706,7 +719,7 @@ def load_latest_generated_input(
                     {
                         "variant": variant_text,
                         "quantity": quantity,
-                        "variant_slot_index": (col_idx - 3) // 2,
+                        "variant_slot_index": (col_idx - variant_start_idx) // 2,
                     }
                 )
 
@@ -714,13 +727,17 @@ def load_latest_generated_input(
                 {
                     "order_id": order_id,
                     "order_time_s": order_time_s,
+                    "due_date_s": float(due_date_s),
                     "priority": priority,
                     "variants": row_variants,
                     "row_index": row_index,
                 }
             )
 
-    order_rows.sort(key=lambda row: (row["order_time_s"], -row["priority"], row["row_index"], str(row["order_id"])))
+    if due_date_mode:
+        order_rows.sort(key=lambda row: row["row_index"])
+    else:
+        order_rows.sort(key=lambda row: (row["order_time_s"], -row["priority"], row["row_index"], str(row["order_id"])))
 
     for row in order_rows:
         if row["order_time_s"] > simulation_time_s:
@@ -734,6 +751,7 @@ def load_latest_generated_input(
                 unit_release_times.append(float(row["order_time_s"]))
                 unit_priorities.append(int(row["priority"]))
                 unit_order_ids.append(str(row["order_id"]))
+                unit_due_dates.append(float(row.get("due_date_s", float("inf"))))
 
     batch_name = batch_dir.name
     order_text = batch_name
@@ -748,6 +766,7 @@ def load_latest_generated_input(
         "unit_release_times": unit_release_times,
         "unit_priorities": unit_priorities,
         "unit_order_ids": unit_order_ids,
+        "unit_due_dates": unit_due_dates,
         "simulation_time_s": simulation_time_s,
         "carriers": carriers,
         "settings_data": settings_data,
@@ -825,8 +844,29 @@ def resolve_disruption_path(batch_dir: Path | None) -> Path | None:
 def resolve_timed_disruption_csv_path(batch_dir: Path | None) -> Path | None:
     if batch_dir is None:
         return None
-    candidate = batch_dir / TIMED_DISRUPTION_FILENAME
-    return candidate if candidate.exists() else None
+
+    exact_candidate = batch_dir / TIMED_DISRUPTION_FILENAME
+    if exact_candidate.exists() and exact_candidate.is_file():
+        return exact_candidate
+
+    fuzzy_candidates: list[Path] = []
+    fuzzy_candidates.extend(sorted(path for path in batch_dir.glob("disruption_list*.csv") if path.is_file()))
+    fuzzy_candidates.extend(sorted(path for path in batch_dir.glob("disruptions*.csv") if path.is_file()))
+    fuzzy_candidates.extend(sorted(path for path in batch_dir.glob("disruption_list*") if path.is_file()))
+    fuzzy_candidates.extend(sorted(path for path in batch_dir.glob("disruptions*") if path.is_file()))
+
+    unique_candidates: list[Path] = []
+    seen: set[str] = set()
+    for candidate in fuzzy_candidates:
+        resolved_key = str(candidate.resolve())
+        if resolved_key not in seen:
+            unique_candidates.append(candidate)
+            seen.add(resolved_key)
+
+    if not unique_candidates:
+        return None
+
+    return max(unique_candidates, key=lambda path: path.stat().st_mtime)
 
 def copy_file_if_exists(source_path: Path | None, target_path: Path) -> bool:
     if source_path is None or not source_path.exists():
@@ -1059,46 +1099,59 @@ def _assign_missing_emergency_order_ids(
 
 def load_timed_disruption_csv(csv_path: Path, valid_variants: set[str]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.reader(f)
-        header = next(reader, None)
-        if header is None:
-            return records
-        for row_index, row in enumerate(reader, start=2):
-            if not row or not any(str(cell).strip() for cell in row):
-                continue
-            padded_row = list(row) + [""] * max(0, 14 - len(row))
-            disruption_type = str(padded_row[0]).strip().lower()
-            if disruption_type == "":
-                continue
+    last_decode_error: Exception | None = None
 
-            emergency_variants: list[tuple[str, int]] = []
-            for variant_col_idx, quantity_col_idx in ((8, 9), (10, 11), (12, 13)):
-                variant_text = str(padded_row[variant_col_idx]).strip().upper()
-                quantity_value = 0 if _is_nan_like(padded_row[quantity_col_idx]) else _read_int(padded_row[quantity_col_idx], 0)
-                if variant_text == "" or variant_text.casefold() == "nan" or quantity_value <= 0:
-                    continue
-                if variant_text not in valid_variants:
-                    raise ValueError(
-                        f"Unknown variant '{variant_text}' in timed disruption CSV row {row_index}. "
-                        f"Valid options: {', '.join(sorted(valid_variants))}"
+    for encoding_name in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            with csv_path.open("r", encoding=encoding_name, newline="") as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                if header is None:
+                    return records
+                for row_index, row in enumerate(reader, start=2):
+                    if not row or not any(str(cell).strip() for cell in row):
+                        continue
+                    padded_row = list(row) + [""] * max(0, 14 - len(row))
+                    disruption_type = str(padded_row[0]).strip().lower()
+                    if disruption_type == "":
+                        continue
+
+                    emergency_variants: list[tuple[str, int]] = []
+                    for variant_col_idx, quantity_col_idx in ((8, 9), (10, 11), (12, 13)):
+                        variant_text = str(padded_row[variant_col_idx]).strip().upper()
+                        quantity_value = 0 if _is_nan_like(padded_row[quantity_col_idx]) else _read_int(padded_row[quantity_col_idx], 0)
+                        if variant_text == "" or variant_text.casefold() == "nan" or quantity_value <= 0:
+                            continue
+                        if variant_text not in valid_variants:
+                            raise ValueError(
+                                f"Unknown variant '{variant_text}' in timed disruption CSV row {row_index}. "
+                                f"Valid options: {', '.join(sorted(valid_variants))}"
+                            )
+                        emergency_variants.append((variant_text, int(quantity_value)))
+
+                    records.append(
+                        {
+                            "disruption_type": disruption_type,
+                            "station_id": _normalize_station_disruption_id(padded_row[1]),
+                            "start_time_s": _read_float(padded_row[2], 0.0),
+                            "end_time_s": None if _is_nan_like(padded_row[3]) else _read_float(padded_row[3], 0.0),
+                            "efficiency_percentage": None if _is_nan_like(padded_row[4]) else _read_float(padded_row[4], 100.0),
+                            "order_id": None if _is_nan_like(padded_row[5]) else str(padded_row[5]).strip(),
+                            "due_date_s": None if _is_nan_like(padded_row[6]) else _read_float(padded_row[6], float("inf")),
+                            "order_time_s": _read_float(padded_row[2], 0.0),
+                            "priority": None if _is_nan_like(padded_row[7]) else max(1, _read_int(padded_row[7], 1)),
+                            "emergency_variants": emergency_variants,
+                            "row_index": int(row_index),
+                        }
                     )
-                emergency_variants.append((variant_text, int(quantity_value)))
+            return records
+        except UnicodeDecodeError as exc:
+            last_decode_error = exc
+            records = []
+            continue
 
-            records.append(
-                {
-                    "disruption_type": disruption_type,
-                    "station_id": _normalize_station_disruption_id(padded_row[1]),
-                    "start_time_s": _read_float(padded_row[2], 0.0),
-                    "end_time_s": None if _is_nan_like(padded_row[3]) else _read_float(padded_row[3], 0.0),
-                    "efficiency_percentage": None if _is_nan_like(padded_row[4]) else _read_float(padded_row[4], 100.0),
-                    "order_id": None if _is_nan_like(padded_row[5]) else str(padded_row[5]).strip(),
-                    "order_time_s": None if _is_nan_like(padded_row[6]) else _read_float(padded_row[6], _read_float(padded_row[2], 0.0)),
-                    "priority": None if _is_nan_like(padded_row[7]) else max(1, _read_int(padded_row[7], 1)),
-                    "emergency_variants": emergency_variants,
-                    "row_index": int(row_index),
-                }
-            )
+    if last_decode_error is not None:
+        raise last_decode_error
     return records
 
 def prepare_timed_disruption_data(
@@ -1117,6 +1170,10 @@ def prepare_timed_disruption_data(
 
     for record in timed_disruption_records:
         disruption_type = str(record.get("disruption_type", "")).strip().lower()
+        if disruption_type.startswith("breakdown:"):
+            disruption_type = "machine_breakdown"
+        elif disruption_type in {"inspection_failure", "failed_inspection"}:
+            disruption_type = "failed_inspection"
         station_id = record.get("station_id")
         station_index: int | None = None
         if station_id is not None:
@@ -1158,6 +1215,7 @@ def prepare_timed_disruption_data(
                 {
                     "order_id": str(order_id),
                     "order_time_s": float(order_time_s),
+                    "due_date_s": float(record.get("due_date_s", float("inf")) if record.get("due_date_s") is not None else float("inf")),
                     "priority": int(priority_value),
                     "variants": list(record.get("emergency_variants", [])),
                 }
@@ -1488,6 +1546,7 @@ def run_simulation(
     unit_release_times: list[float] | None = None,
     unit_priorities: list[int] | None = None,
     unit_order_ids: list[str] | None = None,
+    unit_due_dates: list[float] | None = None,
     max_units_in_system: int = MAX_UNITS_IN_SYSTEM,
     return_to_station_1_time_s: float = RETURN_TO_STATION_1_TIME_S,
     line_layout_config: dict[str, Any] | None = None,
@@ -1498,6 +1557,8 @@ def run_simulation(
     disruption_seed: Any | None = None,
     simulation_time_s: float | None = None,
     timed_disruption_data: dict[str, Any] | None = None,
+    optimizer_module: Any | None = None,
+    optimizer_config: dict[str, Any] | None = None,
 ) -> tuple[list[OperationRecord], list[TransportRecord], list[UnitSummary], list[StationSummary], dict[str, float], dict[str, Any]]:
     effective_line_layout = build_effective_line_layout(
         process_time_data=process_time_data,
@@ -1529,6 +1590,11 @@ def run_simulation(
     else:
         unit_order_ids = [str(value) for value in unit_order_ids]
 
+    if unit_due_dates is None:
+        unit_due_dates = [float("inf")] * len(ordered_units)
+    else:
+        unit_due_dates = [float(value) for value in unit_due_dates]
+
     timed_breakdown_windows_by_station: dict[int, list[tuple[float, float]]] = {}
     timed_efficiency_windows_by_station: dict[int, list[tuple[float, float, float]]] = {}
     timed_failed_inspection_times_by_station: dict[int, list[float]] = {}
@@ -1555,6 +1621,7 @@ def run_simulation(
                     unit_release_times.append(emergency_order_time_s)
                     unit_priorities.append(emergency_priority)
                     unit_order_ids.append(emergency_order_id)
+                    unit_due_dates.append(float(emergency_order.get("due_date_s", float("inf"))))
 
     initial_requested_unit_count = len(ordered_units)
 
@@ -1564,6 +1631,8 @@ def run_simulation(
         raise ValueError("unit_priorities must have the same length as ordered_units")
     if len(unit_order_ids) != len(ordered_units):
         raise ValueError("unit_order_ids must have the same length as ordered_units")
+    if len(unit_due_dates) != len(ordered_units):
+        raise ValueError("unit_due_dates must have the same length as ordered_units")
     if max_units_in_system <= 0:
         raise ValueError("max_units_in_system must be greater than 0")
     if return_to_station_1_time_s < 0:
@@ -1617,6 +1686,15 @@ def run_simulation(
     stop_reason: dict[str, Any] | None = None
     material_stop_cutoff_unit_index: int | None = None
     pending_timed_failed_inspection_by_station: defaultdict[int, int] = defaultdict(int)
+    optimizer_enabled = bool(
+        optimizer_module is not None
+        and isinstance(optimizer_config, dict)
+        and int(optimizer_config.get("enabled", 0)) == 1
+    )
+    optimizer_waiting_unit_boosts: dict[int, float] = {}
+    optimizer_station_penalties: dict[int, tuple[float, float, str]] = {}
+    optimizer_event_log: list[dict[str, Any]] = []
+    optimizer_counts: Counter[str] = Counter()
 
     def _unit_blocked_by_material_stop(unit_index: int) -> bool:
         return (
@@ -1639,6 +1717,149 @@ def run_simulation(
         )
         event_sequence += 1
 
+
+
+    def _active_optimizer_station_penalty_s(station_index: int, current_time_s: float) -> float:
+        penalty_payload = optimizer_station_penalties.get(int(station_index))
+        if penalty_payload is None:
+            return 0.0
+        penalty_s, expires_at_s, _reason = penalty_payload
+        if float(current_time_s) >= float(expires_at_s):
+            optimizer_station_penalties.pop(int(station_index), None)
+            return 0.0
+        return float(penalty_s)
+
+
+    def _apply_optimizer_decision(current_time_s: float, decision_payload: dict[str, Any]) -> None:
+        if not isinstance(decision_payload, dict):
+            return
+
+        for unit_key, boost_value in dict(decision_payload.get("waiting_unit_score_boosts", {})).items():
+            try:
+                optimizer_waiting_unit_boosts[int(unit_key)] = float(boost_value)
+            except (TypeError, ValueError):
+                continue
+
+        for station_payload in list(decision_payload.get("station_penalties", [])):
+            if not isinstance(station_payload, dict):
+                continue
+            try:
+                station_index_zero_based = max(0, int(station_payload.get("station_index", 1)) - 1)
+                penalty_s = max(0.0, float(station_payload.get("penalty_s", 0.0)))
+                expires_at_s = max(float(current_time_s), float(station_payload.get("expires_at_s", current_time_s)))
+                reason_text = str(station_payload.get("reason", "optimizer_penalty"))
+            except (TypeError, ValueError):
+                continue
+            if penalty_s <= 0.0:
+                continue
+            existing_payload = optimizer_station_penalties.get(station_index_zero_based)
+            if existing_payload is None or penalty_s >= float(existing_payload[0]) or expires_at_s >= float(existing_payload[1]):
+                optimizer_station_penalties[station_index_zero_based] = (penalty_s, expires_at_s, reason_text)
+
+
+    def _build_optimizer_snapshot(current_time_s: float, disruption_payload: dict[str, Any]) -> dict[str, Any]:
+        unreleased_units: list[dict[str, Any]] = []
+        waiting_unit_index_set = {int(entry[0]) for entry in waiting_for_system_slot}
+
+        for unit_index in range(len(ordered_units)):
+            if unit_index in unit_first_arrival or unit_index in unit_completion:
+                continue
+            if _unit_blocked_by_material_stop(unit_index):
+                continue
+
+            root_index = root_indices[unit_index]
+            variant = str(ordered_units[unit_index])
+            release_time_s = float(unit_release_times[unit_index])
+            waiting_score_boost = float(optimizer_waiting_unit_boosts.get(unit_index, 0.0))
+            unreleased_units.append(
+                {
+                    "unit_index": int(unit_index),
+                    "unit_id": f"U{root_index + 1:03d}",
+                    "root_index": int(root_index),
+                    "order_id": str(unit_order_ids[unit_index]),
+                    "variant": variant,
+                    "release_time_s": release_time_s,
+                    "due_date_s": float(unit_due_dates[unit_index]),
+                    "priority": int(unit_priorities[unit_index]),
+                    "attempt": int(attempt_numbers[unit_index]),
+                    "is_waiting_for_system_slot": bool(unit_index in waiting_unit_index_set),
+                    "already_released_by_time": bool(release_time_s <= float(current_time_s) + 1e-9),
+                    "waiting_score_boost": waiting_score_boost,
+                    "remaining_total_base_process_time_s": float(
+                        sum(float(process_times[variant][base_station_name]) for base_station_name in process_time_data["station_sequence"])
+                    ),
+                }
+            )
+
+        station_state_rows: list[dict[str, Any]] = []
+        for station_index, station_name in enumerate(station_sequence):
+            station_state_rows.append(
+                {
+                    "station_index": int(station_index + 1),
+                    "station_name": str(station_name),
+                    "base_station_name": str(station_instance_base_names[station_index]),
+                    "stage_index": int(station_to_stage_index[station_index]),
+                    "queue_length": int(len(station_states[station_index].queue)),
+                    "busy": bool(station_states[station_index].busy),
+                    "projected_available_time_s": float(projected_station_available_time_s[station_index]),
+                    "active_optimizer_penalty_s": float(_active_optimizer_station_penalty_s(station_index, current_time_s)),
+                }
+            )
+
+        serializable_transport_lookup = {
+            f"{from_station} -> {to_station}": float(transport_time)
+            for (from_station, to_station), transport_time in transport_lookup.items()
+        }
+
+        return {
+            "current_time_s": float(current_time_s),
+            "available_system_slots": int(available_system_slots),
+            "max_units_in_system": int(max_units_in_system),
+            "return_to_station_1_time_s": float(return_to_station_1_time_s),
+            "triggered_disruption": dict(disruption_payload),
+            "waiting_units": unreleased_units,
+            "stations": station_state_rows,
+            "station_sequence": list(station_sequence),
+            "station_instance_base_names": list(station_instance_base_names),
+            "stage_instance_indices": [[int(value) + 1 for value in stage_values] for stage_values in stage_instance_indices],
+            "projected_station_available_time_s": [float(value) for value in projected_station_available_time_s],
+            "transport_lookup": serializable_transport_lookup,
+            "process_times": process_time_data["process_times"],
+            "base_station_sequence": list(process_time_data["station_sequence"]),
+        }
+
+
+    def _invoke_optimizer(current_time_s: float, disruption_payload: dict[str, Any]) -> None:
+        if not optimizer_enabled:
+            return
+        snapshot = _build_optimizer_snapshot(current_time_s, disruption_payload)
+        decision_payload = _call_optimizer_controller(optimizer_module, snapshot, optimizer_config)
+        optimizer_counts["calls"] += 1
+        optimizer_counts[f"calls_for_{str(disruption_payload.get('triggered_disruption_type', 'unknown'))}"] += 1
+
+        decision_payload = decision_payload if isinstance(decision_payload, dict) else {}
+        _apply_optimizer_decision(current_time_s, decision_payload)
+
+        optimizer_event_log.append(
+            {
+                "event": "optimizer_invocation",
+                "timestamp_s": float(current_time_s),
+                "triggered_disruption_type": str(disruption_payload.get("triggered_disruption_type")),
+                "station_name": str(disruption_payload.get("station_name", disruption_payload.get("base_station_name", ""))),
+                "decision_summary": dict(decision_payload.get("summary", {})) if isinstance(decision_payload.get("summary", {}), dict) else {},
+                "waiting_unit_score_boosts": {str(k): float(v) for k, v in optimizer_waiting_unit_boosts.items()},
+                "station_penalties": [
+                    {
+                        "station_index": int(station_index + 1),
+                        "station_name": station_sequence[station_index],
+                        "penalty_s": float(payload[0]),
+                        "expires_at_s": float(payload[1]),
+                        "reason": str(payload[2]),
+                    }
+                    for station_index, payload in sorted(optimizer_station_penalties.items())
+                ],
+            }
+        )
     def choose_station_instance_for_stage(
         target_stage_index: int,
         current_time_s: float,
@@ -1659,8 +1880,10 @@ def run_simulation(
             process_time_s = float(process_times[variant][station_instance_base_names[candidate_station_index]])
             estimated_start_time_s = max(arrival_time_s, projected_station_available_time_s[candidate_station_index])
             estimated_finish_time_s = estimated_start_time_s + process_time_s
+            optimizer_penalty_s = _active_optimizer_station_penalty_s(candidate_station_index, current_time_s)
 
             candidate_score = (
+                estimated_finish_time_s + optimizer_penalty_s,
                 estimated_start_time_s,
                 arrival_time_s,
                 projected_station_available_time_s[candidate_station_index],
@@ -1698,19 +1921,21 @@ def run_simulation(
 
     def _pop_best_waiting_unit(current_time_s: float) -> tuple[int, float] | None:
         best_index: int | None = None
-        best_score: tuple[int, int, float, int] | None = None
+        best_score: tuple[float, int, int, float, int] | None = None
         for idx, (unit_index, requested_release_time_s, priority_value, prioritize_front, queue_seq) in enumerate(waiting_for_system_slot):
             if _unit_blocked_by_material_stop(unit_index):
                 continue
             if requested_release_time_s > current_time_s:
                 continue
-            score = (-int(priority_value), -int(bool(prioritize_front)), float(requested_release_time_s), int(queue_seq))
+            waiting_score_boost = float(optimizer_waiting_unit_boosts.get(unit_index, 0.0))
+            score = (-waiting_score_boost, -int(priority_value), -int(bool(prioritize_front)), float(requested_release_time_s), int(queue_seq))
             if best_score is None or score < best_score:
                 best_score = score
                 best_index = idx
         if best_index is None:
             return None
         unit_index, requested_release_time_s, _, _, _ = waiting_for_system_slot.pop(best_index)
+        optimizer_waiting_unit_boosts.pop(int(unit_index), None)
         return unit_index, requested_release_time_s
 
     def _enqueue_station_queue(
@@ -1849,6 +2074,21 @@ def run_simulation(
             disruption_result["inspection_failed_triggered"] = True
             disruption_result["terminal_failure_type"] = "failed_inspection"
             disruption_result["inspection_random"] = "timed"
+
+        if optimizer_enabled and disruption_result.get("triggered_disruption_type") is not None:
+            optimizer_payload = {
+                "triggered_disruption_type": str(disruption_result.get("triggered_disruption_type")),
+                "station_index": int(station_index + 1),
+                "station_name": str(station_name),
+                "base_station_name": str(base_station_name),
+                "stage_number": int(stage_number),
+                "unit_id": unit_id,
+                "order_id": str(unit_order_ids[unit_index]),
+                "variant": str(variant),
+                "priority": int(unit_priorities[unit_index]),
+                **dict(disruption_result),
+            }
+            _invoke_optimizer(current_time_s, optimizer_payload)
 
         stage_material_requirements = _stage_material_requirements(variant, int(stage_number))
         broken_extra_material_name = str(disruption_result.get("material_broken_extra_material_name") or "").strip()
@@ -2046,6 +2286,23 @@ def run_simulation(
         if event_type == EVENT_RELEASE:
             if _unit_blocked_by_material_stop(unit_index):
                 continue
+            if optimizer_enabled:
+                prioritize_front = bool(attempt_numbers[unit_index] > 1)
+                _enqueue_waiting_unit(unit_index, time_s, prioritize_front=prioritize_front)
+                if available_system_slots > 0:
+                    selected_waiting = _pop_best_waiting_unit(time_s)
+                    if selected_waiting is not None:
+                        selected_unit_index, _selected_release_time_s = selected_waiting
+                        available_system_slots -= 1
+                        first_station_index, _, arrival_time_s = choose_station_instance_for_stage(
+                            target_stage_index=0,
+                            current_time_s=time_s,
+                            unit_index=selected_unit_index,
+                            from_station_index=None,
+                        )
+                        push_event(arrival_time_s, EVENT_ARRIVAL, first_station_index, selected_unit_index)
+                continue
+
             if available_system_slots > 0:
                 available_system_slots -= 1
                 first_station_index, _, arrival_time_s = choose_station_instance_for_stage(
@@ -2303,6 +2560,9 @@ def run_simulation(
         "remaining_stock_after_run": dict(remaining_station_material_stock),
         "disruption_event_log": disruption_event_log,
         "disruption_counts": dict(disruption_counts),
+        "optimizer_enabled": bool(optimizer_enabled),
+        "optimizer_event_log": list(optimizer_event_log),
+        "optimizer_counts": dict(optimizer_counts),
         "root_failed_without_replacement": list(root_failed_without_replacement.values()),
         "unrecoverable_root_count": len(root_failed_without_replacement),
         "disruptions_enabled": bool(disruptions_enabled or timed_disruption_data is not None),
@@ -2771,6 +3031,82 @@ def write_station_summary_csv(
                 ]
             )
 
+
+
+def _resolve_optimizer_settings(settings_data: dict[str, Any]) -> dict[str, Any]:
+    optimizer_settings = settings_data.get("optimizer", {})
+    return optimizer_settings if isinstance(optimizer_settings, dict) else {}
+
+
+def _resolve_optimizer_module_name(optimizer_settings: dict[str, Any]) -> str:
+    if not isinstance(optimizer_settings, dict):
+        return "D_lookahead_rescheduler_v2.py"
+
+    algorithm_name = str(
+        optimizer_settings.get("algorithm", optimizer_settings.get("type", ""))
+    ).strip().lower()
+    module_name = str(optimizer_settings.get("module", "")).strip()
+
+    if module_name:
+        return module_name
+    if algorithm_name in {"sa", "simulated_annealing", "simulated-annealing"}:
+        return "D_sa_rescheduler.py"
+    return "D_lookahead_rescheduler_v2.py"
+
+
+def _resolve_optimizer_module_path(
+    optimizer_module_name: str | None,
+    script_dir: Path,
+) -> Path | None:
+    if optimizer_module_name is None or str(optimizer_module_name).strip() == "":
+        return None
+
+    candidate_text = str(optimizer_module_name).strip()
+    candidate_path = Path(candidate_text)
+    if candidate_path.is_absolute():
+        return candidate_path if candidate_path.exists() else None
+
+    for candidate in [script_dir / candidate_text, script_dir / "algorithms" / candidate_text]:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def load_optimizer_controller(optimizer_module_path: Path | None) -> tuple[Any | None, Path | None]:
+    if optimizer_module_path is None or not optimizer_module_path.exists():
+        return None, None
+
+    module_name = f"optimizer_module_{optimizer_module_path.stem}_{abs(hash(str(optimizer_module_path.resolve())))}"
+    spec = importlib.util.spec_from_file_location(module_name, optimizer_module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load optimizer module from {optimizer_module_path}")
+    module = importlib.util.module_from_spec(spec)
+
+    import sys
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+
+    return module, optimizer_module_path
+
+
+def _call_optimizer_controller(
+    optimizer_module: Any | None,
+    snapshot: dict[str, Any],
+    optimizer_config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if optimizer_module is None:
+        return {}
+
+    for function_name in ("optimize_reschedule", "optimize", "reschedule"):
+        function_obj = getattr(optimizer_module, function_name, None)
+        if callable(function_obj):
+            result = function_obj(snapshot, optimizer_config or {})
+            return result if isinstance(result, dict) else {}
+    return {}
 def save_json(payload: dict[str, Any], output_path: Path) -> None:
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
@@ -2882,6 +3218,7 @@ def main() -> None:
         unit_release_times = [0.0] * len(ordered_units)
         unit_priorities = [1] * len(ordered_units)
         unit_order_ids = ["manual"] * len(ordered_units)
+        unit_due_dates = [float("inf")] * len(ordered_units)
     else:
         generated_input = load_latest_generated_input(input_root, valid_variants)
         order_text = generated_input["order_text"]
@@ -2889,6 +3226,7 @@ def main() -> None:
         unit_release_times = generated_input["unit_release_times"]
         unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
         unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
+        unit_due_dates = generated_input.get("unit_due_dates", [float("inf")] * len(ordered_units))
         simulation_time_s = generated_input["simulation_time_s"]
         carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))
         settings_data = generated_input.get("settings_data", {})
@@ -2931,6 +3269,10 @@ def main() -> None:
     disruption_config: dict[str, Any] | None = None
     timed_disruption_records: list[dict[str, Any]] = []
     timed_disruption_data: dict[str, Any] | None = None
+    optimizer_settings = _resolve_optimizer_settings(settings_data)
+    optimizer_module_name = _resolve_optimizer_module_name(optimizer_settings)
+    optimizer_module_path = _resolve_optimizer_module_path(optimizer_module_name, Path(__file__).resolve().parent)
+    optimizer_module, optimizer_module_path = load_optimizer_controller(optimizer_module_path) if optimizer_settings and int(optimizer_settings.get("enabled", 0)) == 1 else (None, None)
 
     if chance_based_disruptions_enabled:
         if disruption_path is None or not disruption_path.exists():
@@ -2970,6 +3312,8 @@ def main() -> None:
         run_metadata_extra["input_disruption_json"] = str(disruption_path.resolve())
     if timed_disruption_csv_path is not None:
         run_metadata_extra["input_timed_disruption_csv"] = str(timed_disruption_csv_path.resolve())
+    run_metadata_extra["optimizer_enabled"] = bool(optimizer_module is not None and int(optimizer_settings.get("enabled", 0)) == 1)
+    run_metadata_extra["optimizer_module"] = str(optimizer_module_path.resolve()) if optimizer_module_path is not None else None
 
     run_output_dir = create_run_output_dir(output_root, order_text)
 
@@ -2978,6 +3322,8 @@ def main() -> None:
         copy_file_if_exists(disruption_path, run_output_dir / "disruption_used.json")
     elif int(disruption_mode) == 2:
         copy_file_if_exists(timed_disruption_csv_path, run_output_dir / "disruption_used.csv")
+    if optimizer_module_path is not None and optimizer_module is not None:
+        copy_file_if_exists(optimizer_module_path, run_output_dir / "optimizer_used.py")
 
     save_run_metadata(
         order_text,
@@ -3002,6 +3348,7 @@ def main() -> None:
         unit_release_times=unit_release_times,
         unit_priorities=unit_priorities,
         unit_order_ids=unit_order_ids,
+        unit_due_dates=unit_due_dates,
         max_units_in_system=carriers,
         line_layout_config=line_layout_config,
         bom_data=bom_data,
@@ -3011,6 +3358,8 @@ def main() -> None:
         disruption_seed=disruption_seed if chance_based_disruptions_enabled else None,
         simulation_time_s=simulation_time_s,
         timed_disruption_data=timed_disruption_data,
+        optimizer_module=optimizer_module,
+        optimizer_config=optimizer_settings,
     )
     print(">> Done running sim with disruptions")
     sim_with_dtimeend = time.perf_counter()
@@ -3278,6 +3627,8 @@ def main() -> None:
             disruption_seed=None,
             simulation_time_s=simulation_time_s,
             timed_disruption_data=None,
+            optimizer_module=None,
+            optimizer_config=None,
         )
         print(">> Done running sim without disruptions")
         sim_no_dtimeend = time.perf_counter()
@@ -3529,6 +3880,18 @@ def main() -> None:
             run_output_dir / "disruption_summary.json",
         )
 
+    if simulation_details.get("optimizer_enabled") or simulation_details.get("optimizer_event_log"):
+        save_json(
+            {
+                "optimizer_enabled": bool(simulation_details.get("optimizer_enabled", False)),
+                "optimizer_module": str(optimizer_module_path.resolve()) if optimizer_module_path is not None else None,
+                "optimizer_config": optimizer_settings,
+                "optimizer_counts": dict(simulation_details.get("optimizer_counts", {})),
+                "events": list(simulation_details.get("optimizer_event_log", [])),
+            },
+            run_output_dir / "optimizer_summary.json",
+        )
+
     print(f"Run folder: {run_output_dir.resolve()}")
     if simulation_time_s is not None:
         print(f"Simulation time: {simulation_time_s} s")
@@ -3543,6 +3906,9 @@ def main() -> None:
         print(f"Disruption file: {disruption_path.resolve()}")
     if timed_disruptions_enabled and timed_disruption_csv_path is not None:
         print(f"Timed disruption file: {timed_disruption_csv_path.resolve()}")
+    print(f"Optimizer enabled: {int(simulation_details.get('optimizer_enabled', False))}")
+    if optimizer_module_path is not None and simulation_details.get('optimizer_enabled', False):
+        print(f"Optimizer module: {optimizer_module_path.resolve()}")
     print(f"Effective station count: {len(effective_line_layout['station_sequence'])}")
     print(f"Requested units: {len(ordered_units)}")
     print(f"Completed good units: {len(completed_good_variants)}")
