@@ -16,6 +16,8 @@ Wants and wishes
 """
 import A_input, B_production_planning, C_IPPS, D_algo, E_production_line_sim, F_graphgen, G_after_movie
 from pathlib import Path
+from itertools import product
+from copy import deepcopy
 
 # ================================================================================
 # constands, paths and global variables
@@ -53,6 +55,43 @@ def main():
    
 
 
+def main():
+    mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
+    base_settings = A_input.read_settings_json(data_dir / "settings.json")
+
+    scenarios = list(mainsettings["Scenarios"].items())
+    pressures = list(mainsettings["pressure_of_capacity"].items())
+    ratios = list(mainsettings["order_units_ratio"].items())
+    algos = list(mainsettings["algorithms"].items())
+
+
+    run_idx = 0
+    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name) in product(
+        scenarios, pressures, ratios, algos
+    ):
+        run_idx += 1
+        settings = deepcopy(base_settings)
+
+        # Apply scenario -> layout
+        settings["line_layout_file"] = layout_file
+
+        # Apply pressure_of_capacity (your code needs to define what this means)
+        # Example: scale plan_time[s] or simulation_time[s]
+        # settings["plan_time [s]"] = settings["plan_time [s]"] * (p_val/100)
+
+        # Apply order_units_ratio (again: define your mapping)
+        # Example: increase/decrease units relative to the base
+        num_orders = BASE_ORDERS
+        num_units = int(BASE_UNITS * (r_val / 50))  # e.g. ratio=50 -> baseline
+
+        # Algorithm choice (pass into IPPS when you support it)
+        algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
+
+        print(f"\n--- RUN {run_idx} ---")
+        print(f"Scenario={sc_name} layout={layout_file}")
+        print(f"Pressure={p_name} ({p_val})  Ratio={r_name} ({r_val})  Algo={a_name}")
+
+        pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
 
 
 
