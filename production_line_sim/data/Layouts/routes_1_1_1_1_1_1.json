@@ -1,0 +1,23 @@
+{
+  "route_id_format": "p:<s1>.<s2>.<s3>.<s4>.<s5>.<s6> where si = instance_index+1",
+  "counts": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "routes": {
+    "p:1.1.1.1.1.1": {
+      "station_sequence": [
+        "Station 1: Bottom cover",
+        "Station 2: Drill station",
+        "Station 3: Robot cell",
+        "Station 4: Inspection",
+        "Station 5: Top cover",
+        "Station 6: Packaging"
+      ]
+    }
+  }
+}

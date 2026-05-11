@@ -28,12 +28,9 @@ SECONDS_PER_WEEK = WORKDAYS_PER_WEEK * HOURS_PER_DAY * 3600
 base_dir = Path(__file__).parent
 data_dir = base_dir / "data"
 
-
-
-# -  main function  -
-def main():
-   settings = A_input.read_settings_json(data_dir / "settings.json")
-   print(f"Based on the current plan_time no more than {A_input.round_half_up(settings['plan_time [s]']/A_input.AVE_FLOW_TIME_PER_UNIT)} units should be selected")
+#a single run of the disruption sim
+def pipeline(settings):
+   print(f"Based on the current plan_time no more than {A_input.round_half_up(settings['plan_time [s]']/A_input.AVE_CYCLE_TIME_PER_UNIT)} units should be selected")
    num_orders = int(input("Enter amount of orders: "))
    num_units = int(input("Enter amount of units: "))
    order_dir = A_input.main(num_orders, num_units)
@@ -46,6 +43,14 @@ def main():
 
    F_graphgen.main()
    G_after_movie.main()
+
+# -  main function  -
+def main():
+   mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
+   settings = A_input.read_settings_json(data_dir / "settings.json")
+
+   pipeline(settings)
+   
 
 
 
