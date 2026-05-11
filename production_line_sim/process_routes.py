@@ -126,9 +126,14 @@ def routes_filename(counts: List[int]) -> str:
     return f"routes_{'_'.join(map(str, counts))}.json"
 
 
-def route_id_from_selection(selection: List[int], counts: List[int]) -> str:
-    parts = [str(sel if c > 1 else 0) for sel, c in zip(selection, counts)]
+def route_id_from_selection(selection: List[int], counts: List[int]) -> str:        
+    parts = []
+    for sel, c in zip(selection, counts):
+        # Clamp just to be safe, then convert to 1-based
+        sel = max(0, min(sel, c - 1))
+        parts.append(str(sel + 1))
     return "p:" + ".".join(parts)
+
 
 
 # -----------------------------
@@ -194,7 +199,7 @@ def generate_routes_json(counts: List[int]) -> dict:
         }
 
     return {
-        "route_id_format": "p:<s1>.<s2>.<s3>.<s4>.<s5>.<s6> where si is instance index or 0 if count=1",
+        "route_id_format": "p:<s1>.<s2>.<s3>.<s4>.<s5>.<s6> where si = instance_index+1",
         "counts": counts,
         "routes": routes,
     }
@@ -229,7 +234,7 @@ def generate_layout_and_routes(
         if write_files:
             _write_json(routes_path, routes_json)
 
-    return layout_json, routes_json, layout_path, routes_path, status
+    return routes_json, layout_path, routes_path, status
 
 
 # -----------------------------
@@ -259,7 +264,7 @@ def main():
         counts.append(_ask_int(f"How many '{station_name}' machines (Station {station_no})?    >> "))
 
     cfg = GenerationConfig()
-    layout_json, routes_json, layout_path, routes_path, status = generate_layout_and_routes(counts, cfg)
+    routes_json, layout_path, routes_path, status = generate_layout_and_routes(counts, cfg)
 
     print("\nOutputs (Layouts folder):")
     # 2) print only filename (not full path)
