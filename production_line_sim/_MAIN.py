@@ -29,6 +29,7 @@ base_dir = Path(__file__).parent
 data_dir = base_dir / "data"
 
 
+
 # -  main function  -
 def main():
    settings = A_input.read_settings_json(data_dir / "settings.json")
@@ -40,7 +41,7 @@ def main():
    #sim with disruption loop
    # the sim should pause when a disruption happens and then 
    # the IPPS should come up with a new solution to the disrupted line and continue the sim with disruptions
-   C_IPPS.main() #creates new plan
+   C_IPPS.main(order_dir) #creates new plan
    E_production_line_sim.run_simulation() #with disruptions
 
    F_graphgen.main()
