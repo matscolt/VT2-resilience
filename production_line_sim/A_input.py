@@ -13,7 +13,7 @@ from matplotlib.patches import Patch
 
 PRIO_LOW = 1
 PRIO_HIGH = 5
-AVE_FLOW_TIME_PER_UNIT = 76.4  # seconds per unit, used for due date generation
+AVE_CYCLE_TIME_PER_UNIT = 76.4  # seconds per unit, used for due date generation
 
 # ============================================================
 # CSV writers
@@ -629,7 +629,7 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
         if order_id == num_orders:
             units = units_left
         units_left -= units
-        due_date = round_half_up(random.uniform(min(units * AVE_FLOW_TIME_PER_UNIT, sim_time), sim_time))
+        due_date = round_half_up(random.uniform(min(units * AVE_CYCLE_TIME_PER_UNIT, sim_time), sim_time))
         priority = round_half_up(min(max(random.expovariate(1/1.5), PRIO_LOW), PRIO_HIGH))
         variant0 = "FUSE0"
         quantity0 = round_half_up(max(random.normalvariate(units * 0.33, unitstd), 0))
@@ -850,7 +850,7 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
              spec = station_cfg["inspection failure"]
              chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
              target_downtime = chance * sim_time
-             mean_duration = AVE_FLOW_TIME_PER_UNIT
+             mean_duration = AVE_CYCLE_TIME_PER_UNIT
 
              # For a purely probability-based event without duration, we can sample occurrences directly from the target downtime fraction.
              n_events = sample_event_count_from_time_fraction(target_downtime, mean_duration)  
@@ -899,8 +899,8 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
         if i == eorders-1:
             eunits_per_order = eunits_left
         eunits_left -= eunits_per_order
-        start_time = round_half_up(random.uniform(0, max(sim_time-eunits_per_order*AVE_FLOW_TIME_PER_UNIT, 0)))
-        due_date = round_half_up(random.uniform(min(start_time+eunits_per_order*AVE_FLOW_TIME_PER_UNIT, sim_time), sim_time))
+        start_time = round_half_up(random.uniform(0, max(sim_time-eunits_per_order*AVE_CYCLE_TIME_PER_UNIT, 0)))
+        due_date = round_half_up(random.uniform(min(start_time+eunits_per_order*AVE_CYCLE_TIME_PER_UNIT, sim_time), sim_time))
         
         x50 = 0.5 # 50th percentile of the distribution (median)
         x90 = 2.0 # 90th percentile of the distribution (chosen to create a long tail for emergency orders)
@@ -908,7 +908,7 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
         k = math.log(math.log(10)/math.log(2)) / math.log(x90/x50) # shape parameter for weibull distribution (k)
         lam = x50 / (math.log(2)**(1.0/k)) # scale parameter for weibull distribution (lambda)
 
-        due_date = min(round_half_up(start_time+eunits_per_order*AVE_FLOW_TIME_PER_UNIT*(1+random.weibullvariate(lam, k))), sim_time)
+        due_date = min(round_half_up(start_time+eunits_per_order*AVE_CYCLE_TIME_PER_UNIT*(1+random.weibullvariate(lam, k))), sim_time)
         print(f"Due date for order {order_id}: {due_date}")
 
         priority = PRIO_HIGH  # Emergency orders get highest priority
@@ -1008,7 +1008,7 @@ def plot_disruption_gantt(order_dir: Path,
                 station = int(row["station_id"])
                 start = float(row["start_time"])
                 if row["end_time"] == "":
-                    end = start+AVE_FLOW_TIME_PER_UNIT
+                    end = start+AVE_CYCLE_TIME_PER_UNIT
                 else:
                     end = float(row["end_time"])
                 dtype = (row["disruption_type"] or "").strip().lower()
