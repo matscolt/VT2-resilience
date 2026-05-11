@@ -1,0 +1,27 @@
+{
+    "Scenarios":{
+        "line": "layout_1_1_1_1_1_1.json",
+        "small": "layout_2_2_6_2_2_2.json",
+        "medium": "layout_2_2_12_2_2.json",
+        "big": "layout_3_3_20_3_3.json"
+    },
+    "pressure_of_capacity":{
+        "light": 90,
+        "medium":100,
+        "heavy":120
+    },
+    "order_units_ratio":{
+        "small": 20,
+        "medium": 50,
+        "heavy": 100                
+    },
+    "algorithms":{
+        "1": "genetic algortihm",
+        "2": "simulated akneeling"
+    },
+    "weightage":{
+        "tardines": "?",
+        "max_lateness": "?",
+        "makespan": "?"
+    }
+}
