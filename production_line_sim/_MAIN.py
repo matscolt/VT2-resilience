@@ -55,7 +55,7 @@ def main():
    
 
 
-def main():
+def main2():
     mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
     base_settings = A_input.read_settings_json(data_dir / "settings.json")
 
