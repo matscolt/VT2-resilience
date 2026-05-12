@@ -133,6 +133,107 @@ MATERIAL_STAGE_TO_MATERIAL = {
 }
 INSPECTION_STAGE_NUMBER = 6
 BROKEN_MATERIAL_EXTRA_TIME_DEFAULT_S = 30.0
+OUTPUT_SCHEDULES_DIRNAME = "output_schedules"
+
+
+def find_output_schedule_csv_files(batch_dir: Path) -> list[Path]:
+    candidate_dirs: list[Path] = []
+    direct_dir = batch_dir / OUTPUT_SCHEDULES_DIRNAME
+    if direct_dir.exists() and direct_dir.is_dir():
+        candidate_dirs.append(direct_dir)
+
+    candidate_dirs.extend(
+        sorted(
+            [
+                path
+                for path in batch_dir.rglob(OUTPUT_SCHEDULES_DIRNAME)
+                if path.is_dir()
+            ],
+            key=lambda path: (len(path.parts), str(path).casefold()),
+        )
+    )
+
+    schedule_files: list[Path] = []
+    seen: set[str] = set()
+    for schedules_dir in candidate_dirs:
+        for path in schedules_dir.iterdir():
+            if not path.is_file() or path.suffix.lower() != ".csv":
+                continue
+            key = str(path.resolve())
+            if key in seen:
+                continue
+            schedule_files.append(path)
+            seen.add(key)
+
+    return sorted(
+        schedule_files,
+        key=lambda path: (path.name.casefold(), path.stat().st_mtime),
+    )
+
+
+def resolve_settings_path(batch_dir: Path) -> Path | None:
+    direct_candidate = batch_dir / "settings.json"
+    if direct_candidate.exists() and direct_candidate.is_file():
+        return direct_candidate
+
+    recursive_candidates = sorted(
+        [
+            path
+            for path in batch_dir.rglob("settings.json")
+            if path.is_file()
+        ],
+        key=lambda path: (len(path.parts), path.stat().st_mtime),
+    )
+    if recursive_candidates:
+        return recursive_candidates[0]
+    return None
+
+
+def create_named_summary_output_dir(parent_dir: Path, schedule_csv_path: Path) -> Path:
+    parent_dir.mkdir(parents=True, exist_ok=True)
+    base_name = f"{schedule_csv_path.stem}_summary"
+    run_dir = parent_dir / base_name
+    counter = 1
+    while run_dir.exists():
+        counter += 1
+        run_dir = parent_dir / f"{base_name}__{counter}"
+    run_dir.mkdir(parents=True, exist_ok=False)
+    return run_dir
+
+
+def build_generated_input_from_schedule_csv(
+    input_root: Path,
+    batch_dir: Path,
+    schedule_csv_path: Path,
+    settings_data: dict[str, Any],
+    settings_path: Path,
+    valid_variants: set[str],
+) -> dict[str, Any]:
+    simulation_time_s = float(settings_data.get("sim_time [s]", settings_data.get("Sim_time [s]", 0.0)))
+    carriers = int(float(settings_data.get("carriers", {}).get("number of carriers", MAX_UNITS_IN_SYSTEM)))
+    schedule_payload = _load_schedule_csv(schedule_csv_path, valid_variants)
+    ordered_units = list(schedule_payload["ordered_units"])
+    order_text = schedule_csv_path.stem
+
+    return {
+        "order_text": order_text,
+        "ordered_units": ordered_units,
+        "unit_release_times": list(schedule_payload["unit_release_times"]),
+        "unit_priorities": list(schedule_payload["unit_priorities"]),
+        "unit_order_ids": list(schedule_payload["unit_order_ids"]),
+        "unit_custom_ids": list(schedule_payload["unit_custom_ids"]),
+        "unit_route_ids": list(schedule_payload["unit_route_ids"]),
+        "unit_sequences": list(schedule_payload["unit_sequences"]),
+        "simulation_time_s": simulation_time_s,
+        "carriers": carriers,
+        "settings_data": settings_data,
+        "selected_line_layout_name": _resolve_line_layout_filename_from_settings(settings_data),
+        "input_root": input_root,
+        "batch_dir": batch_dir,
+        "orders_csv_path": schedule_csv_path,
+        "settings_path": settings_path,
+    }
+
 
 
 # -----------------------------
@@ -690,6 +791,10 @@ def find_newest_orders_csv(batch_dir: Path) -> Path:
     if schedule_candidate.exists() and schedule_candidate.is_file():
         return schedule_candidate
 
+    output_schedule_files = find_output_schedule_csv_files(batch_dir)
+    if output_schedule_files:
+        return max(output_schedule_files, key=lambda path: path.stat().st_mtime)
+
     candidate_csv_files = [
         path
         for path in batch_dir.iterdir()
@@ -711,6 +816,18 @@ def find_newest_orders_csv(batch_dir: Path) -> Path:
     ]
     if fallback_csv_files:
         return max(fallback_csv_files, key=lambda path: path.stat().st_mtime)
+
+    recursive_csv_files = [
+        path
+        for path in batch_dir.rglob("*.csv")
+        if path.is_file()
+        and path.name.casefold() != TIMED_DISRUPTION_FILENAME.casefold()
+        and not path.name.casefold().startswith("disruption_list")
+        and not path.name.casefold().startswith("disruptions")
+        and "gantt chart" not in path.name.casefold()
+    ]
+    if recursive_csv_files:
+        return max(recursive_csv_files, key=lambda path: path.stat().st_mtime)
 
     raise FileNotFoundError(f"No order CSV file was found in {batch_dir}")
 
@@ -785,17 +902,22 @@ def load_latest_generated_input(
     input_root: Path, valid_variants: set[str]
 ) -> dict[str, Any]:
     batch_dir = find_newest_input_batch_dir(input_root)
-    orders_csv_path = find_newest_orders_csv(batch_dir)
-    settings_path = batch_dir / "settings.json"
+    settings_path = resolve_settings_path(batch_dir)
 
-    if not settings_path.exists():
+    if settings_path is None or not settings_path.exists():
         raise FileNotFoundError(f"settings.json was not found in {batch_dir}")
+
+    schedule_csv_files = find_output_schedule_csv_files(batch_dir)
+    if schedule_csv_files:
+        orders_csv_path = max(schedule_csv_files, key=lambda path: path.stat().st_mtime)
+    else:
+        orders_csv_path = find_newest_orders_csv(batch_dir)
 
     settings_data = load_json(settings_path)
     simulation_time_s = float(settings_data.get("sim_time [s]", settings_data.get("Sim_time [s]", 0.0)))
     carriers = int(float(settings_data.get("carriers", {}).get("number of carriers", MAX_UNITS_IN_SYSTEM)))
 
-    if orders_csv_path.name.casefold() == "schedule.csv":
+    if orders_csv_path.name.casefold() == "schedule.csv" or orders_csv_path.parent.name.casefold() == OUTPUT_SCHEDULES_DIRNAME.casefold():
         schedule_payload = _load_schedule_csv(orders_csv_path, valid_variants)
         batch_name = batch_dir.name
         ordered_units = list(schedule_payload["ordered_units"])
@@ -3288,107 +3410,32 @@ def save_run_metadata(
 # -----------------------------
 # Main
 # -----------------------------
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Simulate a 6-station phone production line with FIFO queues and transport times."
-    )
-    parser.add_argument(
-        "--order",
-        type=str,
-        help='Order string, for example: "3xFUSE2, 2xFUSE1, 4xFUSE0"',
-    )
-    parser.add_argument(
-        "--data-dir",
-        type=Path,
-        default=Path(__file__).resolve().parent / "data",
-        help="Folder containing process_times.json, transport_times.json, material_stock.json and bom.json",
-    )
-    parser.add_argument(
-        "--input-root",
-        type=Path,
-        default=Path(__file__).resolve().parent / "input",
-        help="Folder containing generated input batch folders such as orders_DD-MM_HH-MM_N",
-    )
-    parser.add_argument(
-        "--line-layout-file",
-        type=str,
-        help="Optional line layout file name or path. If omitted, settings.json is checked first and then line_layout.json defaults are used.",
-    )
-    parser.add_argument(
-        "--output-root",
-        type=Path,
-        default=Path(__file__).resolve().parent / "output",
-        help="Root folder where a new subfolder will be created for every order run",
-    )
-    args = parser.parse_args()
-
-    data_dir: Path = args.data_dir
-    input_root: Path = args.input_root
-    output_root: Path = args.output_root
-
-    starttime = time.perf_counter()
-
-    process_time_data = load_json(data_dir / "process_times.json")
-    transport_time_data = load_json(data_dir / "transport_times.json")
-    material_stock_data = load_json(data_dir / "material_stock.json")
-    bom_data = load_json(data_dir / "bom.json")
-
-    valid_variants = set(process_time_data["process_times"].keys())
-
-    order_text: str
-    ordered_units: list[str]
-    unit_release_times: list[float]
-    unit_priorities: list[int]
-    unit_order_ids: list[str]
-    simulation_time_s: float | None = None
-    carriers = MAX_UNITS_IN_SYSTEM
-    run_metadata_extra: dict[str, Any] = {}
-    selected_line_layout_name: str | None = args.line_layout_file
-    batch_dir_for_layout: Path | None = None
-    settings_path: Path | None = None
-    settings_data: dict[str, Any] = {}
-
-    unit_custom_ids: list[str]
-    unit_route_ids: list[int]
-
-    if args.order:
-        order_text = args.order
-        ordered_units = parse_order(order_text, valid_variants)
-        unit_release_times = [0.0] * len(ordered_units)
-        unit_priorities = [1] * len(ordered_units)
-        unit_order_ids = ["manual"] * len(ordered_units)
-        unit_custom_ids = [f"U{idx + 1:03d}" for idx in range(len(ordered_units))]
-        unit_route_ids = [0] * len(ordered_units)
-    else:
-        generated_input = load_latest_generated_input(input_root, valid_variants)
-        order_text = generated_input["order_text"]
-        ordered_units = generated_input["ordered_units"]
-        unit_release_times = generated_input["unit_release_times"]
-        unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
-        unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
-        unit_custom_ids = generated_input.get("unit_custom_ids", [f"U{idx + 1:03d}" for idx in range(len(ordered_units))])
-        unit_route_ids = generated_input.get("unit_route_ids", [0] * len(ordered_units))
-        simulation_time_s = generated_input["simulation_time_s"]
-        carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))
-        settings_data = generated_input.get("settings_data", {})
-        settings_path = generated_input.get("settings_path")
-        batch_dir_for_layout = generated_input["batch_dir"]
-        if selected_line_layout_name is None:
-            selected_line_layout_name = generated_input.get("selected_line_layout_name")
-        run_metadata_extra = {
-            "input_root": str(generated_input["input_root"].resolve()),
-            "input_batch_directory": str(generated_input["batch_dir"].resolve()),
-            "input_orders_csv": str(generated_input["orders_csv_path"].resolve()),
-            "input_settings_json": str(generated_input["settings_path"].resolve()),
-            "simulation_time_seconds": simulation_time_s,
-            "carriers": carriers,
-            "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
-            "unit_priorities": list(unit_priorities),
-            "unit_order_ids": list(unit_order_ids),
-            "unit_custom_ids": list(unit_custom_ids),
-            "unit_route_ids": list(unit_route_ids),
-        }
-
+def execute_single_run(
+    *,
+    data_dir: Path,
+    input_root: Path,
+    output_root: Path,
+    process_time_data: dict[str, Any],
+    transport_time_data: dict[str, Any],
+    material_stock_data: dict[str, Any],
+    bom_data: dict[str, Any],
+    valid_variants: set[str],
+    order_text: str,
+    ordered_units: list[str],
+    unit_release_times: list[float],
+    unit_priorities: list[int],
+    unit_order_ids: list[str],
+    unit_custom_ids: list[str],
+    unit_route_ids: list[int],
+    simulation_time_s: float | None,
+    carriers: int,
+    run_metadata_extra: dict[str, Any],
+    selected_line_layout_name: str | None,
+    batch_dir_for_layout: Path | None,
+    settings_path: Path | None,
+    settings_data: dict[str, Any],
+    forced_output_dir: Path | None = None,
+) -> Path:
     line_layout_path_resolved = resolve_line_layout_path(
         selected_layout_name=selected_line_layout_name,
         input_root=input_root,
@@ -3452,7 +3499,7 @@ def main() -> None:
     if timed_disruption_csv_path is not None:
         run_metadata_extra["input_timed_disruption_csv"] = str(timed_disruption_csv_path.resolve())
 
-    run_output_dir = create_run_output_dir(output_root, order_text)
+    run_output_dir = forced_output_dir if forced_output_dir is not None else create_run_output_dir(output_root, order_text)
 
     copy_file_if_exists(settings_path, run_output_dir / "settings_used.json")
     if int(disruption_mode) == 1:
@@ -4035,6 +4082,214 @@ def main() -> None:
         print(f"Stop reason: {simulation_details['stop_reason']}")
     if simulation_details.get("unrecoverable_root_count", 0):
         print(f"Units lost due to disruptions without replacement: {simulation_details['unrecoverable_root_count']}")
+
+
+    return run_output_dir
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Simulate a 6-station phone production line with FIFO queues and transport times."
+    )
+    parser.add_argument(
+        "--order",
+        type=str,
+        help='Order string, for example: "3xFUSE2, 2xFUSE1, 4xFUSE0"',
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent / "data",
+        help="Folder containing process_times.json, transport_times.json, material_stock.json and bom.json",
+    )
+    parser.add_argument(
+        "--input-root",
+        type=Path,
+        default=Path(__file__).resolve().parent / "input",
+        help="Folder containing generated input batch folders such as orders_DD-MM_HH-MM_N",
+    )
+    parser.add_argument(
+        "--line-layout-file",
+        type=str,
+        help="Optional line layout file name or path. If omitted, settings.json is checked first and then line_layout.json defaults are used.",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=Path(__file__).resolve().parent / "output",
+        help="Root folder where a new subfolder will be created for every order run",
+    )
+    args = parser.parse_args()
+
+    data_dir: Path = args.data_dir
+    input_root: Path = args.input_root
+    output_root: Path = args.output_root
+
+    starttime = time.perf_counter()
+
+    process_time_data = load_json(data_dir / "process_times.json")
+    transport_time_data = load_json(data_dir / "transport_times.json")
+    material_stock_data = load_json(data_dir / "material_stock.json")
+    bom_data = load_json(data_dir / "bom.json")
+    valid_variants = set(process_time_data["process_times"].keys())
+
+    if args.order:
+        ordered_units = parse_order(args.order, valid_variants)
+        unit_release_times = [0.0] * len(ordered_units)
+        unit_priorities = [1] * len(ordered_units)
+        unit_order_ids = ["manual"] * len(ordered_units)
+        unit_custom_ids = [f"U{idx + 1:03d}" for idx in range(len(ordered_units))]
+        unit_route_ids = [0] * len(ordered_units)
+
+        execute_single_run(
+            data_dir=data_dir,
+            input_root=input_root,
+            output_root=output_root,
+            process_time_data=process_time_data,
+            transport_time_data=transport_time_data,
+            material_stock_data=material_stock_data,
+            bom_data=bom_data,
+            valid_variants=valid_variants,
+            order_text=args.order,
+            ordered_units=ordered_units,
+            unit_release_times=unit_release_times,
+            unit_priorities=unit_priorities,
+            unit_order_ids=unit_order_ids,
+            unit_custom_ids=unit_custom_ids,
+            unit_route_ids=unit_route_ids,
+            simulation_time_s=None,
+            carriers=MAX_UNITS_IN_SYSTEM,
+            run_metadata_extra={},
+            selected_line_layout_name=args.line_layout_file,
+            batch_dir_for_layout=None,
+            settings_path=None,
+            settings_data={},
+            forced_output_dir=None,
+        )
+    else:
+        newest_batch_dir = find_newest_input_batch_dir(input_root)
+        settings_path = resolve_settings_path(newest_batch_dir)
+        if settings_path is None or not settings_path.exists():
+            raise FileNotFoundError(f"settings.json was not found in {newest_batch_dir}")
+
+        settings_data = load_json(settings_path)
+        schedule_csv_files = find_output_schedule_csv_files(newest_batch_dir)
+
+        if schedule_csv_files:
+            batch_output_root = output_root / newest_batch_dir.name
+            batch_output_root.mkdir(parents=True, exist_ok=True)
+
+            for schedule_csv_path in schedule_csv_files:
+                generated_input = build_generated_input_from_schedule_csv(
+                    input_root=input_root,
+                    batch_dir=newest_batch_dir,
+                    schedule_csv_path=schedule_csv_path,
+                    settings_data=settings_data,
+                    settings_path=settings_path,
+                    valid_variants=valid_variants,
+                )
+
+                ordered_units = generated_input["ordered_units"]
+                unit_release_times = generated_input["unit_release_times"]
+                unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
+                unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
+                unit_custom_ids = generated_input.get("unit_custom_ids", [f"U{idx + 1:03d}" for idx in range(len(ordered_units))])
+                unit_route_ids = generated_input.get("unit_route_ids", [0] * len(ordered_units))
+                simulation_time_s = generated_input["simulation_time_s"]
+                carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))
+                selected_line_layout_name = args.line_layout_file or generated_input.get("selected_line_layout_name")
+                run_metadata_extra = {
+                    "input_root": str(generated_input["input_root"].resolve()),
+                    "input_batch_directory": str(generated_input["batch_dir"].resolve()),
+                    "input_orders_csv": str(generated_input["orders_csv_path"].resolve()),
+                    "input_settings_json": str(generated_input["settings_path"].resolve()),
+                    "simulation_time_seconds": simulation_time_s,
+                    "carriers": carriers,
+                    "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
+                    "unit_priorities": list(unit_priorities),
+                    "unit_order_ids": list(unit_order_ids),
+                    "unit_custom_ids": list(unit_custom_ids),
+                    "unit_route_ids": list(unit_route_ids),
+                    "schedule_mode": "multiple_output_schedules",
+                    "schedule_source_folder": str((newest_batch_dir / OUTPUT_SCHEDULES_DIRNAME).resolve()),
+                }
+
+                forced_output_dir = create_named_summary_output_dir(batch_output_root, schedule_csv_path)
+
+                execute_single_run(
+                    data_dir=data_dir,
+                    input_root=input_root,
+                    output_root=output_root,
+                    process_time_data=process_time_data,
+                    transport_time_data=transport_time_data,
+                    material_stock_data=material_stock_data,
+                    bom_data=bom_data,
+                    valid_variants=valid_variants,
+                    order_text=str(schedule_csv_path.stem),
+                    ordered_units=ordered_units,
+                    unit_release_times=unit_release_times,
+                    unit_priorities=unit_priorities,
+                    unit_order_ids=unit_order_ids,
+                    unit_custom_ids=unit_custom_ids,
+                    unit_route_ids=unit_route_ids,
+                    simulation_time_s=simulation_time_s,
+                    carriers=carriers,
+                    run_metadata_extra=run_metadata_extra,
+                    selected_line_layout_name=selected_line_layout_name,
+                    batch_dir_for_layout=newest_batch_dir,
+                    settings_path=settings_path,
+                    settings_data=settings_data,
+                    forced_output_dir=forced_output_dir,
+                )
+        else:
+            generated_input = load_latest_generated_input(input_root, valid_variants)
+            ordered_units = generated_input["ordered_units"]
+            unit_release_times = generated_input["unit_release_times"]
+            unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
+            unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
+            unit_custom_ids = generated_input.get("unit_custom_ids", [f"U{idx + 1:03d}" for idx in range(len(ordered_units))])
+            unit_route_ids = generated_input.get("unit_route_ids", [0] * len(ordered_units))
+            simulation_time_s = generated_input["simulation_time_s"]
+            carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))
+            selected_line_layout_name = args.line_layout_file or generated_input.get("selected_line_layout_name")
+            run_metadata_extra = {
+                "input_root": str(generated_input["input_root"].resolve()),
+                "input_batch_directory": str(generated_input["batch_dir"].resolve()),
+                "input_orders_csv": str(generated_input["orders_csv_path"].resolve()),
+                "input_settings_json": str(generated_input["settings_path"].resolve()),
+                "simulation_time_seconds": simulation_time_s,
+                "carriers": carriers,
+                "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
+                "unit_priorities": list(unit_priorities),
+                "unit_order_ids": list(unit_order_ids),
+                "unit_custom_ids": list(unit_custom_ids),
+                "unit_route_ids": list(unit_route_ids),
+            }
+
+            execute_single_run(
+                data_dir=data_dir,
+                input_root=input_root,
+                output_root=output_root,
+                process_time_data=process_time_data,
+                transport_time_data=transport_time_data,
+                material_stock_data=material_stock_data,
+                bom_data=bom_data,
+                valid_variants=valid_variants,
+                order_text=generated_input["order_text"],
+                ordered_units=ordered_units,
+                unit_release_times=unit_release_times,
+                unit_priorities=unit_priorities,
+                unit_order_ids=unit_order_ids,
+                unit_custom_ids=unit_custom_ids,
+                unit_route_ids=unit_route_ids,
+                simulation_time_s=simulation_time_s,
+                carriers=carriers,
+                run_metadata_extra=run_metadata_extra,
+                selected_line_layout_name=selected_line_layout_name,
+                batch_dir_for_layout=generated_input["batch_dir"],
+                settings_path=generated_input.get("settings_path"),
+                settings_data=generated_input.get("settings_data", {}),
+                forced_output_dir=None,
+            )
 
     endtime = time.perf_counter()
     print(f"Total execution time: {endtime - starttime:.6f} seconds")
