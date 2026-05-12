@@ -5,9 +5,27 @@
     "random based disruptions": {
         "enabled": 2
     },
-    "line_layout_file": "line_layout_single_path.json",
+    "line_layout_file": "line_layout_robotcell_6staggered_example.json",
     "carriers": {
         "number of carriers": 8
     },
-    "lowest acceptable standard deviation [std below]": 3
+    "lowest acceptable standard deviation [std below]": 3,
+
+      "optimizer": {
+    "enabled": 1,
+    "algorithm": "sa",
+    "module": "D_sa_rescheduler_makespan_due_date.py",
+    "candidate_pool_size": 12,
+    "sa_iterations": 250,
+    "sa_initial_temperature": 250.0,
+    "sa_cooling_rate": 0.93,
+    "dispatch_spacing_s": 31.3,
+    "score_boost_step": 1000.0,
+    "sa_breakdown_penalty_s": 1200.0,
+    "sa_efficiency_penalty_s": 300.0,
+    "sa_penalty_horizon_s": 900.0,
+    "due_date_tardiness_weight": 0.25,
+    "due_date_sequence_penalty_s": 30.0,
+    "minimum_improvement": 0.000001
+  }
 }
