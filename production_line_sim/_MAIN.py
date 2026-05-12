@@ -29,6 +29,7 @@ SECONDS_PER_WEEK = WORKDAYS_PER_WEEK * HOURS_PER_DAY * 3600
 
 base_dir = Path(__file__).parent
 data_dir = base_dir / "data"
+layout_dir = data_dir / "Layouts"
 
 #a single run of the disruption sim
 def pipeline(settings):
@@ -63,6 +64,7 @@ def main2():
     pressures = list(mainsettings["pressure_of_capacity"].items())
     ratios = list(mainsettings["order_units_ratio"].items())
     algos = list(mainsettings["algorithms"].items())
+    
 
 
     run_idx = 0
@@ -74,15 +76,20 @@ def main2():
 
         # Apply scenario -> layout
         settings["line_layout_file"] = layout_file
-
+        layout_settings = A_input.read_settings_json(layout_dir / layout_file)
         # Apply pressure_of_capacity (your code needs to define what this means)
         # Example: scale plan_time[s] or simulation_time[s]
         # settings["plan_time [s]"] = settings["plan_time [s]"] * (p_val/100)
 
         # Apply order_units_ratio (again: define your mapping)
         # Example: increase/decrease units relative to the base
-        num_orders = BASE_ORDERS
-        num_units = int(BASE_UNITS * (r_val / 50))  # e.g. ratio=50 -> baseline
+        num_units = int(layout_settings["scaled_monthly_capacity"]*p_val)
+        num_orders = int(num_units/r_val)
+        print(f"run number: {run_idx}")
+        print(f"layout {layout_file}")
+        print(f"number of units: {num_units}")
+        print(f"number of orders: {num_orders}")
+
 
         # Algorithm choice (pass into IPPS when you support it)
         algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
@@ -91,9 +98,10 @@ def main2():
         print(f"Scenario={sc_name} layout={layout_file}")
         print(f"Pressure={p_name} ({p_val})  Ratio={r_name} ({r_val})  Algo={a_name}")
 
-        pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
+        #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
+        print("----------------------------------------------------------------------------------------------------")
 
 
 
 if __name__ == "__main__":
-   main()
+   main2()
