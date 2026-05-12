@@ -264,11 +264,11 @@ def compute_bottleneck_and_capacity(
         "bottleneck_station": bottleneck_station,
         "average_line_cycle_time_s_per_unit": float(avg_line_cycle),
         "capacity_units_per_month_by_average_line_cycle": float(monthly_capacity),
-        "scaled_monthly_capacity": float(scaled_monthly_capacity)
+        "scaled_monthly_capacity": float(scaled_monthly_capacity),
     }
 
 
-def _prepend_layout_metadata(layout_json: dict, bottleneck_station, monthly_capacity,scaled_monthly_capacity) -> dict:
+def _prepend_layout_metadata(layout_json: dict, bottleneck_station, monthly_capacity,scaled_monthly_capacity,cp) -> dict:
     """
     Return a new dict where the two requested keys are placed at the top:
       - "bottleneck station"
@@ -280,6 +280,7 @@ def _prepend_layout_metadata(layout_json: dict, bottleneck_station, monthly_capa
         "bottleneck station": bottleneck_station,
         "monthly_capacity": monthly_capacity,
         "scaled_monthly_capacity":scaled_monthly_capacity,
+        "capacity_percentage":str(cp)+"%",
         **rest,
     }
 
@@ -353,22 +354,14 @@ def generate_layout_and_routes(
     routes_path = output_dir / routes_filename(counts)
 
     status = {"layout": "generated", "routes": "generated"}
+    # Always generate (overwrite) layout and routes (reuse removed by request)
+    layout_json = generate_layout_json(counts, cfg)
+    if write_files:
+        _write_json(layout_path, layout_json)
 
-    layout_json = _load_json_if_exists(layout_path)
-    if layout_json is not None:
-        status["layout"] = "reused"
-    else:
-        layout_json = generate_layout_json(counts, cfg)
-        if write_files:
-            _write_json(layout_path, layout_json)
-
-    routes_json = _load_json_if_exists(routes_path)
-    if routes_json is not None:
-        status["routes"] = "reused"
-    else:
-        routes_json = generate_routes_json(counts)
-        if write_files:
-            _write_json(routes_path, routes_json)
+    routes_json = generate_routes_json(counts)
+    if write_files:
+        _write_json(routes_path, routes_json)
 
     analysis = None
     if compute_bottleneck:
@@ -380,12 +373,12 @@ def generate_layout_and_routes(
         bn = analysis.get("bottleneck_station")
         mc = analysis.get("capacity_units_per_month_by_average_line_cycle")
         smc = analysis.get("scaled_monthly_capacity")
+        cp = capacity_percentage*100
 
         current_bn = layout_json.get("bottleneck station")
         current_mc = layout_json.get("monthly_capacity")
-        current_smc = layout_json.get("scaled_monthly_capacity")
 
-        layout_json = _prepend_layout_metadata(layout_json, bn, mc, smc)
+        layout_json = _prepend_layout_metadata(layout_json, bn, mc, smc,cp)
 
         # Only rewrite layout file if values differ (keeps caching behavior)
         if write_files and (current_bn != bn or current_mc != mc):
@@ -413,7 +406,7 @@ def _ask_int(prompt: str) -> int:
 
 def main(capacity_percentage = None) -> None:
     print("\n--- Layout & Process Routes Generator ---\n")
-    capacity_percentage = 100-float(_ask_int("what is the buffer percentage?\n>>"))/100
+    capacity_percentage = 1-float(_ask_int("what is the buffer percentage?\n>> "))/100
     print("Enter how many parallel machines/instances exist per station.")
     print("Station sequence: 1 Bottom cover -> 2 Drill -> 3 Robot -> 4 Inspection -> 5 Top cover -> 6 Packaging\n")
 
@@ -444,6 +437,7 @@ def main(capacity_percentage = None) -> None:
         print("\n--- Bottleneck & capacity summary ---")
         print(f"  bottleneck station : {analysis.get('bottleneck_station')}")
         print(f"  monthly_capacity   : {analysis.get('capacity_units_per_month_by_average_line_cycle'):.2f} units/month")
+        print(f"  scaled monthly_capacity   : {analysis.get('scaled_monthly_capacity'):.2f} units/month")
 
 
 if __name__ == "__main__":
