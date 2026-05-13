@@ -41,10 +41,10 @@ def pipeline(settings):
    # the sim should pause when a disruption happens and then 
    # the IPPS should come up with a new solution to the disrupted line and continue the sim with disruptions
    C_IPPS.main(order_dir) #creates new plan
-   E_production_line_sim.run_simulation() #with disruptions
+   #E_production_line_sim.run_simulation() #with disruptions
 
-   F_graphgen.main()
-   G_after_movie.main()
+   #F_graphgen.main()
+   #G_after_movie.main()
 
 # -  main function  -
 def main():
