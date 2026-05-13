@@ -26,7 +26,6 @@ HOURS_PER_DAY = 8
 WORKDAYS_PER_WEEK = 5
 SECONDS_PER_WEEK = WORKDAYS_PER_WEEK * HOURS_PER_DAY * 3600
 
-
 base_dir = Path(__file__).parent
 data_dir = base_dir / "data"
 layout_dir = data_dir / "Layouts"
@@ -85,16 +84,14 @@ def main2():
         # Example: increase/decrease units relative to the base
         num_units = int(layout_settings["scaled_monthly_capacity"]*p_val)
         num_orders = int(num_units/r_val)
-        print(f"run number: {run_idx}")
-        print(f"layout {layout_file}")
-        print(f"number of units: {num_units}")
-        print(f"number of orders: {num_orders}")
 
 
         # Algorithm choice (pass into IPPS when you support it)
         algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
 
         print(f"\n--- RUN {run_idx} ---")
+        print(f"number of units: {num_units}")
+        print(f"number of orders: {num_orders}")
         print(f"Scenario={sc_name} layout={layout_file}")
         print(f"Pressure={p_name} ({p_val})  Ratio={r_name} ({r_val})  Algo={a_name}")
 
@@ -104,4 +101,17 @@ def main2():
 
 
 if __name__ == "__main__":
-   main2()
+   loop = True
+   if loop == True:
+      while loop == True:
+         user = input("old main(o) or new main(n)  (o/n)\n>> ").lower()
+         if user == "o":
+            main()
+            loop = False
+         if user == "n":
+            main2()
+            loop = False
+         else:
+            print("\n--- please select between 'o' or 'n' ---")
+   else:
+      main2()
