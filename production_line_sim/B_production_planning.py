@@ -128,6 +128,7 @@ def plan_orders_across_bottleneck_instances_days(
 
     schedule_by_day: dict[int, dict[str, dict[str, int]]] = {}
     orders_by_week: dict[int, set] = {}
+    orders_by_day: dict[int, set] = {}
 
     def ensure_bucket(d: int, instance_name: str) -> dict:
         schedule_by_day.setdefault(d, {})
@@ -137,6 +138,9 @@ def plan_orders_across_bottleneck_instances_days(
     def mark_order_in_week(d: int, oid: str):
         wk = (d - 1) // workdays_per_week + 1
         orders_by_week.setdefault(wk, set()).add(oid)
+
+    def mark_order_in_day(d: int, oid: str):
+        orders_by_day.setdefault(d, set()).add(oid)
 
     def eff_cycle_time(variant: str, inst: dict) -> float:
         base_t = float(process_times[variant][bottleneck_base])
@@ -194,6 +198,7 @@ def plan_orders_across_bottleneck_instances_days(
                     bucket = ensure_bucket(day, name)
                     bucket[variant] = bucket.get(variant, 0) + int(make)
                     mark_order_in_week(day, oid)
+                    mark_order_in_day(day, oid)
 
                     if start_day_for_order is None:
                         start_day_for_order = day
@@ -207,15 +212,16 @@ def plan_orders_across_bottleneck_instances_days(
                 day += 1
                 remaining_s = {inst["instance_name"]: seconds_per_day for inst in instances}
 
-        # planned_week remains completion week
-        o["planned_week"] = (completion_day_for_order - 1) // workdays_per_week + 1
+        # planned_week is START week (requested)
+        o["planned_week"] = (int(start_day_for_order if start_day_for_order is not None else completion_day_for_order) - 1) // workdays_per_week + 1
         # planned_day is START day as absolute day count
         o["planned_day"] = int(start_day_for_order if start_day_for_order is not None else completion_day_for_order)
 
-    # convert week sets to sorted lists
+    # convert week/day sets to sorted lists
     orders_by_week_sorted = {w: sorted(list(ids)) for w, ids in orders_by_week.items()}
+    orders_by_day_sorted = {d: sorted(list(ids)) for d, ids in orders_by_day.items()}
 
-    return planned_orders, schedule_by_day, orders_by_week_sorted
+    return planned_orders, schedule_by_day, orders_by_week_sorted, orders_by_day_sorted
 
 
 # ==============================================================================
@@ -383,6 +389,21 @@ def print_schedule_summary_prettytable(
     print_df_prettytable(df, title=title)
 
 
+
+
+def print_orders_by_day(orders_by_day: dict, days_order=None):
+    """Print order_ids produced in each day.
+
+    If days_order is None, prints day1..day5.
+    """
+    if days_order is None:
+        days_order = [1, 2, 3, 4, 5]
+
+    print("\norder_id produced in each day")
+    for d in days_order:
+        ids = orders_by_day.get(d, [])
+        print(f"day{d}: {', '.join(ids) if ids else '(none)'}")
+
 def print_orders_by_week(orders_by_week: dict, weeks_order=None):
     if not orders_by_week:
         print("\nNo orders were produced (orders_by_week is empty).")
@@ -429,7 +450,7 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
 
     bottleneck_base = layout_json.get("bottleneck_station", "Station 3: Robot cell")
 
-    planned_orders, schedule_by_day, orders_by_week = plan_orders_across_bottleneck_instances_days(
+    planned_orders, schedule_by_day, orders_by_week, orders_by_day = plan_orders_across_bottleneck_instances_days(
         orders=orders,
         process_times_json=process_times_json,
         layout_json=layout_json,
@@ -472,6 +493,7 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
 
     # Print order IDs produced in each week
     print_orders_by_week(orders_by_week, weeks_order=[1, 2, 3, 4])
+    print_orders_by_day(orders_by_day, days_order=[1, 2, 3, 4, 5])
 
 
 def main(order_dir: str, SECONDS_PER_WEEK: float):
