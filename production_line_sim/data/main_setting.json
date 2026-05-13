@@ -17,7 +17,7 @@
     },
     "algorithms":{
         "1": "genetic algortihm",
-        "2": "simulated akneeling"
+        "2": "simulated annealing"
     },
     "weightage":{
         "tardines": "?",
