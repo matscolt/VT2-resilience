@@ -36,11 +36,12 @@ def pipeline(settings):
    num_orders = int(input("Enter amount of orders: "))
    num_units = int(input("Enter amount of units: "))
    order_dir = A_input.main(num_orders, num_units)
+   print("RUNNING THE PLAN!!!!!!!")
    B_production_planning.main(order_dir,SECONDS_PER_WEEK)
    #sim with disruption loop
    # the sim should pause when a disruption happens and then 
    # the IPPS should come up with a new solution to the disrupted line and continue the sim with disruptions
-   C_IPPS.main(order_dir) #creates new plan
+   #C_IPPS.main(order_dir) #creates new plan
    #E_production_line_sim.run_simulation() #with disruptions
 
    #F_graphgen.main()
@@ -111,7 +112,7 @@ if __name__ == "__main__":
          if user == "n":
             main2()
             loop = False
-         elif user != "n" or user != "o":
+         elif loop == True:
             print("\n--- please select between 'o' or 'n' ---")
    else:
       main2()
