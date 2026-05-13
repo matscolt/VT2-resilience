@@ -111,7 +111,7 @@ if __name__ == "__main__":
          if user == "n":
             main2()
             loop = False
-         elif user is not "n" or user is not "o":
+         elif user != "n" or user != "o":
             print("\n--- please select between 'o' or 'n' ---")
    else:
       main2()
