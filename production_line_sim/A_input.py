@@ -1128,8 +1128,8 @@ def main(num_orders = None, num_units = None):
     # Generate settings and disruption json files
     create_setting_json(output_path_settingsjson)
     create_disruption_json(output_path_disruptionjson)
-    print("\n>>Do you wish to change the input settings?\n>>Press 'Enter' to continue when done changing the settings in settings.json")
-    input()
+    #print("\n>>Do you wish to change the input settings?\n>>Press 'Enter' to continue when done changing the settings in settings.json")
+    #input()
     if num_orders is None or num_units is None:
         num_orders = int(input("Enter amount of orders: "))
         num_units = int(input("Enter amount of units: "))

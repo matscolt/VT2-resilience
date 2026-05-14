@@ -18,6 +18,7 @@ import A_input, B_production_planning, C_IPPS, D_algo, E_production_line_sim, F_
 from pathlib import Path
 from itertools import product
 from copy import deepcopy
+from datetime import datetime
 
 # ================================================================================
 # constands, paths and global variables
@@ -26,8 +27,8 @@ HOURS_PER_DAY = 8
 WORKDAYS_PER_WEEK = 5
 SECONDS_PER_WEEK = WORKDAYS_PER_WEEK * HOURS_PER_DAY * 3600
 
-base_dir = Path(__file__).parent
-data_dir = base_dir / "data"
+BASE_DIR = Path(__file__).parent
+data_dir = BASE_DIR / "data"
 layout_dir = data_dir / "Layouts"
 
 #a single run of the disruption sim
@@ -36,11 +37,12 @@ def pipeline(settings):
    num_orders = int(input("Enter amount of orders: "))
    num_units = int(input("Enter amount of units: "))
    order_dir = A_input.main(num_orders, num_units)
+   print("RUNNING THE PLAN!!!!!!!")
    B_production_planning.main(order_dir,SECONDS_PER_WEEK)
    #sim with disruption loop
    # the sim should pause when a disruption happens and then 
    # the IPPS should come up with a new solution to the disrupted line and continue the sim with disruptions
-   C_IPPS.main(order_dir) #creates new plan
+   #C_IPPS.main(order_dir) #creates new plan
    #E_production_line_sim.run_simulation() #with disruptions
 
    #F_graphgen.main()
@@ -56,52 +58,82 @@ def main():
 
 
 def main2():
-    mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
-    base_settings = A_input.read_settings_json(data_dir / "settings.json")
+   #create folders
+   input_dir = BASE_DIR / "input"
+   input_dir.mkdir(exist_ok=True)
+   on_going_dir = BASE_DIR / "on_going"
+   on_going_dir.mkdir(exist_ok=True)
+   output_dir = BASE_DIR / "output"
+   output_dir.mkdir(exist_ok=True)
+   post_processing_dir = BASE_DIR / "post_processing"
+   post_processing_dir.mkdir(exist_ok=True)
 
-    scenarios = list(mainsettings["Scenarios"].items())
-    pressures = list(mainsettings["pressure_of_capacity"].items())
-    ratios = list(mainsettings["order_units_ratio"].items())
-    algos = list(mainsettings["algorithms"].items())
-    
+   #create subfolders
+   dirs = [input_dir,on_going_dir,output_dir,post_processing_dir]
 
+   timestamp = datetime.now().strftime("%m-%d_%H-%M")
+   n=0
+   main_loop_name = f"main_{timestamp}_{n}"
+   while (dirs[1] / main_loop_name).exists():
+         n=n+1
+         main_loop_name = f"main_{timestamp}_{n}"
+   for dir in dirs:
+      subfolder = dir / main_loop_name
+      subfolder.mkdir(exist_ok=True)
+   
+   
+   print("reading settings")
+   #read settings
+   mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
+   base_settings = A_input.read_settings_json(data_dir / "settings.json")
+   scenarios = list(mainsettings["Scenarios"].items())
+   pressures = list(mainsettings["pressure_of_capacity"].items())
+   ratios = list(mainsettings["order_units_ratio"].items())
+   algos = list(mainsettings["algorithms"].items())
+   seeds = list(mainsettings["seeds"].items())
 
-    run_idx = 0
-    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name) in product(
-        scenarios, pressures, ratios, algos
+   run_idx = 0
+   for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name), (s_id, seed) in product(
+        scenarios, pressures, ratios, algos, seeds
     ):
-        run_idx += 1
-        settings = deepcopy(base_settings)
+      run_idx += 1
+      settings = deepcopy(base_settings)
+      #creating the run dirs
+      for dir in dirs[0:2]:
+         subfolder = dir / main_loop_name / f"run_{run_idx}"
+         subfolder.mkdir(exist_ok=True)
 
-        # Apply scenario -> layout
-        settings["line_layout_file"] = layout_file
-        layout_settings = A_input.read_settings_json(layout_dir / layout_file)
-        # Apply pressure_of_capacity (your code needs to define what this means)
-        # Example: scale plan_time[s] or simulation_time[s]
-        # settings["plan_time [s]"] = settings["plan_time [s]"] * (p_val/100)
+      # Apply scenario -> layout
+      settings["line_layout_file"] = layout_file
+      layout_settings = A_input.read_settings_json(layout_dir / layout_file)
+      # Apply pressure_of_capacity (your code needs to define what this means)
+      # Example: scale plan_time[s] or simulation_time[s]
+      # settings["plan_time [s]"] = settings["plan_time [s]"] * (p_val/100)
 
-        # Apply order_units_ratio (again: define your mapping)
-        # Example: increase/decrease units relative to the base
-        num_units = int(layout_settings["scaled_monthly_capacity"]*p_val)
-        num_orders = int(num_units/r_val)
+      # Apply order_units_ratio (again: define your mapping)
+      # Example: increase/decrease units relative to the base
+      num_units = int(layout_settings["scaled_monthly_capacity"]*p_val)
+      num_orders = int(num_units/r_val)
 
 
-        # Algorithm choice (pass into IPPS when you support it)
-        algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
+      # Algorithm choice (pass into IPPS when you support it)
+      algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
+      #order_dir = A_input.main(num_orders, num_units)
+      #B_production_planning.main(order_dir,SECONDS_PER_WEEK)
 
-        print(f"\n--- RUN {run_idx} ---")
-        print(f"number of units: {num_units}")
-        print(f"number of orders: {num_orders}")
-        print(f"Scenario={sc_name} layout={layout_file}")
-        print(f"Pressure={p_name} ({p_val})  Ratio={r_name} ({r_val})  Algo={a_name}")
+      print(f"\n--- RUN {run_idx} ---")
+      print(f"Number of units: {num_units}")
+      print(f"Number of orders: {num_orders}")
+      print(f"Scenario = {sc_name} layout = {layout_file}, seed = {seed}")
+      print(f"Pressure = {p_name} ({p_val})  Ratio = {r_name} ({r_val})  Algo = {a_name}")
 
-        #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
-        print("----------------------------------------------------------------------------------------------------")
+      #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
+      print("----------------------------------------------------------------------------------------------------")
 
 
 
 if __name__ == "__main__":
-   loop = True
+   loop = False #ændre den her hvis du ikke vil have et valg længere
    if loop == True:
       while loop == True:
          user = input("old main(o) or new main(n)  (o/n)\n>> ").lower()
@@ -111,7 +143,8 @@ if __name__ == "__main__":
          if user == "n":
             main2()
             loop = False
-         elif user is not "n" or user is not "o":
+         elif loop == True:
             print("\n--- please select between 'o' or 'n' ---")
    else:
+      print("running main2()")
       main2()
