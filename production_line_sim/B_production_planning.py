@@ -493,6 +493,13 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
 
     # Print order IDs produced in each week
     print_orders_by_week(orders_by_week, weeks_order=[1, 2, 3, 4])
+    # Recompute orders_by_day from planned_day (START day) so terminal matches CSV
+    orders_by_day = {}
+    for o in planned_orders:
+        d = int(o.get('planned_day', 0) or 0)
+        orders_by_day.setdefault(d, set()).add(str(o.get('order_id', '')))
+    orders_by_day = {d: sorted(list(ids)) for d, ids in orders_by_day.items()}
+
     print_orders_by_day(orders_by_day, days_order=[1, 2, 3, 4, 5])
 
 
