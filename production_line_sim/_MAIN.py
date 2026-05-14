@@ -118,8 +118,8 @@ def main2():
 
       # Algorithm choice (pass into IPPS when you support it)
       algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
-      order_dir = A_input.main(num_orders, num_units)
-      B_production_planning.main(order_dir,SECONDS_PER_WEEK)
+      #order_dir = A_input.main(num_orders, num_units)
+      #B_production_planning.main(order_dir,SECONDS_PER_WEEK)
 
       print(f"\n--- RUN {run_idx} ---")
       print(f"Number of units: {num_units}")
