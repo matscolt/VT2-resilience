@@ -104,7 +104,6 @@ def main2():
          subfolder.mkdir(exist_ok=True)
 
       # Apply scenario -> layout
-      settings["line_layout_file"] = layout_file
       layout_settings = A_input.read_settings_json(layout_dir / layout_file)
       # Apply pressure_of_capacity (your code needs to define what this means)
       # Example: scale plan_time[s] or simulation_time[s]
