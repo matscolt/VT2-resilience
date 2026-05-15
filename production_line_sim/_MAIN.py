@@ -115,6 +115,10 @@ def main2():
    A_input.create_disruption_json(disruption_dir / "disruption.json")
 
    number = 0
+   next_pct = 0
+   max_number = len(scenarios) * len(pressures) * len(ratios) * len(seeds)
+   action = "generating: "
+   print("\n --- Generating the order and disruption lists ---\n")
    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (s_id, seed) in product(
         scenarios, pressures, ratios, seeds
     ):
@@ -129,10 +133,16 @@ def main2():
       disruptionpath = disruption_dir/f"disruptions_{label}.csv"
 
       A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
-      A_input.generate_disruption_list(seed,plan_time,disruptionpath,layout_file,num_orders, num_units)
-      A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
+      A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
+      # takes wayyy too long to generate a gantt chart for each one
+      # A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
+      #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
 
    run_idx = 0
+   next_pct = 0
+   max_idx = len(scenarios) * len(pressures) * len(ratios)* len(algos) * len(seeds)
+   print("\n --- Running the different combinations of scenarios ---\n")
+   action = "Running simulations: "
    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name), (s_id, seed) in product(
         scenarios, pressures, ratios, algos, seeds
     ):
@@ -143,15 +153,18 @@ def main2():
          subfolder = dir / f"run_{run_idx}"
          subfolder.mkdir(exist_ok=True)
 
-      # Apply scenario -> layout
-      
-      #B_production_planning.main(,SECONDS_PER_WEEK)
+      # creating the production plan
+      label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
+      order_csv_path = orders_dir / f"unsorted_orders_{label}.csv"
+      on_going_run_path = dirs[1] / f"run_{run_idx}"
+      label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
+      B_production_planning.create_production_plan(order_csv_path,on_going_run_path,base_settings,label,SECONDS_PER_WEEK)
 
 
       # Algorithm choice (pass into IPPS when you support it)
       algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
 
-      print(f"\n--- RUN {run_idx} ---")
+      print(f"\n\n--- RUN {run_idx} ---")
       print(f"Number of units: {num_units}")
       print(f"Number of orders: {num_orders}")
       print(f"Scenario = {sc_name} layout = {layout_file}, seed = {seed}")
@@ -159,12 +172,12 @@ def main2():
 
       #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
       print("----------------------------------------------------------------------------------------------------")
-      return
+      next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct,action=action)
 
 
 
 if __name__ == "__main__":
-   loop = True #ændre den her hvis du ikke vil have et valg længere
+   loop = False #ændre den her hvis du ikke vil have et valg længere
    if loop == True:
       while loop == True:
          user = input("old main(o) or new main(n)  (o/n)\n>> ").lower()
