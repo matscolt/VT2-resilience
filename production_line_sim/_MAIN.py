@@ -128,7 +128,6 @@ def main2():
       orderpath = orders_dir / f"unsorted_orders_{label}.csv"
       disruptionpath = disruption_dir/f"disruptions_{label}.csv"
 
-      print(layout_dir/layout_file)
       A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
       A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
       # takes wayyy too long to generate a gantt chart for each one
