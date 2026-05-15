@@ -213,7 +213,7 @@ def iter_breakdown_specs_v2(station_cfg: Dict[str, Any]):
             if not isinstance(spec, dict):
                 continue
             name = str(spec.get("name", "breakdown")).strip() or "breakdown"
-            dtype = f"breakdown:{name}"
+            dtype = f"{name}"
             # Use ONLY 'chance of sim time [%]' (percentage, e.g. 2.4 = 2.4%)
             chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
 
@@ -885,7 +885,7 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
         
 
 
-    #emergancy orders
+    #emergency orders
     eorders = round_half_up(random.normalvariate(num_orders*0.1, num_orders * 0.01))
     eunits = round_half_up(random.normalvariate(num_units*0.1, num_units * 0.01))
     if eunits < eorders:
