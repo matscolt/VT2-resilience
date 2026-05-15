@@ -117,6 +117,7 @@ def main2():
    number = 0
    next_pct = 0
    max_number = len(scenarios) * len(pressures) * len(ratios) * len(seeds)
+   action = "generating: "
    print(" --- Generating the order and disruption lists ---")
    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (s_id, seed) in product(
         scenarios, pressures, ratios, seeds
@@ -135,12 +136,13 @@ def main2():
       A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
       # takes wayyy too long to generate a gantt chart for each one
       # A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
-      next_pct = G_after_movie.progress_update(number, max_number, next_pct)
+      next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
 
    run_idx = 0
    next_pct = 0
    max_idx = len(scenarios) * len(pressures) * len(ratios)* len(algos) * len(seeds)
    print(" --- Running the different combination os scenarios ---")
+   action = "Running simulations: "
    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name), (s_id, seed) in product(
         scenarios, pressures, ratios, algos, seeds
     ):
@@ -167,7 +169,7 @@ def main2():
 
       #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
       print("----------------------------------------------------------------------------------------------------")
-      #next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct)
+      next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct,action=action)
 
 
 
