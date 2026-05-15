@@ -128,9 +128,11 @@ def main2():
       orderpath = orders_dir / f"unsorted_orders_{label}.csv"
       disruptionpath = disruption_dir/f"disruptions_{label}.csv"
 
+      print(layout_dir/layout_file)
       A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
-      A_input.generate_disruption_list(seed,plan_time,disruptionpath,layout_file,num_orders, num_units)
-      A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
+      A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
+      # takes wayyy too long to generate a gantt chart for each one
+      # A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
 
    run_idx = 0
    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name), (s_id, seed) in product(
@@ -164,7 +166,7 @@ def main2():
 
 
 if __name__ == "__main__":
-   loop = True #ændre den her hvis du ikke vil have et valg længere
+   loop = False #ændre den her hvis du ikke vil have et valg længere
    if loop == True:
       while loop == True:
          user = input("old main(o) or new main(n)  (o/n)\n>> ").lower()
