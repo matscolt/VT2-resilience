@@ -21,45 +21,20 @@ import E_production_line_sub_sim as simulator
 
 ROOT = Path(__file__).resolve().parent
 
-INPUT_BATCH_NAME_RE = re.compile(
-    r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)$"
+MAIN_RUN = "main_14-05_21-59_1"
+RUN_ID = 1
+
+INPUT_DIR = (
+    ROOT
+    / "on_going"
+    / MAIN_RUN
+    / f"run_{RUN_ID}"
 )
 
-
-def _parse_input_batch_sort_key(name: str):
-    match = INPUT_BATCH_NAME_RE.match(name)
-
-    if not match:
-        raise ValueError(f"Invalid input batch name: {name}")
-
-    day, month, hour, minute, batch_number = map(int, match.groups())
-
-    return month, day, hour, minute, batch_number
-
-
-def find_newest_input_batch_dir(input_root: Path) -> Path:
-
-    if not input_root.exists():
-        raise FileNotFoundError(f"Input folder not found: {input_root}")
-
-    candidate_dirs = [
-        path
-        for path in input_root.iterdir()
-        if path.is_dir() and INPUT_BATCH_NAME_RE.match(path.name)
-    ]
-
-    if not candidate_dirs:
-        raise FileNotFoundError(
-            f"No generated input folders were found in {input_root}"
-        )
-
-    return max(
-        candidate_dirs,
-        key=lambda path: _parse_input_batch_sort_key(path.name)
+if not INPUT_DIR.exists():
+    raise FileNotFoundError(
+        f"Selected run folder not found: {INPUT_DIR}"
     )
-
-
-INPUT_DIR = find_newest_input_batch_dir(ROOT / "input")
 
 LAYOUT_PATH = (
     ROOT / "data" / "Layouts" /
@@ -67,13 +42,13 @@ LAYOUT_PATH = (
 )
 
 PROCESS_TIMES_PATH = ROOT / "data" / "process_times.json"
+
 TRANSPORT_TIMES_PATH = ROOT / "data" / "transport_times.json"
 
 # Keep the GA run lightweight by removing temporary schedules/output folders.
 # The GA only needs unit_summary.csv long enough to calculate fitness.
 CLEAN_TEMP_OUTPUTS = True
 KEEP_ONLY_BEST_SUMMARY = True
-
 
 # ============================================================
 # GA SETTINGS / ROLLING HORIZON SETTINGS
