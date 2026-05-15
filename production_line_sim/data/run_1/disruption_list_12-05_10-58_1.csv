@@ -1,0 +1,6 @@
+disruption_type,station_id,start_time,end_time,efficiency_percentage,order_id,due_date,priority,variant0,quantity0,variant1,quantity1,variant2,quantity2
+machine_breakdown,2,361,951,0,,,,,,,,,
+failed_inspection,6,470,,,,,,,,,,,
+machine_breakdown,3.1,686,2172,0,,,,,,,,,
+machine_breakdown,6,752,4242,0,,,,,,,,,
+machine_breakdown,1,979,5367,0,,,,,,,,,
