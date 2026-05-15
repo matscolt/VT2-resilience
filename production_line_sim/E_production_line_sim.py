@@ -116,7 +116,7 @@ INPUT_BATCH_NAME_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)
 MAIN_INPUT_BATCH_NAME_RE = re.compile(r"^main_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)$", re.IGNORECASE)
 RUN_DIR_NAME_RE = re.compile(r"^run_(\d+)$", re.IGNORECASE)
 INPUT_ORDER_CSV_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)\.csv$", re.IGNORECASE)
-SCHEDULE_FILENAME = "schedule.csv"
+SCHEDULE_FILENAME = "current_schedule.csv"
 OUTPUT_SCHEDULES_DIRNAME = "output_schedules"
 LINE_LAYOUT_FILENAME = "line_layout.json"
 DISRUPTION_FILENAME = "disruption.json"
@@ -678,6 +678,31 @@ def _parse_run_dir_sort_key(name: str) -> int:
     return int(match.group(1))
 
 
+def find_newest_ongoing_main_run_dir(base_dir: Path) -> Path | None:
+    ongoing_root = base_dir / ONGOING_DIRNAME
+    if not ongoing_root.exists() or not ongoing_root.is_dir():
+        return None
+
+    main_dirs = [
+        path
+        for path in ongoing_root.iterdir()
+        if path.is_dir() and MAIN_INPUT_BATCH_NAME_RE.match(path.name)
+    ]
+    if not main_dirs:
+        return None
+
+    newest_main_dir = max(main_dirs, key=lambda path: _parse_main_input_batch_sort_key(path.name))
+    run_dirs = [
+        path
+        for path in newest_main_dir.iterdir()
+        if path.is_dir() and RUN_DIR_NAME_RE.match(path.name)
+    ]
+    if not run_dirs:
+        return None
+
+    return min(run_dirs, key=lambda path: _parse_run_dir_sort_key(path.name))
+
+
 def _load_schedule_csv(
     schedule_csv_path: Path,
     valid_variants: set[str],
@@ -785,6 +810,12 @@ def find_newest_input_batch_dir(input_root: Path) -> Path:
 
 
 def find_newest_orders_csv(batch_dir: Path) -> Path:
+    ongoing_run_dir = find_newest_ongoing_main_run_dir(Path(__file__).resolve().parent)
+    if ongoing_run_dir is not None:
+        current_schedule_path = ongoing_run_dir / SCHEDULE_FILENAME
+        if current_schedule_path.exists() and current_schedule_path.is_file():
+            return current_schedule_path
+
     schedule_candidate = batch_dir / SCHEDULE_FILENAME
     if schedule_candidate.exists() and schedule_candidate.is_file():
         return schedule_candidate
@@ -846,7 +877,7 @@ def load_latest_generated_input(
     simulation_time_s = float(settings_data.get("sim_time [s]", settings_data.get("Sim_time [s]", 0.0)))
     carriers = int(float(settings_data.get("carriers", {}).get("number of carriers", MAX_UNITS_IN_SYSTEM)))
 
-    if orders_csv_path.name.casefold() == SCHEDULE_FILENAME.casefold() or orders_csv_path.parent.name.casefold() == OUTPUT_SCHEDULES_DIRNAME.casefold():
+    if orders_csv_path.name.casefold() == SCHEDULE_FILENAME.casefold():
         schedule_payload = _load_schedule_csv(orders_csv_path, valid_variants)
         order_text = f"{batch_dir.parent.name}__{batch_dir.name}__scheduled_{len(schedule_payload['ordered_units'])}units"
         return {
