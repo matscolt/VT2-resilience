@@ -161,7 +161,7 @@ def main2():
       label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
       B_production_planning.create_production_plan(order_csv_path,on_going_run_path,base_settings,label,SECONDS_PER_WEEK)
 
-      # Algorithm choice (pass into IPPS when you support it)
+      # pass info and run the simulation
       E_production_line_sim.main()
 
 
