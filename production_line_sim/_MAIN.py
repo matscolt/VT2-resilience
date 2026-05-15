@@ -162,7 +162,7 @@ def main2():
       B_production_planning.create_production_plan(order_csv_path,on_going_run_path,base_settings,label,SECONDS_PER_WEEK)
 
       # Algorithm choice (pass into IPPS when you support it)
-      E_production_line_sim
+      E_production_line_sim.main()
 
 
       print(f"\n\n--- RUN {run_idx} ---")
@@ -179,7 +179,7 @@ def main2():
 
 
 if __name__ == "__main__":
-   loop = True #ændre den her hvis du ikke vil have et valg længere
+   loop = False #ændre den her hvis du ikke vil have et valg længere
    if loop == True:
       while loop == True:
          user = input("old main(o) or new main(n)  (o/n)\n>> ").lower()
