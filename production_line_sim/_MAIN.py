@@ -129,7 +129,7 @@ def main2():
       disruptionpath = disruption_dir/f"disruptions_{label}.csv"
 
       A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
-      A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units)
+      A_input.generate_disruption_list(seed,plan_time,disruptionpath,layout_file,num_orders, num_units)
       A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
 
    run_idx = 0

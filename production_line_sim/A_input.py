@@ -682,7 +682,7 @@ def generate_orderlist(seed, plan_time, output_path: Path,num_orders, num_units)
 # Disruption generation
 # ============================================================
 
-def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders: int,num_units: int) -> None:
+def generate_disruption_list(seed, plan_time: int, output_path: Path, layout_path, num_orders: int,num_units: int) -> None:
     """Generate disruptions.csv based on settings.json and disruption.json.
 
     Your requested semantics implemented:
@@ -697,6 +697,7 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
 
     settings = read_settings_json(data_dir / "settings.json")
     disruption_file = (data_dir / "disruption_v2.json") if (data_dir / "disruption_v2.json").exists() else (data_dir / "disruption.json")
+    Layout_file = (data_dir / "Layouts" /  layout_path)
     disruption_settings = read_disruption_json(disruption_file)
 
     # Reproducible randomness
