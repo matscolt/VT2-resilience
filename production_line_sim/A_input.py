@@ -780,18 +780,25 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
             if "efficiency loss" in station_cfg:
                 spec = station_cfg["efficiency loss"]
 
-                # v2 format: has keys like 'chance [0-1]' and 'range [0-1]' or 'range [%]' (no duration given)
+                # v2 format: use chance of sim time and mean duration to generate multiple events
                 if spec.get("chance of sim time [%]") is not None:
                     # Use ONLY 'chance of sim time [%]' (percentage, e.g. 2.4 = 2.4%)
                     chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
-
                     target_downtime = chance * plan_time
-                    duration = max(1, round_half_up(target_downtime))
+                    mean_dur = float(spec.get("mean [s]", 0))
 
-                    start = pick_random_start_non_overlapping(duration, occupied, plan_time)
-                    if start is not None:
+                    n_events = sample_event_count_from_time_fraction(target_downtime, mean_dur)
+
+                    placed = 0
+                    for _ in range(n_events):
+                        duration = sample_duration(data_dir, spec, Range=True)
+                        start = pick_random_start_non_overlapping(duration, occupied, plan_time)
+                        if start is None:
+                            break
                         end = min(plan_time, start + duration)
+
                         occupied.append((start, end))
+                        placed += 1
 
                         # sample efficiency drop from provided ranges
                         eff = 100
@@ -823,7 +830,8 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
                             }
                         )
 
-                        summary[station_instance_id]["efficiency_loss"] = summary[station_instance_id].get("efficiency_loss", 0) + 1
+                    if placed:
+                        summary[station_instance_id]["efficiency_loss"] = summary[station_instance_id].get("efficiency_loss", 0) + placed
 
                 # v1 format: has duration and std for efficiency loss
                 else:

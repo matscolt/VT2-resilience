@@ -137,6 +137,7 @@ def main2():
       # takes wayyy too long to generate a gantt chart for each one
       # A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
       #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
+      break
 
    run_idx = 0
    next_pct = 0
@@ -160,9 +161,9 @@ def main2():
       label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
       B_production_planning.create_production_plan(order_csv_path,on_going_run_path,base_settings,label,SECONDS_PER_WEEK)
 
-
       # Algorithm choice (pass into IPPS when you support it)
-      algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
+      E_production_line_sim
+
 
       print(f"\n\n--- RUN {run_idx} ---")
       print(f"Number of units: {num_units}")
@@ -173,11 +174,12 @@ def main2():
       #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
       print("----------------------------------------------------------------------------------------------------")
       next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct,action=action)
+      return #stop the loop
 
 
 
 if __name__ == "__main__":
-   loop = False #ændre den her hvis du ikke vil have et valg længere
+   loop = True #ændre den her hvis du ikke vil have et valg længere
    if loop == True:
       while loop == True:
          user = input("old main(o) or new main(n)  (o/n)\n>> ").lower()

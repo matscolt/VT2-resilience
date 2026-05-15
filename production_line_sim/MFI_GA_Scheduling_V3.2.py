@@ -4,15 +4,20 @@ import json
 import re
 import contextlib
 import io
+import math
 import shutil
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List
+from typing import List, Set, Tuple, Dict
 
 import pandas as pd
 
-import E_production_line_sim_schedule_multi_outputs_final_input_fix as simulator
+import E_production_line_sim as simulator
 
+
+# ============================================================
+# PATHS
+# ============================================================
 
 # ============================================================
 # PATHS
@@ -20,45 +25,20 @@ import E_production_line_sim_schedule_multi_outputs_final_input_fix as simulator
 
 ROOT = Path(__file__).resolve().parent
 
-INPUT_BATCH_NAME_RE = re.compile(
-    r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)$"
+MAIN_RUN = "main_14-05_21-59_1"
+RUN_ID = 1
+
+INPUT_DIR = (
+    ROOT
+    / "on_going"
+    / MAIN_RUN
+    / f"run_{RUN_ID}"
 )
 
-
-def _parse_input_batch_sort_key(name: str):
-    match = INPUT_BATCH_NAME_RE.match(name)
-
-    if not match:
-        raise ValueError(f"Invalid input batch name: {name}")
-
-    day, month, hour, minute, batch_number = map(int, match.groups())
-
-    return month, day, hour, minute, batch_number
-
-
-def find_newest_input_batch_dir(input_root: Path) -> Path:
-
-    if not input_root.exists():
-        raise FileNotFoundError(f"Input folder not found: {input_root}")
-
-    candidate_dirs = [
-        path
-        for path in input_root.iterdir()
-        if path.is_dir() and INPUT_BATCH_NAME_RE.match(path.name)
-    ]
-
-    if not candidate_dirs:
-        raise FileNotFoundError(
-            f"No generated input folders were found in {input_root}"
-        )
-
-    return max(
-        candidate_dirs,
-        key=lambda path: _parse_input_batch_sort_key(path.name)
+if not INPUT_DIR.exists():
+    raise FileNotFoundError(
+        f"Selected run folder not found: {INPUT_DIR}"
     )
-
-
-INPUT_DIR = find_newest_input_batch_dir(ROOT / "input")
 
 LAYOUT_PATH = (
     ROOT / "data" / "Layouts" /
@@ -68,18 +48,33 @@ LAYOUT_PATH = (
 PROCESS_TIMES_PATH = ROOT / "data" / "process_times.json"
 TRANSPORT_TIMES_PATH = ROOT / "data" / "transport_times.json"
 
-# Keep the GA run lightweight by removing temporary schedules/output folders.
-# The GA only needs unit_summary.csv long enough to calculate fitness.
 CLEAN_TEMP_OUTPUTS = True
 KEEP_ONLY_BEST_SUMMARY = True
-
-
 # ============================================================
-# GA SETTINGS
+# GA SETTINGS / ROLLING HORIZON SETTINGS
 # ============================================================
+
+# One production day is currently defined as 8 hours.
+SECONDS_PER_PRODUCTION_DAY = 8 * 60 * 60
+
+# Set these values here while testing.
+# Later, CURRENT_TIME_S and completed units should come from the main simulation.
+CURRENT_TIME_S = 0
+DEFAULT_LOOKAHEAD_DAYS = 3
+
+# Temporary test input:
+# Number of units already produced before the rolling-horizon scheduler starts.
+# The code will remove the first N units from the full production plan order.
+# Later, replace this with exact completed unit IDs from the main simulation.
+COMPLETED_UNITS_COUNT = 0
+
+# Rolling horizon options:
+# 1 day  -> schedule the rest of current day only
+# 3 days -> schedule rest of current day + 2 full days
+# 5 days -> schedule rest of current day + 4 full days
+ALLOWED_LOOKAHEAD_DAYS = {1, 3, 5}
 
 SWAPS = 3
-
 POPULATION_SIZE = 6
 GENERATIONS = 4
 ELITE_SIZE = 2
@@ -87,14 +82,25 @@ TOURNAMENT_SIZE = 3
 CROSSOVER_RATE = 0.9
 MUTATION_RATE = 0.4
 
-
 # ============================================================
 # FITNESS WEIGHTS
 # ============================================================
 
+# Fitness model:
+#   1) Weighted exponential penalty for each delayed order
+#   2) Weighted extra exponential penalty for the worst delayed order
+#   3) Very small linear earliness reward as a tie-breaker
+#
+# Lower fitness is better.
+#
+# Times from the simulator are in seconds, so tardiness/earliness are
+# converted to days before being used in the fitness function.
+
 ALPHA_TARDINESS = 1.0
-BETA_LATE_ORDERS = 5000
-GAMMA_EARLINESS = 0.05
+BETA_MAX_TARDINESS = 1.5
+GAMMA_EARLINESS = 0.001
+
+TIME_SCALE = 24 * 60 * 60  # 1 calendar day in seconds
 
 
 # ============================================================
@@ -116,6 +122,8 @@ class Order:
     due_date: float
     priority: int
     total_units: int
+    planned_week: int = 1
+    planned_day: int = 1
 
 
 # ============================================================
@@ -164,11 +172,13 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
     units = []
     order_units = {}
 
+    global_unit_counter = 1
+
     print("\n================================================")
     print("LOADING ORDERS AND UNITS FROM FILE")
     print("================================================")
 
-    for _, row in df.iterrows():
+    for _, row in df.sort_values("order_id").iterrows():
 
         order_id = int(row["order_id"])
         due_date = float(row["due date"])
@@ -176,13 +186,13 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
 
         order_units[order_id] = []
 
-        unit_counter = 1
         total_units = 0
 
         print(
             f"\nORDER {order_id} | "
             f"Due={due_date} | "
-            f"Priority={priority}"
+            f"Priority={priority} | "
+            f"Planned day={int(row['planned_day'])}"
         )
 
         for i in range(3):
@@ -193,11 +203,9 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
             if qty <= 0:
                 continue
 
-            print(f"  {variant} -> Qty={qty}")
-
             for _ in range(qty):
 
-                internal_unit_id = f"{order_id}.{unit_counter}"
+                internal_unit_id = f"U{global_unit_counter:03d}"
 
                 unit = Unit(
                     unit_id=internal_unit_id,
@@ -210,16 +218,16 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
                 units.append(unit)
                 order_units[order_id].append(internal_unit_id)
 
-                print(f"    Created Unit: {internal_unit_id}")
-
-                unit_counter += 1
+                global_unit_counter += 1
                 total_units += 1
 
         order = Order(
             order_id=order_id,
             due_date=due_date,
             priority=priority,
-            total_units=total_units
+            total_units=total_units,
+            planned_week=int(row["planned_week"]),
+            planned_day=int(row["planned_day"])
         )
 
         orders.append(order)
@@ -232,6 +240,177 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
     print("================================================\n")
 
     return orders, units, order_units
+
+# ============================================================
+# ROLLING HORIZON / SIMULATION STATE HELPERS
+# ============================================================
+
+def get_current_planned_day(current_time_s: float) -> int:
+    """Return the production-plan day number containing current_time_s.
+
+    Day numbering follows the production_plan column planned_day:
+    current_time_s in [0, 28800) is planned_day 1,
+    current_time_s in [28800, 57600) is planned_day 2, etc.
+    """
+
+    return int(current_time_s // SECONDS_PER_PRODUCTION_DAY) + 1
+
+
+def get_planned_day_window(
+    current_time_s: float,
+    lookahead_days: int
+) -> Tuple[int, int]:
+    """
+    Calculate the planned_day interval for the rolling horizon.
+
+    lookahead_days=1 keeps only the current planned_day.
+    lookahead_days=3 keeps current planned_day + 2 following planned days.
+    lookahead_days=5 keeps current planned_day + 4 following planned days.
+    """
+
+    if lookahead_days not in ALLOWED_LOOKAHEAD_DAYS:
+        raise ValueError(
+            f"lookahead_days must be one of {sorted(ALLOWED_LOOKAHEAD_DAYS)}, "
+            f"got {lookahead_days}"
+        )
+
+    first_day = get_current_planned_day(current_time_s)
+    last_day = first_day + lookahead_days - 1
+
+    return first_day, last_day
+
+
+def normalize_completed_unit_ids(completed_unit_ids=None) -> Set[str]:
+    """
+    Normalise completed unit IDs from the main simulation.
+
+    Expected format is the scheduler internal unit_id format, e.g. '12.3'.
+    For now this can be left empty until the main simulation supplies it.
+    """
+
+    if completed_unit_ids is None:
+        return set()
+
+    return {str(unit_id) for unit_id in completed_unit_ids}
+
+
+def get_completed_unit_ids_from_count(
+    units: List[Unit],
+    completed_units_count: int = 0
+) -> Set[str]:
+    """
+    Temporary helper for testing before main_sim is connected.
+
+    If completed_units_count = N, the scheduler treats the first N units in the
+    loaded production-plan order as already completed.
+
+    Later, main_sim should preferably provide exact completed unit IDs instead
+    of only a count, because exact IDs are more robust when the actual produced
+    sequence differs from the original production-plan order.
+    """
+
+    if completed_units_count is None:
+        completed_units_count = 0
+
+    completed_units_count = int(completed_units_count)
+
+    if completed_units_count < 0:
+        raise ValueError(
+            f"completed_units_count must be >= 0, got {completed_units_count}"
+        )
+
+    completed_units_count = min(completed_units_count, len(units))
+
+    return {
+        unit.unit_id
+        for unit in units[:completed_units_count]
+    }
+
+
+def filter_orders_and_units_for_rolling_horizon(
+    orders: List[Order],
+    units: List[Unit],
+    order_units: dict,
+    current_time_s: float = 0.0,
+    lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+    completed_unit_ids=None
+) -> Tuple[List[Order], List[Unit], dict, Dict[str, float]]:
+    """
+    Prepare a reduced scheduling problem for the GA.
+
+    The filter does two things:
+    1) Removes units that have already been completed by the main simulation.
+    2) Keeps only orders where production_plan.planned_day is inside the
+       rolling look-ahead window.
+
+    Important: If an order has partly completed units, the remaining quantity is
+    scheduled as a reduced order with the same order_id/due_date/priority.
+    """
+
+    completed = normalize_completed_unit_ids(completed_unit_ids)
+
+    first_planned_day, last_planned_day = get_planned_day_window(
+        current_time_s=current_time_s,
+        lookahead_days=lookahead_days
+    )
+
+    units_by_id = {
+        unit.unit_id: unit
+        for unit in units
+    }
+
+    horizon_orders = []
+    horizon_units = []
+    horizon_order_units = {}
+
+    for order in orders:
+
+        if not (first_planned_day <= order.planned_day <= last_planned_day):
+            continue
+
+        remaining_unit_ids = [
+            unit_id
+            for unit_id in order_units[order.order_id]
+            if unit_id not in completed
+        ]
+
+        if not remaining_unit_ids:
+            continue
+
+        horizon_order_units[order.order_id] = remaining_unit_ids
+
+        horizon_orders.append(
+            Order(
+                order_id=order.order_id,
+                due_date=order.due_date,
+                priority=order.priority,
+                total_units=len(remaining_unit_ids),
+                planned_week=order.planned_week,
+                planned_day=order.planned_day
+            )
+        )
+
+        horizon_units.extend(
+            units_by_id[unit_id]
+            for unit_id in remaining_unit_ids
+        )
+
+    # Important:
+    # Horizon start is the actual current simulation time,
+    # not the start of the production day.
+    horizon_start_s = current_time_s
+
+    # Horizon end is the end of the last planned day included in the window.
+    horizon_end_s = last_planned_day * SECONDS_PER_PRODUCTION_DAY
+
+    horizon_info = {
+        "first_planned_day": first_planned_day,
+        "last_planned_day": last_planned_day,
+        "horizon_start_s": horizon_start_s,
+        "horizon_end_s": horizon_end_s,
+    }
+
+    return horizon_orders, horizon_units, horizon_order_units, horizon_info
 
 
 # ============================================================
@@ -247,7 +426,8 @@ def create_order_seed(orders: List[Order]):
             "order_id": order.order_id,
             "due_date": order.due_date,
             "priority": order.priority,
-            "total_units": order.total_units
+            "total_units": order.total_units,
+            "planned_day": order.planned_day
         })
 
     order_scores.sort(
@@ -268,7 +448,8 @@ def create_order_seed(orders: List[Order]):
             f"Order {row['order_id']} | "
             f"Due={row['due_date']:.1f} | "
             f"Priority={row['priority']} | "
-            f"Units={row['total_units']}"
+            f"Units={row['total_units']} | "
+            f"Planned day={row['planned_day']}"
         )
 
     print("================================================\n")
@@ -281,6 +462,9 @@ def create_order_seed(orders: List[Order]):
 # ============================================================
 
 def create_order_population(orders: List[Order]):
+
+    if not orders:
+        return []
 
     seed = create_order_seed(orders)
 
@@ -332,7 +516,6 @@ def order_chromosome_to_unit_sequence(
 
     return unit_sequence
 
-
 def chromosome_to_unit_dataframe(
     chromosome,
     order_units,
@@ -354,20 +537,15 @@ def chromosome_to_unit_dataframe(
 
         unit = units_lookup[internal_unit_id]
 
-        local_unit_id = int(
-            unit.unit_id.split(".")[1]
-        )
-
         rows.append({
             "unit_seq": unit_seq,
             "order_id": unit.order_id,
-            "unit_id": local_unit_id,
+            "unit_id": unit.unit_id,
             "variant": unit.variant,
             "route_id": route_id
         })
 
     return pd.DataFrame(rows)
-
 
 # ============================================================
 # EXPORT SCHEDULE
@@ -377,10 +555,9 @@ def export_schedule(
     chromosome,
     order_units,
     units_lookup,
-    filename,
+    filename="current_schedule.csv",
     verbose=False
 ):
-
     unit_df = chromosome_to_unit_dataframe(
         chromosome=chromosome,
         order_units=order_units,
@@ -388,14 +565,7 @@ def export_schedule(
         route_id=0
     )
 
-    output_dir = INPUT_DIR / "output_schedules"
-
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    output_path = output_dir / filename
+    output_path = INPUT_DIR / filename
 
     unit_df.to_csv(
         output_path,
@@ -414,40 +584,25 @@ def export_schedule(
 
 def safe_delete_file(path: Path):
     if path is not None and path.exists() and path.is_file():
-        path.unlink()
+        try:
+            path.unlink()
+        except PermissionError as exc:
+            print(f"WARNING: Could not delete file because it is locked: {path}")
+            print(f"         {exc}")
 
 
 def safe_delete_folder(path: Path):
     if path is not None and path.exists() and path.is_dir():
-        shutil.rmtree(path)
-
-
-def clear_all_schedules_before_simulation():
-    """Remove all schedule CSV files before each simulator call.
-
-    The simulator scans INPUT_DIR/output_schedules and creates one summary
-    folder for every schedule CSV it finds. If an old best_schedule.csv is left
-    in that folder, the simulator will keep generating best_schedule_summary,
-    best_schedule_summary__2, best_schedule_summary__3, etc.
-
-    Therefore, before evaluating a GA chromosome, the folder must contain only
-    the single temporary Iter_... schedule that is about to be simulated.
-    """
-    output_dir = INPUT_DIR / "output_schedules"
-
-    if not output_dir.exists():
-        return
-
-    for path in output_dir.glob("*.csv"):
-        safe_delete_file(path)
+        try:
+            shutil.rmtree(path)
+        except PermissionError as exc:
+            print(f"WARNING: Could not delete folder because it is locked: {path}")
+            print(f"         {exc}")
 
 
 def clear_old_summary_output_folder():
-    """Remove old simulator summary folders for this input batch.
+    """Remove old simulator summary folders for this input batch."""
 
-    This gives each GA run a clean output/<orders_...> folder. The final run
-    will only keep the summary folder belonging to the best chromosome.
-    """
     output_root = ROOT / "output" / INPUT_DIR.name
 
     if not output_root.exists():
@@ -489,12 +644,40 @@ def find_summary_folder(
     chromosome_index
 ):
 
+    if (INPUT_DIR / "unit_summary.csv").exists():
+        return INPUT_DIR
+
+    raise FileNotFoundError(
+        f"unit_summary.csv not found in {INPUT_DIR}"
+    )
+
+    candidates = []
+
+    if (INPUT_DIR / "unit_summary.csv").exists():
+        candidates.append(INPUT_DIR)
+
     output_root = ROOT / "output" / INPUT_DIR.name
 
-    base_name = (
-        f"Iter_{generation}_schedule_"
-        f"{chromosome_index}_summary"
+    if output_root.exists():
+        candidates.extend(
+            folder
+            for folder in output_root.iterdir()
+            if folder.is_dir() and (folder / "unit_summary.csv").exists()
+        )
+
+    if not candidates:
+        raise FileNotFoundError(
+            f"No folder with unit_summary.csv found in {INPUT_DIR} or {output_root}"
+        )
+
+    return max(
+        candidates,
+        key=lambda folder: (folder / "unit_summary.csv").stat().st_mtime
     )
+
+    output_root = ROOT / "output" / INPUT_DIR.name
+
+    base_name = "current_schedule_summary"
 
     exact_folder = output_root / base_name
 
@@ -542,22 +725,6 @@ def read_simulation_result_from_unit_summary(
                 f"Missing column '{column}' in {unit_summary_path}"
             )
 
-    # ========================================================
-    # TEMPORARY SOLUTION:
-    # Currently using unit_summary.csv.
-    #
-    # Future change:
-    # When order_summary.csv exists, replace this section with:
-    #
-    # order_df = pd.read_csv(summary_folder / "order_summary.csv")
-    #
-    # order_completion_times = (
-    #     order_df
-    #     .set_index("orderID")["completion_time_s"]
-    #     .to_dict()
-    # )
-    # ========================================================
-
     order_completion_times = (
         unit_df
         .groupby("orderID")["completion_time_s"]
@@ -579,7 +746,6 @@ def read_simulation_result_from_unit_summary(
 # ============================================================
 # SIMULATOR WRAPPER
 # ============================================================
-
 def evaluate_schedule_with_simulator(
     chromosome,
     order_units,
@@ -588,13 +754,7 @@ def evaluate_schedule_with_simulator(
     generation
 ):
 
-    filename = (
-        f"Iter_{generation}_schedule_"
-        f"{chromosome_index}.csv"
-    )
-
-    if CLEAN_TEMP_OUTPUTS:
-        clear_all_schedules_before_simulation()
+    filename = "current_schedule.csv"
 
     schedule_path = export_schedule(
         chromosome=chromosome,
@@ -606,11 +766,6 @@ def evaluate_schedule_with_simulator(
 
     with contextlib.redirect_stdout(io.StringIO()):
         simulator.main()
-
-    # The simulator has already read the schedule, so the GA does not need
-    # to keep all intermediate Iter_*.csv schedule files.
-    if CLEAN_TEMP_OUTPUTS:
-        safe_delete_file(schedule_path)
 
     summary_folder = find_summary_folder(
         generation=generation,
@@ -632,18 +787,31 @@ def calculate_fitness(
     simulation_result,
     orders
 ):
+    """Calculate GA fitness for a simulated schedule.
+
+    Lower fitness is better.
+
+    Fitness consists of:
+    - Weighted sum of exponential tardiness penalty for all delayed orders.
+    - Weighted extra exponential penalty for the worst delayed order.
+    - Small linear earliness reward as a tie-breaker.
+
+    The simulator returns completion times in seconds. Due dates are assumed
+    to use the same unit. Tardiness and earliness are converted to days before
+    being used in the fitness function.
+    """
 
     order_info = {
         o.order_id: {
-            "due_date": o.due_date,
-            "priority": o.priority
+            "due_date": o.due_date
         }
         for o in orders
     }
 
-    total_tardiness = 0.0
+    raw_exp_tardiness = 0.0
+    max_tardiness_days = 0.0
+    raw_earliness_days = 0.0
     late_orders = 0
-    total_earliness = 0.0
 
     for order_id, completion in (
         simulation_result["order_completion_times"].items()
@@ -651,39 +819,77 @@ def calculate_fitness(
 
         order_id = int(order_id)
 
+        if order_id not in order_info:
+            continue
+
         due = order_info[order_id]["due_date"]
-        priority = order_info[order_id]["priority"]
+
+        lateness = completion - due
 
         tardiness = max(
             0.0,
-            completion - due
+            lateness
         )
 
         earliness = max(
             0.0,
-            due - completion
+            -lateness
+        )
+
+        tardiness_days = (
+            tardiness / TIME_SCALE
+        )
+
+        earliness_days = (
+            earliness / TIME_SCALE
         )
 
         if tardiness > 0:
             late_orders += 1
 
-        total_tardiness += (
-            tardiness * (priority + 1)
+        raw_exp_tardiness += (
+            math.exp(tardiness_days) - 1
         )
 
-        total_earliness += earliness
+        max_tardiness_days = max(
+            max_tardiness_days,
+            tardiness_days
+        )
+
+        raw_earliness_days += earliness_days
+
+    raw_max_exp_tardiness = (
+        math.exp(max_tardiness_days) - 1
+    )
+
+    weighted_exp_tardiness = (
+        ALPHA_TARDINESS * raw_exp_tardiness
+    )
+
+    weighted_max_exp_tardiness = (
+        BETA_MAX_TARDINESS * raw_max_exp_tardiness
+    )
+
+    weighted_earliness_reward = (
+        GAMMA_EARLINESS * raw_earliness_days
+    )
 
     fitness = (
-        ALPHA_TARDINESS * total_tardiness
-        + BETA_LATE_ORDERS * late_orders
-        - GAMMA_EARLINESS * total_earliness
+        weighted_exp_tardiness
+        + weighted_max_exp_tardiness
+        - weighted_earliness_reward
     )
 
     return {
         "fitness": fitness,
-        "total_tardiness": total_tardiness,
-        "late_orders": late_orders,
-        "total_earliness": total_earliness
+        "weighted_exp_tardiness": weighted_exp_tardiness,
+        "weighted_max_exp_tardiness": weighted_max_exp_tardiness,
+        "weighted_earliness_reward": weighted_earliness_reward,
+        "raw_exp_tardiness": raw_exp_tardiness,
+        "raw_max_exp_tardiness": raw_max_exp_tardiness,
+        "max_tardiness_days": max_tardiness_days,
+        "raw_earliness_days": raw_earliness_days,
+        "late_orders": late_orders
     }
 
 
@@ -698,7 +904,7 @@ def tournament_selection(
 
     sampled = random.sample(
         list(zip(population, fitnesses)),
-        TOURNAMENT_SIZE
+        min(TOURNAMENT_SIZE, len(population))
     )
 
     sampled.sort(key=lambda x: x[1])
@@ -765,11 +971,14 @@ def run_ga(
 
     if CLEAN_TEMP_OUTPUTS:
         clear_old_summary_output_folder()
-        clear_all_schedules_before_simulation()
 
     population = create_order_population(
         orders
     )
+
+    if not population:
+        print("No orders inside the selected rolling horizon.")
+        return (None, [], None, float("inf"), None)
 
     best_order_solution = None
     best_unit_sequence = None
@@ -866,19 +1075,20 @@ def run_ga(
             print(
                 f"Gen {generation_number:02d} | "
                 f"Chrom {chromosome_index:02d} | "
-                f"Fitness {fitness:12.2f} | "
+                f"Fitness {fitness:12.4f} | "
                 f"Late {fitness_result['late_orders']:2d} | "
-                f"Tard {fitness_result['total_tardiness']:10.1f} | "
-                f"Early {fitness_result['total_earliness']:10.1f} | "
-                f"Makespan {simulation_result['makespan']:10.1f}"
+                f"A*Exp {fitness_result['weighted_exp_tardiness']:8.4f} | "
+                f"B*Max {fitness_result['weighted_max_exp_tardiness']:8.4f} | "
+                f"-G*Early {-fitness_result['weighted_earliness_reward']:8.4f} | "
+                f"MaxDay {fitness_result['max_tardiness_days']:6.2f} | "
                 f"{best_marker}"
             )
 
         print(
             f"\n>>> Generation {generation_number} done | "
             f"Generation best chromosome: {generation_best_chromosome} | "
-            f"Generation best fitness: {generation_best_fitness:.2f} | "
-            f"Global best fitness: {best_fitness:.2f}"
+            f"Generation best fitness: {generation_best_fitness:.4f} | "
+            f"Global best fitness: {best_fitness:.4f}"
         )
 
         print(
@@ -893,7 +1103,7 @@ def run_ga(
 
         new_population = [
             copy.deepcopy(ranked[i][0])
-            for i in range(ELITE_SIZE)
+            for i in range(min(ELITE_SIZE, len(ranked)))
         ]
 
         while len(new_population) < POPULATION_SIZE:
@@ -936,8 +1146,12 @@ def run_ga(
             safe_delete_folder(final_summary_folder)
 
         if best_summary_folder.exists() and best_summary_folder != final_summary_folder:
-            best_summary_folder.rename(final_summary_folder)
-            best_summary_folder = final_summary_folder
+            try:
+                best_summary_folder.rename(final_summary_folder)
+                best_summary_folder = final_summary_folder
+            except PermissionError as exc:
+                print(f"WARNING: Could not rename best summary folder: {best_summary_folder}")
+                print(f"         {exc}")
 
     return (
         best_order_solution,
@@ -952,7 +1166,12 @@ def run_ga(
 # MAIN
 # ============================================================
 
-def main():
+def main(
+    current_time_s: float = CURRENT_TIME_S,
+    lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+    completed_units_count: int = COMPLETED_UNITS_COUNT,
+    completed_unit_ids=None
+):
 
     print("\n================================================")
     print("STARTING GA SCHEDULER")
@@ -963,6 +1182,11 @@ def main():
 
     print("\nInput folder:")
     print(INPUT_DIR)
+
+    print("\nRolling horizon setup:")
+    print(f"Current simulation time [s]: {current_time_s}")
+    print(f"Lookahead days: {lookahead_days}")
+    print(f"Completed units count: {completed_units_count}")
 
     print("\nLoading files...")
 
@@ -984,18 +1208,45 @@ def main():
 
     print("\nFiles loaded successfully.")
 
-    orders, units, order_units = load_orders_and_units_from_file(
+    all_orders, all_units, all_order_units = load_orders_and_units_from_file(
         production_df
     )
 
-    print("\nExample order to units:")
+    completed_from_count = get_completed_unit_ids_from_count(
+        units=all_units,
+        completed_units_count=completed_units_count
+    )
 
-    for order_id, unit_ids in list(order_units.items())[:5]:
+    completed_from_ids = normalize_completed_unit_ids(
+        completed_unit_ids
+    )
 
-        print(
-            f"Order {order_id}: "
-            f"{unit_ids}"
-        )
+    completed_units = completed_from_count.union(completed_from_ids)
+
+    print(f"Completed unit IDs used for filtering: {len(completed_units)}")
+
+    orders, units, order_units, horizon_info = filter_orders_and_units_for_rolling_horizon(
+        orders=all_orders,
+        units=all_units,
+        order_units=all_order_units,
+        current_time_s=current_time_s,
+        lookahead_days=lookahead_days,
+        completed_unit_ids=completed_units
+    )
+
+    print("\nRolling horizon result:")
+    print(
+        f"Planned day window: {horizon_info['first_planned_day']} "
+        f"-> {horizon_info['last_planned_day']}"
+    )
+    print(f"Horizon start [s]: {horizon_info['horizon_start_s']}")
+    print(f"Horizon end [s]: {horizon_info['horizon_end_s']}")
+    print(f"Orders inside horizon: {len(orders)} / {len(all_orders)}")
+    print(f"Remaining units inside horizon: {len(units)} / {len(all_units)}")
+
+    if not orders:
+        print("\nNo remaining orders/units inside selected horizon. Nothing to schedule.")
+        return None
 
     print("\nRunning GA...")
 
@@ -1015,7 +1266,7 @@ def main():
     print("GA FINISHED")
     print("================================================")
 
-    print(f"\nBest fitness: {best_fitness:.2f}")
+    print(f"\nBest fitness: {best_fitness:.4f}")
 
     print("\nBest order solution:")
     print(best_order_solution)
@@ -1032,21 +1283,28 @@ def main():
         print("\nBest summary folder:")
         print(best_summary_folder)
 
-    units_lookup = {
-        u.unit_id: u
-        for u in units
-    }
+    if best_order_solution is not None:
+        units_lookup = {
+            u.unit_id: u
+            for u in units
+        }
 
-    export_schedule(
-        chromosome=best_order_solution,
-        order_units=order_units,
-        units_lookup=units_lookup,
-        filename="best_schedule.csv",
-        verbose=True
-    )
+        export_schedule(
+            chromosome=best_order_solution,
+            order_units=order_units,
+            units_lookup=units_lookup,
+            filename="current_schedule.csv",
+            verbose=True
+        )
 
     print("\nFinished.")
 
 
 if __name__ == "__main__":
-    main()
+
+    main(
+        current_time_s=CURRENT_TIME_S,
+        lookahead_days=DEFAULT_LOOKAHEAD_DAYS,
+        completed_units_count=COMPLETED_UNITS_COUNT,
+        completed_unit_ids=[]
+    )
