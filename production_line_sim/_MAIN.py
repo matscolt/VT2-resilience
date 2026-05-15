@@ -164,7 +164,7 @@ def main2():
 
 
 if __name__ == "__main__":
-   loop = False #ændre den her hvis du ikke vil have et valg længere
+   loop = True #ændre den her hvis du ikke vil have et valg længere
    if loop == True:
       while loop == True:
          user = input("old main(o) or new main(n)  (o/n)\n>> ").lower()
