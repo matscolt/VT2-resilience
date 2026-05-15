@@ -116,11 +116,13 @@ INPUT_BATCH_NAME_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)
 MAIN_INPUT_BATCH_NAME_RE = re.compile(r"^main_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)$", re.IGNORECASE)
 RUN_DIR_NAME_RE = re.compile(r"^run_(\d+)$", re.IGNORECASE)
 INPUT_ORDER_CSV_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)\.csv$", re.IGNORECASE)
-SCHEDULE_FILENAME = "current_schedule.csv"
-OUTPUT_SCHEDULES_DIRNAME = "output_schedules"
+CURRENT_SCHEDULE_FILENAME = "current_schedule.csv"
+ONGOING_DIRNAME = "on_going"
 LINE_LAYOUT_FILENAME = "line_layout.json"
 DISRUPTION_FILENAME = "disruption.json"
 TIMED_DISRUPTION_FILENAME = "disruptions.csv"
+TIMED_DISRUPTION_V2_FILENAME = "disruption_v2.json"
+DISRUPTIONS_DIRNAME = "disruptions"
 LINE_LAYOUT_SETTINGS_KEYS = (
     "line_layout_file",
     "line_layout_filename",
@@ -137,7 +139,6 @@ MATERIAL_STAGE_TO_MATERIAL = {
 }
 INSPECTION_STAGE_NUMBER = 6
 BROKEN_MATERIAL_EXTRA_TIME_DEFAULT_S = 30.0
-ONGOING_DIRNAME = "on_going"
 DISRUPTION_HISTORY_FILENAME = "disruption_his.csv"
 
 
@@ -678,32 +679,44 @@ def _parse_run_dir_sort_key(name: str) -> int:
     return int(match.group(1))
 
 
-def find_newest_ongoing_main_run_dir(base_dir: Path) -> Path | None:
-    ongoing_root = base_dir / ONGOING_DIRNAME
+def resolve_current_schedule_path(batch_dir: Path) -> Path | None:
+    project_root = Path(__file__).resolve().parent
+    ongoing_root = project_root / ONGOING_DIRNAME
     if not ongoing_root.exists() or not ongoing_root.is_dir():
         return None
 
-    main_dirs = [
-        path
-        for path in ongoing_root.iterdir()
-        if path.is_dir() and MAIN_INPUT_BATCH_NAME_RE.match(path.name)
-    ]
-    if not main_dirs:
-        return None
+    target_main_dir: Path | None = None
+    if batch_dir.parent is not None and MAIN_INPUT_BATCH_NAME_RE.match(batch_dir.parent.name):
+        candidate = ongoing_root / batch_dir.parent.name
+        if candidate.exists() and candidate.is_dir():
+            target_main_dir = candidate
 
-    newest_main_dir = max(main_dirs, key=lambda path: _parse_main_input_batch_sort_key(path.name))
+    if target_main_dir is None:
+        main_dirs = [
+            path
+            for path in ongoing_root.iterdir()
+            if path.is_dir() and MAIN_INPUT_BATCH_NAME_RE.match(path.name)
+        ]
+        if not main_dirs:
+            return None
+        target_main_dir = max(main_dirs, key=lambda path: _parse_main_input_batch_sort_key(path.name))
+
     run_dirs = [
         path
-        for path in newest_main_dir.iterdir()
+        for path in target_main_dir.iterdir()
         if path.is_dir() and RUN_DIR_NAME_RE.match(path.name)
     ]
     if not run_dirs:
         return None
 
-    return min(run_dirs, key=lambda path: _parse_run_dir_sort_key(path.name))
+    target_run_dir = min(run_dirs, key=lambda path: _parse_run_dir_sort_key(path.name))
+    schedule_path = target_run_dir / CURRENT_SCHEDULE_FILENAME
+    if schedule_path.exists() and schedule_path.is_file():
+        return schedule_path
+    return None
 
 
-def _load_schedule_csv(
+def _load_current_schedule_csv(
     schedule_csv_path: Path,
     valid_variants: set[str],
 ) -> dict[str, Any]:
@@ -716,16 +729,16 @@ def _load_schedule_csv(
             raise ValueError(f"Schedule CSV is empty: {schedule_csv_path}")
 
         normalized_header = [re.sub(r"[^a-z0-9]", "", str(value).strip().lower()) for value in header]
-        if normalized_header[:5] != ["unitseq", "orderid", "unitid", "variant", "routeid"]:
+        if normalized_header[:4] != ["unitseq", "orderid", "unitid", "variant"]:
             raise ValueError(
-                "schedule.csv must start with columns: unit_seq, order_id, unit_id, variant, route_id"
+                "current_schedule.csv must start with columns: unit_seq, order_id, unit_id, variant"
             )
 
         for row_index, row in enumerate(reader, start=2):
             if not row or not any(str(cell).strip() for cell in row):
                 continue
 
-            padded_row = list(row) + [""] * max(0, 5 - len(row))
+            padded_row = list(row) + [""] * max(0, 4 - len(row))
             unit_seq = _read_int(padded_row[0], row_index - 1)
             order_id = str(padded_row[1]).strip() if str(padded_row[1]).strip() != "" else str(row_index - 1)
             variant = str(padded_row[3]).strip().upper()
@@ -810,32 +823,9 @@ def find_newest_input_batch_dir(input_root: Path) -> Path:
 
 
 def find_newest_orders_csv(batch_dir: Path) -> Path:
-    ongoing_run_dir = find_newest_ongoing_main_run_dir(Path(__file__).resolve().parent)
-    if ongoing_run_dir is not None:
-        current_schedule_path = ongoing_run_dir / SCHEDULE_FILENAME
-        if current_schedule_path.exists() and current_schedule_path.is_file():
-            return current_schedule_path
-
-    schedule_candidate = batch_dir / SCHEDULE_FILENAME
-    if schedule_candidate.exists() and schedule_candidate.is_file():
-        return schedule_candidate
-
-    output_schedules_dir = batch_dir / OUTPUT_SCHEDULES_DIRNAME
-    if output_schedules_dir.exists() and output_schedules_dir.is_dir():
-        direct_schedule = output_schedules_dir / SCHEDULE_FILENAME
-        if direct_schedule.exists() and direct_schedule.is_file():
-            return direct_schedule
-
-        schedule_candidates = sorted(
-            [
-                path
-                for path in output_schedules_dir.iterdir()
-                if path.is_file() and path.suffix.lower() == ".csv"
-            ],
-            key=lambda path: path.stat().st_mtime,
-        )
-        if schedule_candidates:
-            return max(schedule_candidates, key=lambda path: path.stat().st_mtime)
+    current_schedule_path = resolve_current_schedule_path(batch_dir)
+    if current_schedule_path is not None:
+        return current_schedule_path
 
     candidate_csv_files = [
         path
@@ -852,10 +842,8 @@ def find_newest_orders_csv(batch_dir: Path) -> Path:
         if path.is_file()
         and path.suffix.lower() == ".csv"
         and path.name.casefold() != TIMED_DISRUPTION_FILENAME.casefold()
-        and path.name.casefold() != SCHEDULE_FILENAME.casefold()
         and not path.name.casefold().startswith("disruption_list")
         and not path.name.casefold().startswith("disruptions")
-        and "gantt chart" not in path.name.casefold()
     ]
     if fallback_csv_files:
         return max(fallback_csv_files, key=lambda path: path.stat().st_mtime)
@@ -877,8 +865,8 @@ def load_latest_generated_input(
     simulation_time_s = float(settings_data.get("sim_time [s]", settings_data.get("Sim_time [s]", 0.0)))
     carriers = int(float(settings_data.get("carriers", {}).get("number of carriers", MAX_UNITS_IN_SYSTEM)))
 
-    if orders_csv_path.name.casefold() == SCHEDULE_FILENAME.casefold():
-        schedule_payload = _load_schedule_csv(orders_csv_path, valid_variants)
+    if orders_csv_path.name.casefold() == CURRENT_SCHEDULE_FILENAME.casefold():
+        schedule_payload = _load_current_schedule_csv(orders_csv_path, valid_variants)
         order_text = f"{batch_dir.parent.name}__{batch_dir.name}__scheduled_{len(schedule_payload['ordered_units'])}units"
         return {
             "order_text": order_text,
@@ -1067,33 +1055,135 @@ def resolve_disruption_path(input_root: Path | None, batch_dir: Path | None) -> 
 
 
 def resolve_timed_disruption_csv_path(input_root: Path | None, batch_dir: Path | None) -> Path | None:
-    exact_candidates: list[Path] = []
+    search_dirs: list[Path] = []
+
     if batch_dir is not None:
-        exact_candidates.append(batch_dir / TIMED_DISRUPTION_FILENAME)
+        search_dirs.append(batch_dir / "disruptions")
+        search_dirs.append(batch_dir)
+
     if input_root is not None:
-        exact_candidates.append(input_root / TIMED_DISRUPTION_FILENAME)
+        for main_dir in sorted(
+            [path for path in input_root.iterdir() if path.is_dir() and MAIN_INPUT_BATCH_NAME_RE.match(path.name)],
+            key=lambda path: _parse_main_input_batch_sort_key(path.name),
+            reverse=True,
+        ):
+            run_dirs = sorted(
+                [path for path in main_dir.iterdir() if path.is_dir() and RUN_DIR_NAME_RE.match(path.name)],
+                key=lambda path: _parse_run_dir_sort_key(path.name),
+            )
+            if run_dirs:
+                search_dirs.append(run_dirs[0] / "disruptions")
+                search_dirs.append(run_dirs[0])
+                break
 
-    for candidate in exact_candidates:
-        if candidate.exists():
-            return candidate
+        search_dirs.append(input_root / "disruptions")
+        search_dirs.append(input_root)
 
-    fuzzy_candidates: list[Path] = []
-    for search_dir in [path for path in (batch_dir, input_root) if path is not None]:
-        fuzzy_candidates.extend(sorted(path for path in search_dir.glob("disruption_list*.csv") if path.is_file()))
-        fuzzy_candidates.extend(sorted(path for path in search_dir.glob("disruptions*.csv") if path.is_file()))
+    unique_search_dirs: list[Path] = []
+    seen_dirs: set[str] = set()
+    for search_dir in search_dirs:
+        dir_key = str(search_dir.resolve()) if search_dir.exists() else str(search_dir)
+        if dir_key not in seen_dirs:
+            unique_search_dirs.append(search_dir)
+            seen_dirs.add(dir_key)
 
-    unique_candidates: list[Path] = []
-    seen: set[str] = set()
-    for candidate in fuzzy_candidates:
-        resolved_key = str(candidate.resolve())
-        if resolved_key not in seen:
-            unique_candidates.append(candidate)
-            seen.add(resolved_key)
+    for search_dir in unique_search_dirs:
+        if not search_dir.exists() or not search_dir.is_dir():
+            continue
 
-    if not unique_candidates:
-        return None
+        exact_candidate = search_dir / TIMED_DISRUPTION_FILENAME
+        if exact_candidate.exists() and exact_candidate.is_file():
+            return exact_candidate
 
-    return max(unique_candidates, key=lambda path: path.stat().st_mtime)
+        preferred_candidates = sorted(
+            [
+                path
+                for path in search_dir.glob("disruptions_*.csv")
+                if path.is_file()
+            ],
+            key=lambda path: path.stat().st_mtime,
+        )
+        if preferred_candidates:
+            return max(preferred_candidates, key=lambda path: path.stat().st_mtime)
+
+        fallback_candidates = sorted(
+            [
+                path
+                for path in search_dir.glob("disruptions*.csv")
+                if path.is_file()
+            ],
+            key=lambda path: path.stat().st_mtime,
+        )
+        if fallback_candidates:
+            return max(fallback_candidates, key=lambda path: path.stat().st_mtime)
+
+        disruption_list_candidates = sorted(
+            [
+                path
+                for path in search_dir.glob("disruption_list*.csv")
+                if path.is_file()
+            ],
+            key=lambda path: path.stat().st_mtime,
+        )
+        if disruption_list_candidates:
+            return max(disruption_list_candidates, key=lambda path: path.stat().st_mtime)
+
+    return None
+
+
+def resolve_timed_disruption_json_path(input_root: Path | None, batch_dir: Path | None) -> Path | None:
+    search_dirs: list[Path] = []
+
+    if batch_dir is not None:
+        search_dirs.append(batch_dir / DISRUPTIONS_DIRNAME)
+        search_dirs.append(batch_dir)
+
+    if input_root is not None:
+        for main_dir in sorted(
+            [path for path in input_root.iterdir() if path.is_dir() and MAIN_INPUT_BATCH_NAME_RE.match(path.name)],
+            key=lambda path: _parse_main_input_batch_sort_key(path.name),
+            reverse=True,
+        ):
+            run_dirs = sorted(
+                [path for path in main_dir.iterdir() if path.is_dir() and RUN_DIR_NAME_RE.match(path.name)],
+                key=lambda path: _parse_run_dir_sort_key(path.name),
+            )
+            if run_dirs:
+                search_dirs.append(run_dirs[0] / DISRUPTIONS_DIRNAME)
+                search_dirs.append(run_dirs[0])
+                break
+
+        search_dirs.append(input_root / DISRUPTIONS_DIRNAME)
+        search_dirs.append(input_root)
+
+    unique_search_dirs: list[Path] = []
+    seen_dirs: set[str] = set()
+    for search_dir in search_dirs:
+        dir_key = str(search_dir.resolve()) if search_dir.exists() else str(search_dir)
+        if dir_key not in seen_dirs:
+            unique_search_dirs.append(search_dir)
+            seen_dirs.add(dir_key)
+
+    for search_dir in unique_search_dirs:
+        if not search_dir.exists() or not search_dir.is_dir():
+            continue
+
+        exact_candidate = search_dir / TIMED_DISRUPTION_V2_FILENAME
+        if exact_candidate.exists() and exact_candidate.is_file():
+            return exact_candidate
+
+        fallback_candidates = sorted(
+            [
+                path
+                for path in search_dir.glob("disruption*.json")
+                if path.is_file()
+            ],
+            key=lambda path: path.stat().st_mtime,
+        )
+        if fallback_candidates:
+            return max(fallback_candidates, key=lambda path: path.stat().st_mtime)
+
+    return None
 
 
 def copy_file_if_exists(source_path: Path | None, target_path: Path) -> bool:
@@ -1196,9 +1286,6 @@ def evaluate_operation_disruptions(
         "material_ran_out_random": None,
         "inspection_failed_triggered": False,
         "inspection_random": None,
-        "triggered_disruption_name": None,
-        "triggered_disruption_mean_s": None,
-        "triggered_disruption_std_percent": None,
     }
 
     if disruption_config is None or rng is None:
@@ -1207,52 +1294,22 @@ def evaluate_operation_disruptions(
     stations_config = disruption_config.get("Stations", {})
     station_config = stations_config.get(str(stage_number), {}) if isinstance(stations_config, dict) else {}
 
-    machine_breakdowns = station_config.get("machine breakdowns", []) if isinstance(station_config, dict) else []
-    if isinstance(machine_breakdowns, list) and machine_breakdowns:
-        for breakdown_entry in machine_breakdowns:
-            breakdown_probability = _normalize_probability(breakdown_entry.get("chance [%]", 0.0))
-            breakdown_random = float(rng.random())
-            result["breakdown_random"] = breakdown_random
-            if breakdown_random <= breakdown_probability:
-                breakdown_added_time_s, breakdown_duration_random = _sample_linear_from_range(
-                    rng,
-                    breakdown_entry.get("range [s]", breakdown_entry.get("range", [])),
-                    default_value=breakdown_entry.get("mean [s]", 0.0),
-                )
-                result["triggered_disruption_type"] = "breakdown"
-                result["triggered_disruption_name"] = str(breakdown_entry.get("name", "breakdown"))
-                result["triggered_disruption_mean_s"] = float(breakdown_entry.get("mean [s]", 0.0))
-                result["triggered_disruption_std_percent"] = float(breakdown_entry.get("std [% of mean]", 0.0))
-                result["breakdown_triggered"] = True
-                result["breakdown_added_time_s"] = float(breakdown_added_time_s)
-                result["breakdown_duration_random"] = float(breakdown_duration_random)
-                result["effective_process_time_s"] = float(base_process_time_s) + float(result["breakdown_added_time_s"])
-                return result
-    else:
-        breakdown_config = station_config.get("breakdown", {}) if isinstance(station_config, dict) else {}
-        breakdown_probability = _normalize_probability(breakdown_config.get("Machine breakdown chance [%]", 0.0))
-        breakdown_random = float(rng.random())
-        result["breakdown_random"] = breakdown_random
-        if breakdown_random <= breakdown_probability:
-            breakdown_added_time_s, breakdown_duration_random = _sample_linear_from_range(
-                rng,
-                breakdown_config.get("range"),
-                default_value=breakdown_config.get("duration [s]", 0.0),
-            )
-            result["triggered_disruption_type"] = "breakdown"
-            result["triggered_disruption_name"] = str(breakdown_config.get("name", "breakdown"))
-            if isinstance(breakdown_config.get("range"), (list, tuple)) and len(breakdown_config.get("range", [])) >= 2:
-                low = float(breakdown_config["range"][0])
-                high = float(breakdown_config["range"][1])
-                result["triggered_disruption_mean_s"] = (low + high) / 2.0
-            else:
-                result["triggered_disruption_mean_s"] = float(breakdown_config.get("duration [s]", 0.0))
-            result["triggered_disruption_std_percent"] = float(breakdown_config.get("std [% of mean]", 0.0))
-            result["breakdown_triggered"] = True
-            result["breakdown_added_time_s"] = float(breakdown_added_time_s)
-            result["breakdown_duration_random"] = float(breakdown_duration_random)
-            result["effective_process_time_s"] = float(base_process_time_s) + float(result["breakdown_added_time_s"])
-            return result
+    breakdown_config = station_config.get("breakdown", {}) if isinstance(station_config, dict) else {}
+    breakdown_probability = _normalize_probability(breakdown_config.get("Machine breakdown chance [%]", 0.0))
+    breakdown_random = float(rng.random())
+    result["breakdown_random"] = breakdown_random
+    if breakdown_random <= breakdown_probability:
+        breakdown_added_time_s, breakdown_duration_random = _sample_linear_from_range(
+            rng,
+            breakdown_config.get("range"),
+            default_value=breakdown_config.get("duration [s]", 0.0),
+        )
+        result["triggered_disruption_type"] = "breakdown"
+        result["breakdown_triggered"] = True
+        result["breakdown_added_time_s"] = float(breakdown_added_time_s)
+        result["breakdown_duration_random"] = float(breakdown_duration_random)
+        result["effective_process_time_s"] = float(base_process_time_s) + float(result["breakdown_added_time_s"])
+        return result
 
     efficiency_config = station_config.get("efficiency loss", {}) if isinstance(station_config, dict) else {}
     efficiency_probability = _normalize_probability(efficiency_config.get("efficiency drop chance [%]", 0.0))
@@ -1262,7 +1319,6 @@ def evaluate_operation_disruptions(
         efficiency_drop_percent = float(efficiency_config.get("efficiency drop [%]", 0.0))
         effective_speed_fraction = max(1e-9, 1.0 - (efficiency_drop_percent / 100.0))
         result["triggered_disruption_type"] = "efficiency_loss"
-        result["triggered_disruption_name"] = str(efficiency_config.get("name", "efficiency_loss"))
         result["efficiency_loss_triggered"] = True
         result["efficiency_drop_percent"] = efficiency_drop_percent
         result["efficiency_multiplier"] = 1.0 / effective_speed_fraction
@@ -1279,7 +1335,6 @@ def evaluate_operation_disruptions(
             result["material_broken_random"] = broken_random
             if broken_random <= broken_probability:
                 result["triggered_disruption_type"] = "broken_material"
-                result["triggered_disruption_name"] = "broken_material"
                 result["material_broken_triggered"] = True
                 result["terminal_failure_material"] = selected_material
                 result["material_broken_extra_material_name"] = selected_material
@@ -1293,7 +1348,6 @@ def evaluate_operation_disruptions(
             result["material_ran_out_random"] = ran_out_random
             if ran_out_random <= ran_out_probability:
                 result["triggered_disruption_type"] = "ran_out_of_material"
-                result["triggered_disruption_name"] = "ran_out_of_material"
                 result["material_ran_out_triggered"] = True
                 result["terminal_failure_type"] = "ran_out_of_material"
                 result["terminal_failure_material"] = selected_material
@@ -1306,7 +1360,6 @@ def evaluate_operation_disruptions(
         result["inspection_random"] = inspection_random
         if inspection_random <= inspection_probability:
             result["triggered_disruption_type"] = "failed_inspection"
-            result["triggered_disruption_name"] = str(inspection_config.get("name", "failed_inspection"))
             result["inspection_failed_triggered"] = True
             result["terminal_failure_type"] = "failed_inspection"
             return result
@@ -1419,11 +1472,28 @@ def load_timed_disruption_csv(csv_path: Path, valid_variants: set[str]) -> list[
 def prepare_timed_disruption_data(
     station_sequence: list[str],
     timed_disruption_records: list[dict[str, Any]],
+    timed_disruption_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     station_index_by_disruption_id = {
         _station_disruption_id_from_station_name(station_name): station_index
         for station_index, station_name in enumerate(station_sequence)
     }
+
+    breakdown_names_by_stage: dict[int, set[str]] = {}
+    if isinstance(timed_disruption_config, dict):
+        stations_cfg = timed_disruption_config.get("Stations", {})
+        if isinstance(stations_cfg, dict):
+            for stage_key, stage_cfg in stations_cfg.items():
+                try:
+                    stage_number = int(stage_key)
+                except (TypeError, ValueError):
+                    continue
+                machine_breakdowns = stage_cfg.get("machine breakdowns", []) if isinstance(stage_cfg, dict) else []
+                breakdown_names_by_stage[stage_number] = {
+                    str(entry.get("name", "")).strip().casefold()
+                    for entry in machine_breakdowns
+                    if isinstance(entry, dict) and str(entry.get("name", "")).strip() != ""
+                }
 
     breakdown_windows_by_station: defaultdict[int, list[tuple[float, float]]] = defaultdict(list)
     efficiency_windows_by_station: defaultdict[int, list[tuple[float, float, float]]] = defaultdict(list)
@@ -1431,39 +1501,13 @@ def prepare_timed_disruption_data(
     emergency_orders: list[dict[str, Any]] = []
 
     for record in timed_disruption_records:
-        disruption_type = str(record.get("disruption_type", "")).strip().lower()
+        disruption_type_raw = str(record.get("disruption_type", "")).strip()
+        disruption_type = disruption_type_raw.casefold()
         station_id = record.get("station_id")
         station_index: int | None = None
-        if station_id is not None:
-            if str(station_id) not in station_index_by_disruption_id:
-                raise ValueError(
-                    f"Timed disruption refers to station_id '{station_id}', but that station is not present in the current line layout."
-                )
-            station_index = int(station_index_by_disruption_id[str(station_id)])
+        stage_number: int | None = None
 
-        if disruption_type == "machine_breakdown":
-            if station_index is None:
-                raise ValueError("machine_breakdown requires station_id.")
-            start_time_s = float(record["start_time_s"])
-            end_time_s = float(record["end_time_s"]) if record.get("end_time_s") is not None else start_time_s
-            if end_time_s < start_time_s:
-                raise ValueError("machine_breakdown end_time must be >= start_time.")
-            breakdown_windows_by_station[station_index].append((start_time_s, end_time_s))
-        elif disruption_type == "efficiency_loss":
-            if station_index is None:
-                raise ValueError("efficiency_loss requires station_id.")
-            start_time_s = float(record["start_time_s"])
-            end_time_s = float(record["end_time_s"]) if record.get("end_time_s") is not None else start_time_s
-            if end_time_s < start_time_s:
-                raise ValueError("efficiency_loss end_time must be >= start_time.")
-            efficiency_percentage = float(record["efficiency_percentage"]) if record.get("efficiency_percentage") is not None else 100.0
-            efficiency_fraction = max(0.0, min(1.0, efficiency_percentage / 100.0))
-            efficiency_windows_by_station[station_index].append((start_time_s, end_time_s, efficiency_fraction))
-        elif disruption_type == "failed_inspection":
-            if station_index is None:
-                raise ValueError("failed_inspection requires station_id.")
-            failed_inspection_times_by_station[station_index].append(float(record["start_time_s"]))
-        elif disruption_type == "emergency_order":
+        if disruption_type == "emergency_order":
             order_id = record.get("order_id")
             if order_id is None:
                 raise ValueError("emergency_order requires order_id.")
@@ -1477,11 +1521,49 @@ def prepare_timed_disruption_data(
                     "variants": list(record.get("emergency_variants", [])),
                 }
             )
-        else:
-            raise ValueError(
-                f"Unknown timed disruption_type '{record.get('disruption_type')}'. "
-                "Expected one of: machine_breakdown, efficiency_loss, failed_inspection, emergency_order."
-            )
+            continue
+
+        if station_id is not None:
+            if str(station_id) not in station_index_by_disruption_id:
+                continue
+            station_index = int(station_index_by_disruption_id[str(station_id)])
+            stage_number, _, _ = _extract_station_name_parts(station_sequence[station_index])
+
+        if station_index is None:
+            continue
+
+        start_time_s = float(record["start_time_s"])
+        end_time_s = float(record["end_time_s"]) if record.get("end_time_s") is not None else start_time_s
+
+        if disruption_type in {"efficiency_loss", "efficiency loss"}:
+            if end_time_s < start_time_s:
+                continue
+            efficiency_percentage = float(record["efficiency_percentage"]) if record.get("efficiency_percentage") is not None else 100.0
+            efficiency_fraction = max(0.0, min(1.0, efficiency_percentage / 100.0))
+            efficiency_windows_by_station[station_index].append((start_time_s, end_time_s, efficiency_fraction))
+            continue
+
+        if disruption_type in {"failed_inspection", "inspection_failure", "inspection failure"}:
+            failed_inspection_times_by_station[station_index].append(float(record["start_time_s"]))
+            continue
+
+        is_breakdown_type = disruption_type == "machine_breakdown"
+        if not is_breakdown_type and stage_number is not None:
+            valid_breakdown_names = breakdown_names_by_stage.get(int(stage_number), set())
+            if disruption_type in valid_breakdown_names:
+                is_breakdown_type = True
+
+        if is_breakdown_type:
+            if end_time_s < start_time_s:
+                continue
+            breakdown_windows_by_station[station_index].append((start_time_s, end_time_s))
+            continue
+
+        raise ValueError(
+            f"Unknown timed disruption_type '{record.get('disruption_type')}'. "
+            "Expected one of: machine_breakdown, efficiency_loss, failed_inspection, emergency_order, "
+            "or a breakdown subtype defined in disruption_v2.json."
+        )
 
     for station_index in breakdown_windows_by_station:
         breakdown_windows_by_station[station_index].sort()
@@ -1498,7 +1580,6 @@ def prepare_timed_disruption_data(
         "failed_inspection_times_by_station": dict(failed_inspection_times_by_station),
         "emergency_orders": emergency_orders,
     }
-
 
 def _station_speed_factor_at_time(
     time_s: float,
@@ -1573,9 +1654,6 @@ def calculate_timed_operation_disruption_result(
         "material_ran_out_random": None,
         "inspection_failed_triggered": False,
         "inspection_random": None,
-        "triggered_disruption_name": None,
-        "triggered_disruption_mean_s": None,
-        "triggered_disruption_std_percent": None,
     }
 
     if timed_disruption_data is None:
@@ -1624,7 +1702,6 @@ def calculate_timed_operation_disruption_result(
     result["breakdown_added_time_s"] = float(breakdown_added_time_s)
     if breakdown_added_time_s > 0.0:
         result["triggered_disruption_type"] = "breakdown"
-        result["triggered_disruption_name"] = "breakdown"
 
     productive_elapsed_time_s = max(0.0, result["effective_process_time_s"] - result["breakdown_added_time_s"])
     if productive_elapsed_time_s > float(base_process_time_s) + 1e-9:
@@ -1634,7 +1711,6 @@ def calculate_timed_operation_disruption_result(
             result["efficiency_drop_percent"] = max(0.0, 100.0 * (1.0 - (1.0 / result["efficiency_multiplier"])))
         if result["triggered_disruption_type"] is None:
             result["triggered_disruption_type"] = "efficiency_loss"
-            result["triggered_disruption_name"] = "efficiency_loss"
 
     return result
 
@@ -1925,9 +2001,6 @@ def run_simulation(
     for unit_index in range(initial_requested_unit_count):
         root_to_attempt_indices[unit_index].append(unit_index)
 
-    def _root_unit_id_text(root_index: int) -> str:
-        return f"U{int(root_index) + 1:03d}"
-
     replacement_variants_created: list[str] = []
     extra_material_consumed: defaultdict[str, int] = defaultdict(int)
     actual_material_consumed: defaultdict[str, int] = defaultdict(int)
@@ -2142,7 +2215,7 @@ def run_simulation(
         unit_index, arrival_time_s, queue_length_ahead_on_arrival, _priority_value, _queue_seq = station_state.queue.pop(0)
 
         root_index = root_indices[unit_index]
-        unit_id = _root_unit_id_text(root_index)
+        unit_id = f"U{root_index + 1:03d}"
         variant = ordered_units[unit_index]
         station_name = station_sequence[station_index]
         base_station_name = station_instance_base_names[station_index]
@@ -2210,10 +2283,10 @@ def run_simulation(
                     disruption_counts["material_stockout_stop_events"] += 1
                 unit_attempt_exit_time[unit_index] = float(current_time_s)
                 root_failed_without_replacement[root_indices[unit_index]] = {
-                    "root_unit_id": _root_unit_id_text(root_indices[unit_index]),
+                    "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
                     "order_id": str(root_order_ids[root_indices[unit_index]]),
                     "variant": ordered_units[unit_index],
-                    "failed_attempt_unit_id": _root_unit_id_text(root_indices[unit_index]),
+                    "failed_attempt_unit_id": f"U{root_indices[unit_index] + 1:03d}",
                     "failed_attempt_number": int(attempt_numbers[unit_index]),
                     "failure_type": "material_stockout_at_station",
                     "station_name": station_name,
@@ -2266,7 +2339,7 @@ def run_simulation(
                     "disruption_timestamp_s": float(current_time_s),
                     "unit_id": unit_id,
                     "order_id": str(unit_order_ids[unit_index]),
-                    "root_unit_id": _root_unit_id_text(root_index),
+                    "root_unit_id": f"U{root_index + 1:03d}",
                     "attempt": int(attempt_numbers[unit_index]),
                     "priority": int(unit_priorities[unit_index]),
                     "variant": variant,
@@ -2343,7 +2416,7 @@ def run_simulation(
                             "disruption_timestamp_s": float(time_s),
                             "station_name": station_sequence[station_index],
                             "station_index": int(station_index + 1),
-                            "affected_unit_id": _root_unit_id_text(root_indices[current_processing_unit_index]),
+                            "affected_unit_id": f"U{root_indices[current_processing_unit_index] + 1:03d}",
                             "order_id": str(unit_order_ids[current_processing_unit_index]),
                             "variant": ordered_units[current_processing_unit_index],
                             "timed_action": "scrap_current_unit",
@@ -2441,10 +2514,10 @@ def run_simulation(
                     )
                     if replacement_unit_index is None:
                         root_failed_without_replacement[root_indices[unit_index]] = {
-                            "root_unit_id": _root_unit_id_text(root_indices[unit_index]),
+                            "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
                             "order_id": str(root_order_ids[root_indices[unit_index]]),
                             "variant": ordered_units[unit_index],
-                            "failed_attempt_unit_id": _root_unit_id_text(root_indices[unit_index]),
+                            "failed_attempt_unit_id": f"U{root_indices[unit_index] + 1:03d}",
                             "failed_attempt_number": int(attempt_numbers[unit_index]),
                             "failure_type": terminal_failure_type,
                             "station_name": station_sequence[station_index],
@@ -2455,10 +2528,10 @@ def run_simulation(
                         disruption_counts["replacement_units_created"] += 1
                 else:
                     root_failed_without_replacement[root_indices[unit_index]] = {
-                        "root_unit_id": _root_unit_id_text(root_indices[unit_index]),
+                        "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
                         "order_id": str(root_order_ids[root_indices[unit_index]]),
                         "variant": ordered_units[unit_index],
-                        "failed_attempt_unit_id": _root_unit_id_text(root_indices[unit_index]),
+                        "failed_attempt_unit_id": f"U{root_indices[unit_index] + 1:03d}",
                         "failed_attempt_number": int(attempt_numbers[unit_index]),
                         "failure_type": terminal_failure_type,
                         "station_name": station_sequence[station_index],
@@ -2470,15 +2543,15 @@ def run_simulation(
                     {
                         "event": "unit_scrapped_and_released_for_retry" if replacement_unit_index is not None else "unit_scrapped_without_retry",
                         "disruption_timestamp_s": float(time_s),
-                        "unit_id": _root_unit_id_text(root_indices[unit_index]),
+                        "unit_id": f"U{root_indices[unit_index] + 1:03d}",
                         "order_id": str(root_order_ids[root_indices[unit_index]]),
-                        "root_unit_id": _root_unit_id_text(root_indices[unit_index]),
+                        "root_unit_id": f"U{root_indices[unit_index] + 1:03d}",
                         "attempt": int(attempt_numbers[unit_index]),
                         "variant": ordered_units[unit_index],
                         "station_name": station_sequence[station_index],
                         "failure_type": terminal_failure_type,
                         "failure_material": disruption_result.get("terminal_failure_material"),
-                        "replacement_unit_id": _root_unit_id_text(root_indices[unit_index]) if replacement_unit_index is not None else None,
+                        "replacement_unit_id": f"U{root_indices[unit_index] + 1:03d}" if replacement_unit_index is not None else None,
                         "replacement_attempt_number": int(attempt_numbers[replacement_unit_index]) if replacement_unit_index is not None else None,
                         "replacement_release_time_s": float(time_s) if replacement_unit_index is not None else None,
                         "replacement_shortages": replacement_shortages,
@@ -2501,7 +2574,7 @@ def run_simulation(
                 next_station_name = station_sequence[next_station_index]
                 transport_records.append(
                     TransportRecord(
-                        unit_id=_root_unit_id_text(root_indices[unit_index]),
+                        unit_id=f"U{root_indices[unit_index] + 1:03d}",
                         order_id=str(unit_order_ids[unit_index]),
                         variant=ordered_units[unit_index],
                         transport_index=current_stage_index + 1,
@@ -2562,7 +2635,7 @@ def run_simulation(
             if idx in unit_first_arrival and idx in unit_attempt_exit_time
         )
         variant = ordered_units[successful_attempt_index]
-        unit_id_text = _root_unit_id_text(root_index)
+        unit_id_text = f"U{root_index + 1:03d}"
         time_spent_producing = sum(
             float(op.base_process_time_s)
             for op in operations
@@ -3332,164 +3405,229 @@ def create_throughput_chart(unit_summaries: list[UnitSummary], output_path: Path
 # -----------------------------
 # Run metadata / output folders
 # -----------------------------
-def _parse_run_folder_number(run_dir_name: str) -> int:
-    match = re.match(r"^run_(\d+)$", str(run_dir_name).strip(), re.IGNORECASE)
-    return int(match.group(1)) if match else 10**12
-
-
 def resolve_ongoing_run_dir(base_dir: Path) -> Path:
     ongoing_root = base_dir / ONGOING_DIRNAME
     ongoing_root.mkdir(parents=True, exist_ok=True)
 
     main_dirs = [
-        path for path in ongoing_root.iterdir()
-        if path.is_dir() and path.name.casefold().startswith("main_")
+        path
+        for path in ongoing_root.iterdir()
+        if path.is_dir() and MAIN_INPUT_BATCH_NAME_RE.match(path.name)
     ]
     if main_dirs:
-        newest_main_dir = max(main_dirs, key=lambda path: path.stat().st_mtime)
+        newest_main_dir = max(main_dirs, key=lambda path: _parse_main_input_batch_sort_key(path.name))
     else:
-        newest_main_dir = ongoing_root / f"main_{datetime.now().strftime('%m-%d_%H-%M-%S')}"
+        newest_main_dir = ongoing_root / f"main_{datetime.now().strftime('%d-%m_%H-%M_%S')}"
         newest_main_dir.mkdir(parents=True, exist_ok=True)
 
     run_dirs = [
-        path for path in newest_main_dir.iterdir()
-        if path.is_dir() and re.match(r"^run_\d+$", path.name, re.IGNORECASE)
+        path
+        for path in newest_main_dir.iterdir()
+        if path.is_dir() and RUN_DIR_NAME_RE.match(path.name)
     ]
     if run_dirs:
-        return min(run_dirs, key=lambda path: _parse_run_folder_number(path.name))
+        return min(run_dirs, key=lambda path: _parse_run_dir_sort_key(path.name))
 
     run_dir = newest_main_dir / "run_1"
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
 
 
-def resolve_history_disruption_json_path(base_dir: Path, input_root: Path) -> Path | None:
-    candidates = [
-        input_root / "disruptions" / "disruption.json",
-        input_root / "disruptions" / "disruption_v2.json",
-    ]
-    disruptions_dir = input_root / "disruptions"
-    if disruptions_dir.exists() and disruptions_dir.is_dir():
-        json_candidates = sorted(
-            [path for path in disruptions_dir.iterdir() if path.is_file() and path.suffix.lower() == ".json"],
-            key=lambda path: path.stat().st_mtime,
-        )
-        candidates.extend(json_candidates)
+def _find_matching_timed_record_for_event(
+    event: dict[str, Any],
+    timed_disruption_records: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    station_name = str(event.get("station_name", "")).strip()
+    if station_name == "":
+        return None
 
-    for candidate in candidates:
-        if candidate.exists() and candidate.is_file():
-            return candidate
-    return None
+    target_station_id = _station_disruption_id_from_station_name(station_name)
+    target_time = float(event.get("disruption_timestamp_s", 0.0))
+
+    reserved_types = {"efficiency_loss", "efficiency loss", "failed_inspection", "inspection_failure", "inspection failure", "emergency_order"}
+    matches: list[dict[str, Any]] = []
+    for record in timed_disruption_records:
+        record_station_id = record.get("station_id")
+        if record_station_id is None or str(record_station_id) != str(target_station_id):
+            continue
+        start_time_s = float(record.get("start_time_s", 0.0))
+        end_time_raw = record.get("end_time_s")
+        end_time_s = float(end_time_raw) if end_time_raw is not None else start_time_s
+        if start_time_s <= target_time <= end_time_s + 1e-9:
+            matches.append(record)
+
+    if not matches:
+        return None
+
+    triggered_type = str(event.get("triggered_disruption_type", "")).strip().casefold()
+    if triggered_type == "breakdown":
+        subtype_matches = [
+            record for record in matches
+            if str(record.get("disruption_type", "")).strip().casefold() not in reserved_types
+        ]
+        if subtype_matches:
+            return max(subtype_matches, key=lambda record: float(record.get("start_time_s", 0.0)))
+    if triggered_type in {"efficiency_loss"}:
+        eff_matches = [
+            record for record in matches
+            if str(record.get("disruption_type", "")).strip().casefold() in {"efficiency_loss", "efficiency loss"}
+        ]
+        if eff_matches:
+            return max(eff_matches, key=lambda record: float(record.get("start_time_s", 0.0)))
+    if triggered_type in {"failed_inspection"}:
+        insp_matches = [
+            record for record in matches
+            if str(record.get("disruption_type", "")).strip().casefold() in {"failed_inspection", "inspection_failure", "inspection failure"}
+        ]
+        if insp_matches:
+            return max(insp_matches, key=lambda record: float(record.get("start_time_s", 0.0)))
+
+    return max(matches, key=lambda record: float(record.get("start_time_s", 0.0)))
 
 
-def _lookup_breakdown_estimate_from_library(
-    disruption_library: dict[str, Any] | None,
-    stage_number: int,
-    disruption_name: str,
+def _estimate_breakdown_duration_from_config(
+    disruption_config: dict[str, Any] | None,
+    stage_number: int | None,
+    disruption_name: str | None,
 ) -> float:
-    if not isinstance(disruption_library, dict):
+    if not isinstance(disruption_config, dict) or stage_number is None:
         return 0.0
-    station_cfg = disruption_library.get("Stations", {}).get(str(int(stage_number)), {})
-    breakdowns = station_cfg.get("machine breakdowns", []) if isinstance(station_cfg, dict) else []
-    for entry in breakdowns if isinstance(breakdowns, list) else []:
-        if str(entry.get("name", "")).strip().casefold() == str(disruption_name).strip().casefold():
+
+    stations_cfg = disruption_config.get("Stations", {})
+    station_cfg = stations_cfg.get(str(int(stage_number)), {}) if isinstance(stations_cfg, dict) else {}
+    if not isinstance(station_cfg, dict):
+        return 0.0
+
+    disruption_name_cf = str(disruption_name or "").strip().casefold()
+
+    machine_breakdowns = station_cfg.get("machine breakdowns", [])
+    if isinstance(machine_breakdowns, list):
+        for entry in machine_breakdowns:
+            if not isinstance(entry, dict):
+                continue
+            entry_name = str(entry.get("name", "")).strip().casefold()
+            if disruption_name_cf and entry_name != disruption_name_cf:
+                continue
             mean_s = float(entry.get("mean [s]", 0.0))
-            std_percent = float(entry.get("std [% of mean]", 0.0))
-            return mean_s + 3.0 * mean_s * (std_percent / 100.0)
+            std_pct = float(entry.get("std [% of mean]", 0.0))
+            return mean_s + 3.0 * mean_s * (std_pct / 100.0)
+
+    breakdown_cfg = station_cfg.get("breakdown", {})
+    if isinstance(breakdown_cfg, dict):
+        if isinstance(breakdown_cfg.get("range"), (list, tuple)) and len(breakdown_cfg.get("range", [])) >= 2:
+            low = float(breakdown_cfg["range"][0])
+            high = float(breakdown_cfg["range"][1])
+            mean_s = (low + high) / 2.0
+        else:
+            mean_s = float(breakdown_cfg.get("duration [s]", 0.0))
+        std_pct = float(breakdown_cfg.get("std [% of mean]", 0.0))
+        return mean_s + 3.0 * mean_s * (std_pct / 100.0)
+
     return 0.0
 
 
 def build_disruption_history_rows(
     simulation_details: dict[str, Any],
-    disruption_library: dict[str, Any] | None = None,
+    disruption_config: dict[str, Any] | None,
+    timed_disruption_records: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for event in list(simulation_details.get("disruption_event_log", [])):
+    event_log = list(simulation_details.get("disruption_event_log", []))
+
+    for event in event_log:
         event_name = str(event.get("event", "")).strip()
+        if event_name not in {"operation_disruption", "timed_failed_inspection_trigger"}:
+            continue
 
-        if event_name == "operation_disruption":
-            disruption_type = str(
-                event.get("triggered_disruption_name")
-                or event.get("triggered_disruption_type")
-                or "disruption"
-            ).strip()
-            start_time = float(event.get("disruption_timestamp_s", 0.0))
-            stage_number = int(event.get("stage_number", 0) or 0)
-            station_name = str(event.get("station_name", "")).strip()
+        start_time = float(event.get("disruption_timestamp_s", 0.0))
+        station_name = str(event.get("station_name", "")).strip()
+        stage_number = event.get("stage_number")
+        stage_number = int(stage_number) if stage_number is not None else None
+        station_id = _station_disruption_id_from_station_name(station_name) if station_name else ""
 
-            if bool(event.get("breakdown_triggered", False)):
-                mean_s = event.get("triggered_disruption_mean_s", None)
-                std_percent = event.get("triggered_disruption_std_percent", None)
-                if mean_s is not None and std_percent is not None:
-                    estimated_duration = float(mean_s) + 3.0 * float(mean_s) * (float(std_percent) / 100.0)
-                else:
-                    estimated_duration = _lookup_breakdown_estimate_from_library(
-                        disruption_library,
-                        stage_number=stage_number,
-                        disruption_name=disruption_type,
-                    )
-                end_time = start_time + float(event.get("breakdown_added_time_s", 0.0) or 0.0)
-            elif bool(event.get("efficiency_loss_triggered", False)):
-                estimated_duration = 0.0
-                end_time = start_time + float(event.get("effective_process_time_s", 0.0) or 0.0)
-            elif bool(event.get("material_broken_triggered", False)):
-                estimated_duration = 0.0
-                end_time = start_time + float(event.get("material_broken_added_time_s", 0.0) or 0.0)
-            elif bool(event.get("inspection_failed_triggered", False)):
-                estimated_duration = 0.0
-                end_time = start_time
-            else:
-                estimated_duration = 0.0
-                end_time = start_time
+        matched_timed_record = _find_matching_timed_record_for_event(event, timed_disruption_records)
 
+        disruption_type = str(event.get("triggered_disruption_type", "")).strip()
+        if matched_timed_record is not None:
+            matched_type = str(matched_timed_record.get("disruption_type", "")).strip()
+            if matched_type != "":
+                disruption_type = matched_type
+        if disruption_type == "":
+            disruption_type = "failed_inspection" if event_name == "timed_failed_inspection_trigger" else "disruption"
+
+        estimated_duration = 0.0
+        end_time = start_time
+        efficiency_loss = 0.0
+
+        if event_name == "timed_failed_inspection_trigger" or bool(event.get("inspection_failed_triggered", False)):
+            disruption_type = disruption_type or "failed_inspection"
             station_id = ""
-            if disruption_type.casefold() not in {"inspection failure", "failed_inspection", "inspection_failure", "emergency_order"} and station_name != "":
-                station_id = _station_disruption_id_from_station_name(station_name)
-
-            rows.append(
-                {
-                    "disruption_type": disruption_type,
-                    "estimated_duration": round(float(estimated_duration), 6),
-                    "station_id": station_id,
-                    "efficiency_loss": round(float(event.get("efficiency_drop_percent", 0.0) or 0.0), 6),
-                    "start_time": round(float(start_time), 6),
-                    "end_time": round(float(end_time), 6),
-                }
+            if matched_timed_record is not None and matched_timed_record.get("end_time_s") is not None:
+                end_time = float(matched_timed_record.get("end_time_s"))
+            else:
+                end_time = start_time
+        elif bool(event.get("breakdown_triggered", False)):
+            if matched_timed_record is not None:
+                disruption_type = str(matched_timed_record.get("disruption_type", disruption_type)).strip() or disruption_type
+                if matched_timed_record.get("end_time_s") is not None:
+                    end_time = float(matched_timed_record.get("end_time_s"))
+                else:
+                    end_time = start_time + float(event.get("breakdown_added_time_s", 0.0) or 0.0)
+            else:
+                end_time = start_time + float(event.get("breakdown_added_time_s", 0.0) or 0.0)
+            estimated_duration = _estimate_breakdown_duration_from_config(
+                disruption_config=disruption_config,
+                stage_number=stage_number,
+                disruption_name=disruption_type,
             )
+        elif bool(event.get("efficiency_loss_triggered", False)):
+            efficiency_loss = float(event.get("efficiency_drop_percent", 0.0) or 0.0)
+            if matched_timed_record is not None and matched_timed_record.get("end_time_s") is not None:
+                end_time = float(matched_timed_record.get("end_time_s"))
+            else:
+                end_time = start_time + float(event.get("effective_process_time_s", 0.0) or 0.0)
+            estimated_duration = 0.0
+        elif bool(event.get("material_broken_triggered", False)):
+            end_time = start_time + float(event.get("material_broken_added_time_s", 0.0) or 0.0)
+            estimated_duration = 0.0
+        elif bool(event.get("material_ran_out_triggered", False)):
+            end_time = start_time
+            estimated_duration = 0.0
+        else:
+            end_time = start_time
 
-        elif event_name == "timed_failed_inspection_trigger":
-            start_time = float(event.get("disruption_timestamp_s", 0.0))
-            rows.append(
-                {
-                    "disruption_type": "Inspection Failure",
-                    "estimated_duration": 0.0,
-                    "station_id": "",
-                    "efficiency_loss": 0.0,
-                    "start_time": round(float(start_time), 6),
-                    "end_time": round(float(start_time), 6),
-                }
-            )
+        if disruption_type.casefold() in {"failed_inspection", "inspection_failure", "inspection failure", "emergency_order"}:
+            station_id = ""
+
+        rows.append(
+            {
+                "disruption_type": disruption_type,
+                "estimated_duration": round(float(estimated_duration), 6),
+                "station_id": station_id,
+                "efficiency_loss": round(float(efficiency_loss), 6),
+                "start_time": round(float(start_time), 6),
+                "end_time": round(float(end_time), 6),
+            }
+        )
 
     return rows
 
 
 def write_disruption_history_csv(output_path: Path, rows: list[dict[str, Any]]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["disruption_type", "estimated_duration", "station_id", "efficiency_loss", "start_time", "end_time"]
+    fieldnames = [
+        "disruption_type",
+        "estimated_duration",
+        "station_id",
+        "efficiency_loss",
+        "start_time",
+        "end_time",
+    ]
     with output_path.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            writer.writerow(
-                {
-                    "disruption_type": row.get("disruption_type", ""),
-                    "estimated_duration": row.get("estimated_duration", 0.0),
-                    "station_id": row.get("station_id", ""),
-                    "efficiency_loss": row.get("efficiency_loss", 0.0),
-                    "start_time": row.get("start_time", 0.0),
-                    "end_time": row.get("end_time", 0.0),
-                }
-            )
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
 
 
 def make_order_slug(order_text: str, max_length: int = 80) -> str:
@@ -3640,6 +3778,7 @@ def main() -> None:
 
     disruption_path = resolve_disruption_path(input_root=input_root, batch_dir=batch_dir_for_layout)
     timed_disruption_csv_path = resolve_timed_disruption_csv_path(input_root=input_root, batch_dir=batch_dir_for_layout)
+    timed_disruption_json_path = resolve_timed_disruption_json_path(input_root=input_root, batch_dir=batch_dir_for_layout)
     disruption_mode = _settings_disruption_mode(settings_data)
     disruptions_enabled = disruption_mode != 0
     chance_based_disruptions_enabled = disruption_mode == 1
@@ -3660,6 +3799,11 @@ def main() -> None:
             raise FileNotFoundError(
                 "time based disruptions are enabled in settings.json, but the timed disruption CSV was not found in the input batch."
             )
+        if timed_disruption_json_path is None or not timed_disruption_json_path.exists():
+            raise FileNotFoundError(
+                "time based disruptions are enabled in settings.json, but disruption_v2.json was not found in the input batch."
+            )
+        disruption_config = load_json(timed_disruption_json_path)
         timed_disruption_records = load_timed_disruption_csv(
             timed_disruption_csv_path,
             valid_variants=valid_variants,
@@ -3671,6 +3815,7 @@ def main() -> None:
         timed_disruption_data = prepare_timed_disruption_data(
             station_sequence=list(effective_line_layout["station_sequence"]),
             timed_disruption_records=timed_disruption_records,
+            timed_disruption_config=disruption_config,
         )
 
     run_metadata_extra["line_layout_file"] = (
@@ -3685,6 +3830,8 @@ def main() -> None:
     run_metadata_extra["disruption_seed"] = str(disruption_seed) if disruption_seed is not None else None
     if disruption_path is not None:
         run_metadata_extra["input_disruption_json"] = str(disruption_path.resolve())
+    if timed_disruption_json_path is not None:
+        run_metadata_extra["input_timed_disruption_json"] = str(timed_disruption_json_path.resolve())
     if timed_disruption_csv_path is not None:
         run_metadata_extra["input_timed_disruption_csv"] = str(timed_disruption_csv_path.resolve())
 
@@ -3694,6 +3841,7 @@ def main() -> None:
     if int(disruption_mode) == 1:
         copy_file_if_exists(disruption_path, run_output_dir / "disruption_used.json")
     elif int(disruption_mode) == 2:
+        copy_file_if_exists(timed_disruption_json_path, run_output_dir / "disruption_used.json")
         copy_file_if_exists(timed_disruption_csv_path, run_output_dir / "disruption_used.csv")
 
     save_run_metadata(
@@ -4246,14 +4394,10 @@ def main() -> None:
             run_output_dir / "disruption_summary.json",
         )
 
-        history_disruption_json_path = resolve_history_disruption_json_path(
-            base_dir=Path(__file__).resolve().parent,
-            input_root=input_root,
-        )
-        disruption_library = load_json(history_disruption_json_path) if history_disruption_json_path is not None else None
         disruption_history_rows = build_disruption_history_rows(
             simulation_details=simulation_details,
-            disruption_library=disruption_library,
+            disruption_config=disruption_config,
+            timed_disruption_records=timed_disruption_records,
         )
         ongoing_run_dir = resolve_ongoing_run_dir(Path(__file__).resolve().parent)
         write_disruption_history_csv(
