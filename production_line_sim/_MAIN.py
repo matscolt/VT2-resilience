@@ -58,7 +58,7 @@ def main():
 
 
 def main2():
-   #create folders
+   #create folders/check they are there
    input_dir = BASE_DIR / "input"
    input_dir.mkdir(exist_ok=True)
    on_going_dir = BASE_DIR / "on_going"
@@ -71,16 +71,27 @@ def main2():
    #create subfolders
    dirs = [input_dir,on_going_dir,output_dir,post_processing_dir]
 
-   timestamp = datetime.now().strftime("%m-%d_%H-%M")
+   timestamp = datetime.now().strftime("%d-%m_%H-%M")
    n=0
    main_loop_name = f"main_{timestamp}_{n}"
-   while (dirs[1] / main_loop_name).exists():
+   while (dirs[0] / main_loop_name).exists():
          n=n+1
          main_loop_name = f"main_{timestamp}_{n}"
    for dir in dirs:
       subfolder = dir / main_loop_name
       subfolder.mkdir(exist_ok=True)
    
+   dirs = [dir / main_loop_name for dir in dirs]
+   
+   #create input subfolders
+   disruption_dir = dirs[0] / "disruptions"
+   disruption_dir.mkdir(exist_ok=True)
+   orders_dir = dirs[0] / "orders"
+   orders_dir.mkdir(exist_ok=True)
+   runs_dir = dirs[0] / "runs"
+   runs_dir.mkdir(exist_ok=True)
+
+   dirs[0] = runs_dir
    
    print("reading settings")
    #read settings
@@ -91,6 +102,34 @@ def main2():
    ratios = list(mainsettings["order_units_ratio"].items())
    algos = list(mainsettings["algorithms"].items())
    seeds = list(mainsettings["seeds"].items())
+   
+   # build index maps for the keys
+   sc_idx = {k: i+1 for i, (k, _) in enumerate(scenarios)}
+   p_idx  = {k: i+1 for i, (k, _) in enumerate(pressures)}
+   r_idx  = {k: i+1 for i, (k, _) in enumerate(ratios)}
+   s_idx  = {k: i+1 for i, (k, _) in enumerate(seeds)}
+
+
+   plan_time = base_settings["plan_time [s]"]
+   #generate the order lists and the disruption lists
+   A_input.create_disruption_json(disruption_dir / "disruption.json")
+
+   number = 0
+   for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (s_id, seed) in product(
+        scenarios, pressures, ratios, seeds
+    ):
+      number += 1
+      layout_settings = A_input.read_settings_json(layout_dir / layout_file)
+      num_units = int(layout_settings["scaled_monthly_capacity"]*p_val)
+      num_orders = int(num_units/r_val)
+
+      label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
+
+      orderpath = orders_dir / f"unsorted_orders_{label}.csv"
+      disruptionpath = disruption_dir/f"disruptions_{label}.csv"
+
+      A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
+      A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units)
 
    run_idx = 0
    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name), (s_id, seed) in product(
@@ -99,26 +138,17 @@ def main2():
       run_idx += 1
       settings = deepcopy(base_settings)
       #creating the run dirs
-      for dir in dirs[0:2]:
-         subfolder = dir / main_loop_name / f"run_{run_idx}"
+      for dir in dirs[0:3]:
+         subfolder = dir / f"run_{run_idx}"
          subfolder.mkdir(exist_ok=True)
 
       # Apply scenario -> layout
-      layout_settings = A_input.read_settings_json(layout_dir / layout_file)
-      # Apply pressure_of_capacity (your code needs to define what this means)
-      # Example: scale plan_time[s] or simulation_time[s]
-      # settings["plan_time [s]"] = settings["plan_time [s]"] * (p_val/100)
-
-      # Apply order_units_ratio (again: define your mapping)
-      # Example: increase/decrease units relative to the base
-      num_units = int(layout_settings["scaled_monthly_capacity"]*p_val)
-      num_orders = int(num_units/r_val)
+      
+      #B_production_planning.main(,SECONDS_PER_WEEK)
 
 
       # Algorithm choice (pass into IPPS when you support it)
       algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
-      #order_dir = A_input.main(num_orders, num_units)
-      #B_production_planning.main(order_dir,SECONDS_PER_WEEK)
 
       print(f"\n--- RUN {run_idx} ---")
       print(f"Number of units: {num_units}")
@@ -128,6 +158,7 @@ def main2():
 
       #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
       print("----------------------------------------------------------------------------------------------------")
+      return
 
 
 
