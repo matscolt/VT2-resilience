@@ -12,7 +12,7 @@ from typing import List, Set, Tuple, Dict
 
 import pandas as pd
 
-import E_production_line_sim_schedule_multi_outputs_final_input_fix as simulator
+import E_production_line_sub_sim as simulator
 
 
 # ============================================================
@@ -586,10 +586,9 @@ def export_schedule(
     chromosome,
     order_units,
     units_lookup,
-    filename,
+    filename="current_schedule.csv",
     verbose=False
 ):
-
     unit_df = chromosome_to_unit_dataframe(
         chromosome=chromosome,
         order_units=order_units,
@@ -597,14 +596,7 @@ def export_schedule(
         route_id=0
     )
 
-    output_dir = INPUT_DIR / "output_schedules"
-
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    output_path = output_dir / filename
+    output_path = INPUT_DIR / filename
 
     unit_df.to_csv(
         output_path,
@@ -637,18 +629,6 @@ def safe_delete_folder(path: Path):
         except PermissionError as exc:
             print(f"WARNING: Could not delete folder because it is locked: {path}")
             print(f"         {exc}")
-
-
-def clear_all_schedules_before_simulation():
-    """Remove all schedule CSV files before each simulator call."""
-
-    output_dir = INPUT_DIR / "output_schedules"
-
-    if not output_dir.exists():
-        return
-
-    for path in output_dir.glob("*.csv"):
-        safe_delete_file(path)
 
 
 def clear_old_summary_output_folder():
@@ -697,10 +677,7 @@ def find_summary_folder(
 
     output_root = ROOT / "output" / INPUT_DIR.name
 
-    base_name = (
-        f"Iter_{generation}_schedule_"
-        f"{chromosome_index}_summary"
-    )
+    base_name = "current_schedule_summary"
 
     exact_folder = output_root / base_name
 
@@ -769,7 +746,6 @@ def read_simulation_result_from_unit_summary(
 # ============================================================
 # SIMULATOR WRAPPER
 # ============================================================
-
 def evaluate_schedule_with_simulator(
     chromosome,
     order_units,
@@ -778,13 +754,7 @@ def evaluate_schedule_with_simulator(
     generation
 ):
 
-    filename = (
-        f"Iter_{generation}_schedule_"
-        f"{chromosome_index}.csv"
-    )
-
-    if CLEAN_TEMP_OUTPUTS:
-        clear_all_schedules_before_simulation()
+    filename = "current_schedule.csv"
 
     schedule_path = export_schedule(
         chromosome=chromosome,
@@ -796,9 +766,6 @@ def evaluate_schedule_with_simulator(
 
     with contextlib.redirect_stdout(io.StringIO()):
         simulator.main()
-
-    if CLEAN_TEMP_OUTPUTS:
-        safe_delete_file(schedule_path)
 
     summary_folder = find_summary_folder(
         generation=generation,
@@ -1004,7 +971,6 @@ def run_ga(
 
     if CLEAN_TEMP_OUTPUTS:
         clear_old_summary_output_folder()
-        clear_all_schedules_before_simulation()
 
     population = create_order_population(
         orders
@@ -1327,7 +1293,7 @@ def main(
             chromosome=best_order_solution,
             order_units=order_units,
             units_lookup=units_lookup,
-            filename="best_schedule.csv",
+            filename="current_schedule.csv",
             verbose=True
         )
 

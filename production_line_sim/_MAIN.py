@@ -71,7 +71,7 @@ def main2():
    #create subfolders
    dirs = [input_dir,on_going_dir,output_dir,post_processing_dir]
 
-   timestamp = datetime.now().strftime("%m-%d_%H-%M")
+   timestamp = datetime.now().strftime("%d-%m_%H-%M")
    n=0
    main_loop_name = f"main_{timestamp}_{n}"
    while (dirs[1] / main_loop_name).exists():
@@ -132,7 +132,7 @@ def main2():
 
 
 if __name__ == "__main__":
-   loop = False #ændre den her hvis du ikke vil have et valg længere
+   loop = True #ændre den her hvis du ikke vil have et valg længere
    if loop == True:
       while loop == True:
          user = input("old main(o) or new main(n)  (o/n)\n>> ").lower()
