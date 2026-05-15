@@ -71,7 +71,7 @@ def main2():
    #create subfolders
    dirs = [input_dir,on_going_dir,output_dir,post_processing_dir]
 
-   timestamp = datetime.now().strftime("%m-%d_%H-%M")
+   timestamp = datetime.now().strftime("%d-%m_%H-%M")
    n=0
    main_loop_name = f"main_{timestamp}_{n}"
    while (dirs[1] / main_loop_name).exists():
