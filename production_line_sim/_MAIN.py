@@ -18,6 +18,7 @@ import A_input, B_production_planning, C_IPPS, D_algo, E_production_line_sim, F_
 from pathlib import Path
 from itertools import product
 from copy import deepcopy
+from datetime import datetime
 
 # ================================================================================
 # constands, paths and global variables
@@ -26,9 +27,8 @@ HOURS_PER_DAY = 8
 WORKDAYS_PER_WEEK = 5
 SECONDS_PER_WEEK = WORKDAYS_PER_WEEK * HOURS_PER_DAY * 3600
 
-
-base_dir = Path(__file__).parent
-data_dir = base_dir / "data"
+BASE_DIR = Path(__file__).parent
+data_dir = BASE_DIR / "data"
 layout_dir = data_dir / "Layouts"
 
 #a single run of the disruption sim
@@ -37,15 +37,16 @@ def pipeline(settings):
    num_orders = int(input("Enter amount of orders: "))
    num_units = int(input("Enter amount of units: "))
    order_dir = A_input.main(num_orders, num_units)
+   print("RUNNING THE PLAN!!!!!!!")
    B_production_planning.main(order_dir,SECONDS_PER_WEEK)
    #sim with disruption loop
    # the sim should pause when a disruption happens and then 
    # the IPPS should come up with a new solution to the disrupted line and continue the sim with disruptions
-   C_IPPS.main(order_dir) #creates new plan
-   E_production_line_sim.run_simulation() #with disruptions
+   #C_IPPS.main(order_dir) #creates new plan
+   #E_production_line_sim.run_simulation() #with disruptions
 
-   F_graphgen.main()
-   G_after_movie.main()
+   #F_graphgen.main()
+   #G_after_movie.main()
 
 # -  main function  -
 def main():
@@ -57,51 +58,137 @@ def main():
 
 
 def main2():
-    mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
-    base_settings = A_input.read_settings_json(data_dir / "settings.json")
+   #create folders/check they are there
+   input_dir = BASE_DIR / "input"
+   input_dir.mkdir(exist_ok=True)
+   on_going_dir = BASE_DIR / "on_going"
+   on_going_dir.mkdir(exist_ok=True)
+   output_dir = BASE_DIR / "output"
+   output_dir.mkdir(exist_ok=True)
+   post_processing_dir = BASE_DIR / "post_processing"
+   post_processing_dir.mkdir(exist_ok=True)
 
-    scenarios = list(mainsettings["Scenarios"].items())
-    pressures = list(mainsettings["pressure_of_capacity"].items())
-    ratios = list(mainsettings["order_units_ratio"].items())
-    algos = list(mainsettings["algorithms"].items())
-    
+   #create subfolders
+   dirs = [input_dir,on_going_dir,output_dir,post_processing_dir]
+
+   timestamp = datetime.now().strftime("%d-%m_%H-%M")
+   n=0
+   main_loop_name = f"main_{timestamp}_{n}"
+   while (dirs[0] / main_loop_name).exists():
+         n=n+1
+         main_loop_name = f"main_{timestamp}_{n}"
+   for dir in dirs:
+      subfolder = dir / main_loop_name
+      subfolder.mkdir(exist_ok=True)
+   
+   dirs = [dir / main_loop_name for dir in dirs]
+   
+   #create input subfolders
+   disruption_dir = dirs[0] / "disruptions"
+   disruption_dir.mkdir(exist_ok=True)
+   orders_dir = dirs[0] / "orders"
+   orders_dir.mkdir(exist_ok=True)
+   runs_dir = dirs[0] / "runs"
+   runs_dir.mkdir(exist_ok=True)
+
+   dirs[0] = runs_dir
+   
+   print("reading settings")
+   #read settings
+   mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
+   base_settings = A_input.read_settings_json(data_dir / "settings.json")
+   scenarios = list(mainsettings["Scenarios"].items())
+   pressures = list(mainsettings["pressure_of_capacity"].items())
+   ratios = list(mainsettings["order_units_ratio"].items())
+   algos = list(mainsettings["algorithms"].items())
+   seeds = list(mainsettings["seeds"].items())
+   
+   # build index maps for the keys
+   sc_idx = {k: i+1 for i, (k, _) in enumerate(scenarios)}
+   p_idx  = {k: i+1 for i, (k, _) in enumerate(pressures)}
+   r_idx  = {k: i+1 for i, (k, _) in enumerate(ratios)}
+   s_idx  = {k: i+1 for i, (k, _) in enumerate(seeds)}
 
 
-    run_idx = 0
-    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name) in product(
-        scenarios, pressures, ratios, algos
+   plan_time = base_settings["plan_time [s]"]
+   #generate the order lists and the disruption lists
+   A_input.create_disruption_json(disruption_dir / "disruption.json")
+
+   number = 0
+   next_pct = 0
+   max_number = len(scenarios) * len(pressures) * len(ratios) * len(seeds)
+   action = "generating: "
+   print("\n --- Generating the order and disruption lists ---\n")
+   for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (s_id, seed) in product(
+        scenarios, pressures, ratios, seeds
     ):
-        run_idx += 1
-        settings = deepcopy(base_settings)
+      number += 1
+      layout_settings = A_input.read_settings_json(layout_dir / layout_file)
+      num_units = int(layout_settings["scaled_monthly_capacity"]*p_val)
+      num_orders = int(num_units/r_val)
 
-        # Apply scenario -> layout
-        settings["line_layout_file"] = layout_file
-        layout_settings = A_input.read_settings_json(layout_dir / layout_file)
-        # Apply pressure_of_capacity (your code needs to define what this means)
-        # Example: scale plan_time[s] or simulation_time[s]
-        # settings["plan_time [s]"] = settings["plan_time [s]"] * (p_val/100)
+      label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
 
-        # Apply order_units_ratio (again: define your mapping)
-        # Example: increase/decrease units relative to the base
-        num_units = int(layout_settings["scaled_monthly_capacity"]*p_val)
-        num_orders = int(num_units/r_val)
-        print(f"run number: {run_idx}")
-        print(f"layout {layout_file}")
-        print(f"number of units: {num_units}")
-        print(f"number of orders: {num_orders}")
+      orderpath = orders_dir / f"unsorted_orders_{label}.csv"
+      disruptionpath = disruption_dir/f"disruptions_{label}.csv"
+
+      A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
+      A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
+      # takes wayyy too long to generate a gantt chart for each one
+      # A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
+      #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
+
+   run_idx = 0
+   next_pct = 0
+   max_idx = len(scenarios) * len(pressures) * len(ratios)* len(algos) * len(seeds)
+   print("\n --- Running the different combinations of scenarios ---\n")
+   action = "Running simulations: "
+   for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name), (s_id, seed) in product(
+        scenarios, pressures, ratios, algos, seeds
+    ):
+      run_idx += 1
+      settings = deepcopy(base_settings)
+      #creating the run dirs
+      for dir in dirs[0:3]:
+         subfolder = dir / f"run_{run_idx}"
+         subfolder.mkdir(exist_ok=True)
+
+      # creating the production plan
+      label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
+      order_csv_path = orders_dir / f"unsorted_orders_{label}.csv"
+      on_going_run_path = dirs[1] / f"run_{run_idx}"
+      label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
+      B_production_planning.create_production_plan(order_csv_path,on_going_run_path,base_settings,label,SECONDS_PER_WEEK)
 
 
-        # Algorithm choice (pass into IPPS when you support it)
-        algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
+      # Algorithm choice (pass into IPPS when you support it)
+      algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
 
-        print(f"\n--- RUN {run_idx} ---")
-        print(f"Scenario={sc_name} layout={layout_file}")
-        print(f"Pressure={p_name} ({p_val})  Ratio={r_name} ({r_val})  Algo={a_name}")
+      print(f"\n\n--- RUN {run_idx} ---")
+      print(f"Number of units: {num_units}")
+      print(f"Number of orders: {num_orders}")
+      print(f"Scenario = {sc_name} layout = {layout_file}, seed = {seed}")
+      print(f"Pressure = {p_name} ({p_val})  Ratio = {r_name} ({r_val})  Algo = {a_name}")
 
-        #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
-        print("----------------------------------------------------------------------------------------------------")
+      #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
+      print("----------------------------------------------------------------------------------------------------")
+      next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct,action=action)
 
 
 
 if __name__ == "__main__":
-   main2()
+   loop = False #ændre den her hvis du ikke vil have et valg længere
+   if loop == True:
+      while loop == True:
+         user = input("old main(o) or new main(n)  (o/n)\n>> ").lower()
+         if user == "o":
+            main()
+            loop = False
+         if user == "n":
+            main2()
+            loop = False
+         elif loop == True:
+            print("\n--- please select between 'o' or 'n' ---")
+   else:
+      print("running main2()")
+      main2()

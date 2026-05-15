@@ -2,13 +2,16 @@ import random
 import copy
 import json
 import re
+import contextlib
+import io
+import shutil
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import List
 
 import pandas as pd
 
-import E_production_line_sim_schedule_input_fastest_parallel as simulator
+import E_production_line_sim_schedule_multi_outputs_final_input_fix as simulator
 
 
 # ============================================================
@@ -63,23 +66,22 @@ LAYOUT_PATH = (
 )
 
 PROCESS_TIMES_PATH = ROOT / "data" / "process_times.json"
-
 TRANSPORT_TIMES_PATH = ROOT / "data" / "transport_times.json"
 
-
-# ============================================================
-# CONSTANTS
-# ============================================================
-
-SWAPS = 3
+# Keep the GA run lightweight by removing temporary schedules/output folders.
+# The GA only needs unit_summary.csv long enough to calculate fitness.
+CLEAN_TEMP_OUTPUTS = True
+KEEP_ONLY_BEST_SUMMARY = True
 
 
 # ============================================================
 # GA SETTINGS
 # ============================================================
 
-POPULATION_SIZE = 10
-GENERATIONS = 50
+SWAPS = 3
+
+POPULATION_SIZE = 6
+GENERATIONS = 4
 ELITE_SIZE = 2
 TOURNAMENT_SIZE = 3
 CROSSOVER_RATE = 0.9
@@ -206,15 +208,9 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
                 )
 
                 units.append(unit)
+                order_units[order_id].append(internal_unit_id)
 
-                order_units[order_id].append(
-                    internal_unit_id
-                )
-
-                print(
-                    f"    Created Unit: "
-                    f"{internal_unit_id}"
-                )
+                print(f"    Created Unit: {internal_unit_id}")
 
                 unit_counter += 1
                 total_units += 1
@@ -228,10 +224,7 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
 
         orders.append(order)
 
-        print(
-            f"  Total units for order "
-            f"{order_id}: {total_units}"
-        )
+        print(f"  Total units for order {order_id}: {total_units}")
 
     print("\n================================================")
     print(f"TOTAL ORDERS LOADED: {len(orders)}")
@@ -242,21 +235,14 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
 
 
 # ============================================================
-# INITIAL SEED
+# INITIAL SEED - PURE EDD
 # ============================================================
 
 def create_order_seed(orders: List[Order]):
 
-    """
-    Initial chromosome:
-    1. Lowest due date first
-    2. Highest priority first
-    """
-
     order_scores = []
 
     for order in orders:
-
         order_scores.append({
             "order_id": order.order_id,
             "due_date": order.due_date,
@@ -265,10 +251,7 @@ def create_order_seed(orders: List[Order]):
         })
 
     order_scores.sort(
-        key=lambda x: (
-            x["due_date"],
-            -x["priority"]
-        )
+        key=lambda x: x["due_date"]
     )
 
     seed = [
@@ -277,11 +260,10 @@ def create_order_seed(orders: List[Order]):
     ]
 
     print("\n================================================")
-    print("ORDER SEED USING DUE DATE + PRIORITY")
+    print("ORDER SEED USING PURE EDD")
     print("================================================")
 
     for row in order_scores:
-
         print(
             f"Order {row['order_id']} | "
             f"Due={row['due_date']:.1f} | "
@@ -335,7 +317,7 @@ def create_order_population(orders: List[Order]):
 
 
 # ============================================================
-# CONVERT ORDER CHROMOSOME
+# CONVERSIONS
 # ============================================================
 
 def order_chromosome_to_unit_sequence(
@@ -350,10 +332,6 @@ def order_chromosome_to_unit_sequence(
 
     return unit_sequence
 
-
-# ============================================================
-# CONVERT TO DATAFRAME
-# ============================================================
 
 def chromosome_to_unit_dataframe(
     chromosome,
@@ -399,7 +377,8 @@ def export_schedule(
     chromosome,
     order_units,
     units_lookup,
-    filename
+    filename,
+    verbose=False
 ):
 
     unit_df = chromosome_to_unit_dataframe(
@@ -423,9 +402,226 @@ def export_schedule(
         index=False
     )
 
-    print(f"Saved schedule: {output_path}")
+    if verbose:
+        print(f"Saved schedule: {output_path}")
 
     return output_path
+
+
+# ============================================================
+# OUTPUT CLEANUP
+# ============================================================
+
+def safe_delete_file(path: Path):
+    if path is not None and path.exists() and path.is_file():
+        path.unlink()
+
+
+def safe_delete_folder(path: Path):
+    if path is not None and path.exists() and path.is_dir():
+        shutil.rmtree(path)
+
+
+def clear_all_schedules_before_simulation():
+    """Remove all schedule CSV files before each simulator call.
+
+    The simulator scans INPUT_DIR/output_schedules and creates one summary
+    folder for every schedule CSV it finds. If an old best_schedule.csv is left
+    in that folder, the simulator will keep generating best_schedule_summary,
+    best_schedule_summary__2, best_schedule_summary__3, etc.
+
+    Therefore, before evaluating a GA chromosome, the folder must contain only
+    the single temporary Iter_... schedule that is about to be simulated.
+    """
+    output_dir = INPUT_DIR / "output_schedules"
+
+    if not output_dir.exists():
+        return
+
+    for path in output_dir.glob("*.csv"):
+        safe_delete_file(path)
+
+
+def clear_old_summary_output_folder():
+    """Remove old simulator summary folders for this input batch.
+
+    This gives each GA run a clean output/<orders_...> folder. The final run
+    will only keep the summary folder belonging to the best chromosome.
+    """
+    output_root = ROOT / "output" / INPUT_DIR.name
+
+    if not output_root.exists():
+        return
+
+    for folder in output_root.iterdir():
+        if folder.is_dir():
+            safe_delete_folder(folder)
+
+
+def cleanup_non_best_summary(summary_folder: Path, best_summary_folder: Path):
+    if not CLEAN_TEMP_OUTPUTS:
+        return
+
+    if summary_folder is None:
+        return
+
+    if KEEP_ONLY_BEST_SUMMARY and summary_folder != best_summary_folder:
+        safe_delete_folder(summary_folder)
+
+
+def cleanup_previous_best_summary(previous_best_folder: Path, new_best_folder: Path):
+    if not CLEAN_TEMP_OUTPUTS:
+        return
+
+    if not KEEP_ONLY_BEST_SUMMARY:
+        return
+
+    if previous_best_folder is not None and previous_best_folder != new_best_folder:
+        safe_delete_folder(previous_best_folder)
+
+
+# ============================================================
+# SUMMARY READING
+# ============================================================
+
+def find_summary_folder(
+    generation,
+    chromosome_index
+):
+
+    output_root = ROOT / "output" / INPUT_DIR.name
+
+    base_name = (
+        f"Iter_{generation}_schedule_"
+        f"{chromosome_index}_summary"
+    )
+
+    exact_folder = output_root / base_name
+
+    if exact_folder.exists():
+        return exact_folder
+
+    matching_folders = [
+        folder
+        for folder in output_root.glob(f"{base_name}*")
+        if folder.is_dir()
+    ]
+
+    if not matching_folders:
+        raise FileNotFoundError(
+            f"No summary folder found for {base_name} in {output_root}"
+        )
+
+    return max(
+        matching_folders,
+        key=lambda folder: folder.stat().st_mtime
+    )
+
+
+def read_simulation_result_from_unit_summary(
+    summary_folder: Path
+):
+
+    unit_summary_path = summary_folder / "unit_summary.csv"
+
+    if not unit_summary_path.exists():
+        raise FileNotFoundError(
+            f"unit_summary.csv not found in: {summary_folder}"
+        )
+
+    unit_df = pd.read_csv(unit_summary_path)
+
+    required_columns = [
+        "orderID",
+        "completion_time_s"
+    ]
+
+    for column in required_columns:
+        if column not in unit_df.columns:
+            raise KeyError(
+                f"Missing column '{column}' in {unit_summary_path}"
+            )
+
+    # ========================================================
+    # TEMPORARY SOLUTION:
+    # Currently using unit_summary.csv.
+    #
+    # Future change:
+    # When order_summary.csv exists, replace this section with:
+    #
+    # order_df = pd.read_csv(summary_folder / "order_summary.csv")
+    #
+    # order_completion_times = (
+    #     order_df
+    #     .set_index("orderID")["completion_time_s"]
+    #     .to_dict()
+    # )
+    # ========================================================
+
+    order_completion_times = (
+        unit_df
+        .groupby("orderID")["completion_time_s"]
+        .max()
+        .to_dict()
+    )
+
+    makespan = (
+        unit_df["completion_time_s"]
+        .max()
+    )
+
+    return {
+        "order_completion_times": order_completion_times,
+        "makespan": makespan
+    }
+
+
+# ============================================================
+# SIMULATOR WRAPPER
+# ============================================================
+
+def evaluate_schedule_with_simulator(
+    chromosome,
+    order_units,
+    units_lookup,
+    chromosome_index,
+    generation
+):
+
+    filename = (
+        f"Iter_{generation}_schedule_"
+        f"{chromosome_index}.csv"
+    )
+
+    if CLEAN_TEMP_OUTPUTS:
+        clear_all_schedules_before_simulation()
+
+    schedule_path = export_schedule(
+        chromosome=chromosome,
+        order_units=order_units,
+        units_lookup=units_lookup,
+        filename=filename,
+        verbose=False
+    )
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        simulator.main()
+
+    # The simulator has already read the schedule, so the GA does not need
+    # to keep all intermediate Iter_*.csv schedule files.
+    if CLEAN_TEMP_OUTPUTS:
+        safe_delete_file(schedule_path)
+
+    summary_folder = find_summary_folder(
+        generation=generation,
+        chromosome_index=chromosome_index
+    )
+
+    simulation_result = read_simulation_result_from_unit_summary(
+        summary_folder
+    )
+
+    return simulation_result, summary_folder
 
 
 # ============================================================
@@ -483,7 +679,12 @@ def calculate_fitness(
         - GAMMA_EARLINESS * total_earliness
     )
 
-    return fitness
+    return {
+        "fitness": fitness,
+        "total_tardiness": total_tardiness,
+        "late_orders": late_orders,
+        "total_earliness": total_earliness
+    }
 
 
 # ============================================================
@@ -548,32 +749,6 @@ def insert_mutation(chrom):
 
 
 # ============================================================
-# SIMULATOR WRAPPER
-# ============================================================
-
-def evaluate_schedule_with_simulator(
-    chromosome,
-    order_units,
-    units_lookup
-):
-
-    export_schedule(
-        chromosome=chromosome,
-        order_units=order_units,
-        units_lookup=units_lookup,
-        filename="current_schedule.csv"
-    )
-
-    print("Running simulator...")
-
-    simulation_result = simulator.main()
-
-    print("Simulator finished.")
-
-    return simulation_result
-
-
-# ============================================================
 # GA LOOP
 # ============================================================
 
@@ -588,6 +763,10 @@ def run_ga(
         for u in units
     }
 
+    if CLEAN_TEMP_OUTPUTS:
+        clear_old_summary_output_folder()
+        clear_all_schedules_before_simulation()
+
     population = create_order_population(
         orders
     )
@@ -595,79 +774,116 @@ def run_ga(
     best_order_solution = None
     best_unit_sequence = None
     best_simulation_result = None
+    best_summary_folder = None
 
     best_fitness = float("inf")
 
     for generation in range(GENERATIONS):
 
+        generation_number = generation + 1
+
         print("\n================================================")
-        print(
-            f"GENERATION "
-            f"{generation + 1}/{GENERATIONS}"
-        )
+        print(f"GENERATION {generation_number}/{GENERATIONS}")
         print("================================================")
 
         fitnesses = []
+
+        generation_best_fitness = float("inf")
+        generation_best_chromosome = None
+        generation_best_order_sequence = None
 
         for chromosome_index, order_chromosome in enumerate(
             population,
             start=1
         ):
 
-            print(
-                f"\nEvaluating chromosome "
-                f"{chromosome_index}"
+            unit_sequence = order_chromosome_to_unit_sequence(
+                order_chromosome,
+                order_units
             )
 
-            unit_sequence = (
-                order_chromosome_to_unit_sequence(
-                    order_chromosome,
-                    order_units
-                )
+            simulation_result, summary_folder = evaluate_schedule_with_simulator(
+                chromosome=order_chromosome,
+                order_units=order_units,
+                units_lookup=units_lookup,
+                chromosome_index=chromosome_index,
+                generation=generation_number
             )
 
-            simulation_result = (
-                evaluate_schedule_with_simulator(
-                    chromosome=order_chromosome,
-                    order_units=order_units,
-                    units_lookup=units_lookup
-                )
-            )
-
-            fitness = calculate_fitness(
+            fitness_result = calculate_fitness(
                 simulation_result,
                 orders
             )
 
+            fitness = fitness_result["fitness"]
+
             fitnesses.append(fitness)
 
-            print(
-                f"Fitness: {fitness:.2f}"
-            )
+            if fitness < generation_best_fitness:
 
-            if fitness < best_fitness:
-
-                print(
-                    "NEW BEST SOLUTION FOUND"
+                generation_best_fitness = fitness
+                generation_best_chromosome = chromosome_index
+                generation_best_order_sequence = copy.deepcopy(
+                    order_chromosome
                 )
+
+            is_new_global_best = fitness < best_fitness
+
+            if is_new_global_best:
+
+                previous_best_summary_folder = best_summary_folder
 
                 best_fitness = fitness
 
-                best_order_solution = (
-                    copy.deepcopy(order_chromosome)
+                best_order_solution = copy.deepcopy(
+                    order_chromosome
                 )
 
-                best_unit_sequence = (
-                    copy.deepcopy(unit_sequence)
+                best_unit_sequence = copy.deepcopy(
+                    unit_sequence
                 )
 
-                best_simulation_result = (
+                best_simulation_result = copy.deepcopy(
                     simulation_result
                 )
 
+                best_summary_folder = summary_folder
+
+                cleanup_previous_best_summary(
+                    previous_best_folder=previous_best_summary_folder,
+                    new_best_folder=best_summary_folder
+                )
+
+            else:
+
+                cleanup_non_best_summary(
+                    summary_folder=summary_folder,
+                    best_summary_folder=best_summary_folder
+                )
+
+            best_marker = " <-- NEW BEST" if is_new_global_best else ""
+
+            print(
+                f"Gen {generation_number:02d} | "
+                f"Chrom {chromosome_index:02d} | "
+                f"Fitness {fitness:12.2f} | "
+                f"Late {fitness_result['late_orders']:2d} | "
+                f"Tard {fitness_result['total_tardiness']:10.1f} | "
+                f"Early {fitness_result['total_earliness']:10.1f} | "
+                f"Makespan {simulation_result['makespan']:10.1f}"
+                f"{best_marker}"
+            )
+
         print(
-            f"\nGeneration best fitness: "
-            f"{best_fitness:.2f}"
+            f"\n>>> Generation {generation_number} done | "
+            f"Generation best chromosome: {generation_best_chromosome} | "
+            f"Generation best fitness: {generation_best_fitness:.2f} | "
+            f"Global best fitness: {best_fitness:.2f}"
+        )
+
+        print(
+            f"Best order sequence in generation {generation_number}: "
+            f"{generation_best_order_sequence}"
         )
 
         ranked = sorted(
@@ -713,11 +929,22 @@ def run_ga(
 
         population = new_population
 
+    if KEEP_ONLY_BEST_SUMMARY and best_summary_folder is not None:
+        final_summary_folder = ROOT / "output" / INPUT_DIR.name / "best_schedule_summary"
+
+        if final_summary_folder.exists() and final_summary_folder != best_summary_folder:
+            safe_delete_folder(final_summary_folder)
+
+        if best_summary_folder.exists() and best_summary_folder != final_summary_folder:
+            best_summary_folder.rename(final_summary_folder)
+            best_summary_folder = final_summary_folder
+
     return (
         best_order_solution,
         best_unit_sequence,
         best_simulation_result,
-        best_fitness
+        best_fitness,
+        best_summary_folder
     )
 
 
@@ -734,37 +961,36 @@ def main():
     print("\nROOT:")
     print(ROOT)
 
+    print("\nInput folder:")
+    print(INPUT_DIR)
+
     print("\nLoading files...")
 
     production_df = load_production_plan(
         INPUT_DIR
     )
 
-    layout_data = load_json(
+    load_json(
         LAYOUT_PATH
     )
 
-    process_data = load_json(
+    load_json(
         PROCESS_TIMES_PATH
     )
 
-    transport_data = load_json(
+    load_json(
         TRANSPORT_TIMES_PATH
     )
 
     print("\nFiles loaded successfully.")
 
-    orders, units, order_units = (
-        load_orders_and_units_from_file(
-            production_df
-        )
+    orders, units, order_units = load_orders_and_units_from_file(
+        production_df
     )
 
     print("\nExample order to units:")
 
-    for order_id, unit_ids in list(
-        order_units.items()
-    )[:5]:
+    for order_id, unit_ids in list(order_units.items())[:5]:
 
         print(
             f"Order {order_id}: "
@@ -777,7 +1003,8 @@ def main():
         best_order_solution,
         best_unit_sequence,
         best_simulation_result,
-        best_fitness
+        best_fitness,
+        best_summary_folder
     ) = run_ga(
         orders=orders,
         units=units,
@@ -788,10 +1015,7 @@ def main():
     print("GA FINISHED")
     print("================================================")
 
-    print(
-        f"\nBest fitness: "
-        f"{best_fitness:.2f}"
-    )
+    print(f"\nBest fitness: {best_fitness:.2f}")
 
     print("\nBest order solution:")
     print(best_order_solution)
@@ -799,9 +1023,14 @@ def main():
     if best_simulation_result is not None:
 
         print(
-            f"\nMakespan: "
+            f"\nBest makespan: "
             f"{best_simulation_result.get('makespan', 'N/A')}"
         )
+
+    if best_summary_folder is not None:
+
+        print("\nBest summary folder:")
+        print(best_summary_folder)
 
     units_lookup = {
         u.unit_id: u
@@ -812,7 +1041,8 @@ def main():
         chromosome=best_order_solution,
         order_units=order_units,
         units_lookup=units_lookup,
-        filename="best_schedule.csv"
+        filename="best_schedule.csv",
+        verbose=True
     )
 
     print("\nFinished.")

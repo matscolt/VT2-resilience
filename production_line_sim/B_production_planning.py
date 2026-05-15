@@ -1,12 +1,14 @@
 # Production planning for the line
 # - Reads unsorted orders (CSV)
-# - Sorts by due date
-# - Plans weekly capacity on the bottleneck station (Robot cell)
+# - Sorts by due date (currently seconds counter)
+# - Plans capacity on the bottleneck station group (e.g., Robot cell instances)
 # - Supports multiple station instances from a layout JSON
-# - Applies per-instance time scaling via `time_scale_factor`
-# - Ignores all transport times (per requirement)
-# - Allows orders to split freely across station instances and weeks
-# - Writes production_plan.csv
+# - Applies per-instance time scaling via time_scale_factor
+# - Ignores all transport times (as requested earlier)
+# - Allows orders to split freely across station instances AND across days/weeks
+# - Writes production_plan.csv with:
+#     - planned_week (completion week)
+#     - planned_day  (START day as absolute day number; Mon week3 == day11)
 # - Prints:
 #     1) Weekly summary table (Total + per variant + per station instance) using pandas + PrettyTable
 #     2) Order IDs produced in each planning week
@@ -16,8 +18,10 @@ import json
 import re
 from copy import deepcopy
 from pathlib import Path
+
 import pandas as pd
 from prettytable import PrettyTable
+
 from A_input import read_settings_json
 
 # ==============================================================================
@@ -27,6 +31,7 @@ from A_input import read_settings_json
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 LAYOUT_DIR = DATA_DIR / "Layouts"
+WORKDAYS_PER_WEEK = 5  # user confirmed 5 days/week
 
 
 # ==============================================================================
@@ -44,11 +49,8 @@ def load_json(path: Path) -> dict:
 
 
 def build_bottleneck_instances(layout_json: dict, bottleneck_base: str) -> list[dict]:
-    """Extract all station instances whose canonical name equals bottleneck_base.
-
-    NOTE: Any transport fields in layout are ignored.
-    """
-    instances: list[dict] = []
+    """Extract all station instances whose canonical name equals bottleneck_base."""
+    instances = []
     for inst in layout_json.get("station_instances", []):
         name = inst.get("station_name", "")
         base = canonical_station_name(name)
@@ -56,9 +58,12 @@ def build_bottleneck_instances(layout_json: dict, bottleneck_base: str) -> list[
             instances.append(
                 {
                     "instance_name": name,
-                    "time_scale_factor": float(inst.get("time_scale_factor", 1.0)),
+                    "time_scale_factor": float(inst.get("time_scale_factor", 1.0)) or 1.0,
                 }
             )
+    # If layout did not explicitly list instances, assume a single base instance
+    if not instances:
+        instances = [{"instance_name": bottleneck_base, "time_scale_factor": 1.0}]
     return instances
 
 
@@ -80,10 +85,10 @@ def iter_variant_qty(order: dict, max_pairs: int = 3):
 
 
 # ==============================================================================
-# core planning: split across station instances & weeks
+# core planning: split across bottleneck instances & DAYS (and thereby weeks)
 # ==============================================================================
 
-def plan_orders_across_bottleneck_instances(
+def plan_orders_across_bottleneck_instances_days(
     orders: list[dict],
     process_times_json: dict,
     layout_json: dict,
@@ -92,43 +97,50 @@ def plan_orders_across_bottleneck_instances(
     order_id_key: str = "order_id",
     variant_key_normalizer=str.upper,
     max_variant_pairs: int = 3,
-    start_week: int = 1,
+    start_day: int = 1,
+    workdays_per_week: int = WORKDAYS_PER_WEEK,
 ):
-    """Plan orders across ALL station instances that belong to `bottleneck_base`.
+    """Plan orders across bottleneck instances with day granularity.
 
-    - base cycle time comes from process_times.json for `bottleneck_base`
-    - effective cycle time per instance = base * time_scale_factor
-    - transport times ignored
-    - quantities can split across instances and weeks
+    - Day capacity is evenly spread across the week: seconds_per_day = seconds_per_week / workdays_per_week.
+    - Orders can split across instances and across days.
 
-    Returns:
-      planned_orders, schedule, orders_by_week
+    Outputs:
+      planned_orders: each order will get:
+        - planned_week (completion week)
+        - planned_day  (START day as absolute day number)
+      schedule_by_day: day -> instance -> variant -> qty
+      orders_by_week: week -> set(order_id) that had any production in that week
 
-    schedule format:
-      schedule[week][instance_name][variant] = qty
-
-    orders_by_week format:
-      orders_by_week[week] = sorted list of order_ids that had ANY production in that week
+    Notes:
+      - planned_week is COMPLETION week (keeps earlier semantics).
+      - planned_day is START day, requested as absolute day number.
     """
+
     process_times = process_times_json["process_times"]
 
     instances = build_bottleneck_instances(layout_json, bottleneck_base=bottleneck_base)
-    if not instances:
-        raise ValueError(f"No station instances found matching bottleneck '{bottleneck_base}'")
+    seconds_per_day = float(seconds_per_week) / float(workdays_per_week)
 
-    current_week = int(start_week)
-    remaining_s = {inst["instance_name"]: float(seconds_per_week) for inst in instances}
+    # current day bucket and remaining time per instance for that day
+    day = int(start_day)
+    remaining_s = {inst["instance_name"]: seconds_per_day for inst in instances}
 
-    schedule: dict[int, dict[str, dict[str, int]]] = {}
+    schedule_by_day: dict[int, dict[str, dict[str, int]]] = {}
     orders_by_week: dict[int, set] = {}
+    orders_by_day: dict[int, set] = {}
 
-    def ensure_sched_bucket(week: int, instance_name: str) -> dict:
-        schedule.setdefault(week, {})
-        schedule[week].setdefault(instance_name, {})
-        return schedule[week][instance_name]
+    def ensure_bucket(d: int, instance_name: str) -> dict:
+        schedule_by_day.setdefault(d, {})
+        schedule_by_day[d].setdefault(instance_name, {})
+        return schedule_by_day[d][instance_name]
 
-    def mark_order_in_week(week: int, oid: str):
-        orders_by_week.setdefault(week, set()).add(oid)
+    def mark_order_in_week(d: int, oid: str):
+        wk = (d - 1) // workdays_per_week + 1
+        orders_by_week.setdefault(wk, set()).add(oid)
+
+    def mark_order_in_day(d: int, oid: str):
+        orders_by_day.setdefault(d, set()).add(oid)
 
     def eff_cycle_time(variant: str, inst: dict) -> float:
         base_t = float(process_times[variant][bottleneck_base])
@@ -139,16 +151,20 @@ def plan_orders_across_bottleneck_instances(
     for o in planned_orders:
         oid = str(o.get(order_id_key, "")).strip() or "(missing_order_id)"
 
+        # remaining quantities for this order
         rem_qty: dict[str, int] = {}
         for v, q in iter_variant_qty(o, max_pairs=max_variant_pairs):
             v_norm = variant_key_normalizer(v) if variant_key_normalizer else v
             rem_qty[v_norm] = rem_qty.get(v_norm, 0) + int(q)
 
         if not rem_qty:
-            o["planned_week"] = current_week
+            # nothing to schedule
+            o["planned_week"] = (day - 1) // workdays_per_week + 1
+            o["planned_day"] = day
             continue
 
-        completion_week = current_week
+        start_day_for_order = None
+        completion_day_for_order = day
 
         while any(q > 0 for q in rem_qty.values()):
             progressed = False
@@ -161,6 +177,7 @@ def plan_orders_across_bottleneck_instances(
                 if bottleneck_base not in process_times[variant]:
                     raise KeyError(f"Station '{bottleneck_base}' not defined for variant '{variant}'")
 
+                # fastest instances first for this variant
                 ranked = sorted(instances, key=lambda inst: eff_cycle_time(variant, inst))
 
                 for inst in ranked:
@@ -178,31 +195,51 @@ def plan_orders_across_bottleneck_instances(
                     q_left -= make
                     progressed = True
 
-                    bucket = ensure_sched_bucket(current_week, name)
+                    bucket = ensure_bucket(day, name)
                     bucket[variant] = bucket.get(variant, 0) + int(make)
-                    mark_order_in_week(current_week, oid)
+                    mark_order_in_week(day, oid)
+                    mark_order_in_day(day, oid)
 
-                    completion_week = max(completion_week, current_week)
+                    if start_day_for_order is None:
+                        start_day_for_order = day
+                    completion_day_for_order = max(completion_day_for_order, day)
 
                     if q_left <= 0:
                         break
 
             if not progressed:
-                current_week += 1
-                remaining_s = {inst["instance_name"]: float(seconds_per_week) for inst in instances}
-                completion_week = max(completion_week, current_week)
+                # move to next day and reset instance capacities
+                day += 1
+                remaining_s = {inst["instance_name"]: seconds_per_day for inst in instances}
 
-        o["planned_week"] = completion_week
+        # planned_week is START week (requested)
+        o["planned_week"] = (int(start_day_for_order if start_day_for_order is not None else completion_day_for_order) - 1) // workdays_per_week + 1
+        # planned_day is START day as absolute day count
+        o["planned_day"] = int(start_day_for_order if start_day_for_order is not None else completion_day_for_order)
 
-    # convert sets to sorted lists for stable printing
+    # convert week/day sets to sorted lists
     orders_by_week_sorted = {w: sorted(list(ids)) for w, ids in orders_by_week.items()}
+    orders_by_day_sorted = {d: sorted(list(ids)) for d, ids in orders_by_day.items()}
 
-    return planned_orders, schedule, orders_by_week_sorted
+    return planned_orders, schedule_by_day, orders_by_week_sorted, orders_by_day_sorted
 
 
 # ==============================================================================
-# reporting: pandas dataframe + PrettyTable
+# reporting: weekly summary from daily schedule (pandas + PrettyTable)
 # ==============================================================================
+
+def build_weekly_schedule_from_daily(schedule_by_day: dict[int, dict[str, dict[str, int]]], workdays_per_week: int = WORKDAYS_PER_WEEK):
+    """Aggregate day->instance->variant qty into week->instance->variant qty."""
+    weekly: dict[int, dict[str, dict[str, int]]] = {}
+    for d, inst_map in schedule_by_day.items():
+        wk = (int(d) - 1) // workdays_per_week + 1
+        weekly.setdefault(wk, {})
+        for inst, var_map in inst_map.items():
+            weekly[wk].setdefault(inst, {})
+            for v, qty in var_map.items():
+                weekly[wk][inst][v] = weekly[wk][inst].get(v, 0) + int(qty)
+    return weekly
+
 
 def build_schedule_summary_df(
     schedule: dict,
@@ -212,10 +249,8 @@ def build_schedule_summary_df(
     all_stations=None,
     show_zero_variant_rows: bool = True,
 ) -> pd.DataFrame:
-    """Build a summary DataFrame from schedule[week][instance][variant] = qty.
+    """Build a summary DataFrame from schedule[week][instance][variant] = qty."""
 
-    If `all_stations` is provided, rows for stations with zero production will still be included.
-    """
     records = []
     for week, inst_map in schedule.items():
         for inst, var_map in inst_map.items():
@@ -228,15 +263,6 @@ def build_schedule_summary_df(
                 })
 
     if not records:
-        # If schedule is empty but user still wants stations/variants/weeks, return a zero table
-        if all_stations and variants_order and weeks_order:
-            col_labels = [f"week {w}" for w in weeks_order]
-            rows = ["Total"] + [f" - {v.lower()}" for v in variants_order]
-            for st in all_stations:
-                st_name = station_name_fn(st) if station_name_fn else st
-                rows.append(st_name)
-                rows.extend([f" - {v.lower()}" for v in variants_order])
-            return pd.DataFrame(0, index=rows, columns=col_labels)
         return pd.DataFrame()
 
     df = pd.DataFrame(records)
@@ -251,27 +277,22 @@ def build_schedule_summary_df(
 
     col_labels = [f"week {w}" for w in weeks_order]
 
-    # Determine station list
     inferred_stations = sorted(df["station"].unique().tolist())
+    stations_list = inferred_stations
+
     if all_stations:
-        # include all provided stations (after optional formatting)
         formatted = [station_name_fn(s) if station_name_fn else s for s in all_stations]
-        # preserve layout order but remove dups
         seen = set()
         stations_list = []
         for s in formatted:
             if s not in seen:
                 stations_list.append(s)
                 seen.add(s)
-        # also include any stations that appear in df but weren't in all_stations
         for s in inferred_stations:
             if s not in seen:
                 stations_list.append(s)
                 seen.add(s)
-    else:
-        stations_list = inferred_stations
 
-    # compute totals
     total_by_week = df.groupby("week")["qty"].sum().reindex(weeks_order, fill_value=0)
 
     total_by_variant_week = (
@@ -332,27 +353,18 @@ def build_schedule_summary_df(
 
 
 def print_df_prettytable(df: pd.DataFrame, title: str | None = None):
-    """Print a pandas DataFrame using PrettyTable."""
     if df is None or df.empty:
         print("Nothing to display (empty table).")
         return
 
     pt = PrettyTable()
     pt.field_names = [""] + list(df.columns)
-
     pt.align[""] = "l"
     for c in df.columns:
         pt.align[c] = "r"
 
     for idx, row in df.iterrows():
-        safe_vals = []
-        for v in row.values:
-            try:
-                fv = float(v)
-                safe_vals.append(int(fv) if fv.is_integer() else fv)
-            except Exception:
-                safe_vals.append(v)
-        pt.add_row([idx] + safe_vals)
+        pt.add_row([idx] + [int(v) for v in row.values])
 
     if title:
         print(title)
@@ -377,8 +389,22 @@ def print_schedule_summary_prettytable(
     print_df_prettytable(df, title=title)
 
 
+
+
+def print_orders_by_day(orders_by_day: dict, days_order=None):
+    """Print order_ids produced in each day.
+
+    If days_order is None, prints day1..day5.
+    """
+    if days_order is None:
+        days_order = [1, 2, 3, 4, 5]
+
+    print("\norder_id produced in each day")
+    for d in days_order:
+        ids = orders_by_day.get(d, [])
+        print(f"day{d}: {', '.join(ids) if ids else '(none)'}")
+
 def print_orders_by_week(orders_by_week: dict, weeks_order=None):
-    """Print order_ids produced in each week."""
     if not orders_by_week:
         print("\nNo orders were produced (orders_by_week is empty).")
         return
@@ -389,22 +415,15 @@ def print_orders_by_week(orders_by_week: dict, weeks_order=None):
     print("\norder_id produced in each week")
     for w in weeks_order:
         ids = orders_by_week.get(w, [])
-        if ids:
-            print(f"week{w}: {', '.join(ids)}")
-        else:
-            print(f"week{w}: (none)")
+        print(f"week{w}: {', '.join(ids) if ids else '(none)'}")
 
 
 # ==============================================================================
 # main production planning pipeline
 # ==============================================================================
 
-def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
-    """Create a production plan CSV with planned_week and print weekly summaries."""
-
-    order_dir = Path(order_dir)
-    order_csv_path = order_dir / "unsorted_orders.csv"
-
+def create_production_plan(order_csv_path,on_going_run_path, settings,label , SECONDS_PER_WEEK):
+    
     # Read orders
     orders: list[dict] = []
     with open(order_csv_path, mode="r", newline="", encoding="utf-8") as csvfile:
@@ -412,10 +431,10 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
         for row in reader:
             orders.append(row)
 
-    # Sort by due date numerically
+    # Sort by due date numerically (due date is seconds counter)
     def due_key(x):
         v = (x.get("due date") or "").strip()
-        return int(v) if v else 10**9
+        return int(float(v)) if v else 10**18
 
     orders.sort(key=due_key)
 
@@ -429,7 +448,7 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
 
     bottleneck_base = layout_json.get("bottleneck_station", "Station 3: Robot cell")
 
-    planned_orders, schedule, orders_by_week = plan_orders_across_bottleneck_instances(
+    planned_orders, schedule_by_day, orders_by_week, orders_by_day = plan_orders_across_bottleneck_instances_days(
         orders=orders,
         process_times_json=process_times_json,
         layout_json=layout_json,
@@ -438,16 +457,17 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
         order_id_key="order_id",
         variant_key_normalizer=str.upper,
         max_variant_pairs=3,
-        start_week=1,
+        start_day=1,
+        workdays_per_week=WORKDAYS_PER_WEEK,
     )
 
-    # Write production plan
-    production_plan_csv_path = order_dir / "production_plan.csv"
+    # Write production plan (add planned_day)
+    production_plan_csv_path = on_going_run_path / f"production_plan_{label}.csv"
 
     fieldnames = [
         "order_id", "due date", "priority",
         "variant0", "quantity0", "variant1", "quantity1", "variant2", "quantity2",
-        "planned_week",
+        "planned_week", "planned_day",
     ]
 
     with open(production_plan_csv_path, mode="w", newline="", encoding="utf-8") as csvfile:
@@ -456,13 +476,14 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
         for order in planned_orders:
             writer.writerow(order)
 
-    # Print schedule summary (include all instances from layout even if 0)
+    # Weekly summary (aggregate from daily schedule)
+    schedule_by_week = build_weekly_schedule_from_daily(schedule_by_day, workdays_per_week=WORKDAYS_PER_WEEK)
     all_instances = all_station_instance_names(layout_json)
 
-    print_schedule_summary_prettytable(
-        schedule,
+    """print_schedule_summary_prettytable(
+        schedule_by_week,
         variants_order=["FUSE0", "FUSE1", "FUSE2"],
-        weeks_order=[1, 2, 3, 4],
+        weeks_order=sorted(schedule_by_week.keys())[:4],
         station_name_fn=lambda s: s.split(":")[0],
         all_stations=all_instances,
         title="\nWeekly plan (units) - totals and per station instance",
@@ -470,13 +491,21 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
 
     # Print order IDs produced in each week
     print_orders_by_week(orders_by_week, weeks_order=[1, 2, 3, 4])
+    # Recompute orders_by_day from planned_day (START day) so terminal matches CSV
+    orders_by_day = {}
+    for o in planned_orders:
+        d = int(o.get('planned_day', 0) or 0)
+        orders_by_day.setdefault(d, set()).add(str(o.get('order_id', '')))
+    orders_by_day = {d: sorted(list(ids)) for d, ids in orders_by_day.items()}
+
+    print_orders_by_day(orders_by_day, days_order=[1, 2, 3, 4, 5])"""
 
 
 def main(order_dir: str, SECONDS_PER_WEEK: float):
     print("\n\n--- Starting production planning ---")
     order_dir = Path(order_dir)
 
-    settings_path = order_dir / "settings.json"
+    settings_path = DATA_DIR / "settings.json"
     if not settings_path.exists():
         print(f"Error: settings.json not found in {order_dir}")
         return

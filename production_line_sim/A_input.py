@@ -11,6 +11,8 @@ from matplotlib.patches import Patch
 # Constants
 # ============================================================
 
+BASE_DIR = Path(__file__).parent
+data_dir = BASE_DIR / "data"
 PRIO_LOW = 1
 PRIO_HIGH = 5
 AVE_CYCLE_TIME_PER_UNIT = 76.4  # seconds per unit, used for due date generation
@@ -211,7 +213,7 @@ def iter_breakdown_specs_v2(station_cfg: Dict[str, Any]):
             if not isinstance(spec, dict):
                 continue
             name = str(spec.get("name", "breakdown")).strip() or "breakdown"
-            dtype = f"breakdown:{name}"
+            dtype = f"{name}"
             # Use ONLY 'chance of sim time [%]' (percentage, e.g. 2.4 = 2.4%)
             chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
 
@@ -610,7 +612,8 @@ def read_disruption_json(input_path: Path) -> Dict[str, Any]:
 # Create Orderlist
 #------------------------------
 
-def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
+def generate_orderlist(seed, plan_time, output_path: Path,num_orders, num_units):
+    random.seed(seed)
     rows = []
     sum = []
     priosum = []
@@ -629,7 +632,7 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
         if order_id == num_orders:
             units = units_left
         units_left -= units
-        due_date = round_half_up(random.uniform(min(units * AVE_CYCLE_TIME_PER_UNIT, sim_time), sim_time))
+        due_date = round_half_up(random.uniform(min(units * AVE_CYCLE_TIME_PER_UNIT, plan_time), plan_time))
         priority = round_half_up(min(max(random.expovariate(1/1.5), PRIO_LOW), PRIO_HIGH))
         variant0 = "FUSE0"
         quantity0 = round_half_up(max(random.normalvariate(units * 0.33, unitstd), 0))
@@ -670,16 +673,16 @@ def generate_orderlist(num_orders, num_units, sim_time, output_path: Path):
     for p in priosum:
         priority_sum += p
     
-    print(f"Total priority in orders: {priority_sum} with a mean of {priority_sum/num_orders}")
-    print(f"Generated {num_orders} orders with a total of {total_sum} units.\nAverage units per order: {total_sum/num_orders}")
-    print(f"Average phone per hour(if possible): {total_sum/sim_time*3600}\n==============================")
+    #print(f"Total priority in orders: {priority_sum} with a mean of {priority_sum/num_orders}")
+    #print(f"Generated {num_orders} orders with a total of {total_sum} units.\nAverage units per order: {total_sum/num_orders}")
+    #print(f"Average phone per hour(if possible): {total_sum/plan_time*3600}\n==============================")
     write_order_csv(rows, output_path)
 
 # -----------------------------
 # Disruption generation
 # ============================================================
 
-def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,num_units: int) -> None:
+def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders: int,num_units: int,layout_path = None) -> None:
     """Generate disruptions.csv based on settings.json and disruption.json.
 
     Your requested semantics implemented:
@@ -692,145 +695,71 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
       - prints a per-station summary to terminal
     """
 
-    input_dir = output_path.parent
-    settings = read_settings_json(input_dir / "settings.json")
-    disruption_file = (input_dir / "disruption_v2.json") if (input_dir / "disruption_v2.json").exists() else (input_dir / "disruption.json")
+    settings = read_settings_json(data_dir / "settings.json")
+    disruption_file = (data_dir / "disruption_v2.json") if (data_dir / "disruption_v2.json").exists() else (data_dir / "disruption.json")
     disruption_settings = read_disruption_json(disruption_file)
 
+    # Map each base station from disruption.json to all physical station instances in layout.json.
+    # Example: "Station 3.2: Robot cell" is treated as an instance of base station 3.
+    station_instances_by_station_id: Dict[int, List[str]] = {}
+    if layout_path is not None and layout_path.exists():
+        with layout_path.open("r", encoding="utf-8") as f:
+            layout_settings = json.load(f)
+
+        for station_instance in layout_settings.get("station_instances", []):
+            station_name = station_instance.get("station_name", "")
+            try:
+                station_number = station_name.split(":", 1)[0].replace("Station", "").strip()
+                base_station_id = int(float(station_number))
+                station_instances_by_station_id.setdefault(base_station_id, []).append(station_number)
+            except (TypeError, ValueError):
+                continue
     # Reproducible randomness
-    random.seed(settings.get("seed", None))
+    random.seed(seed)
 
     rows: List[Dict[str, Any]] = []
 
     # Summary: station -> disruption_type -> count
-    summary: Dict[int, Dict[str, int]] = {}
+    summary: Dict[Any, Dict[str, int]] = {}
 
     stations: Dict[str, Any] = disruption_settings.get("Stations", {})
 
     for station_id_str, station_cfg in stations.items():
         station_id = int(station_id_str)
-        occupied: List[Tuple[int, int]] = []
-        summary.setdefault(station_id, {})
+        station_instances = station_instances_by_station_id.get(station_id, [station_id])
 
-        # --- Breakdown (supports multiple breakdown types from disruption_v2.json) ---
-        # v2 uses key: 'machine breakdowns' (list) with name/chance/range/mean/std
-        # v1 uses key: 'breakdown' (single dict)
-        for dtype, spec, chance, mean_dur in iter_breakdown_specs_v2(station_cfg):
-            target_downtime = chance * sim_time
-            n_events = sample_event_count_from_time_fraction(target_downtime, mean_dur)
+        # Run the same disruption-generation logic independently for each physical copy.
+        # Each copy uses the same station config/chances, but gets its own random events and occupied timeline.
+        for station_instance_id in station_instances:
+            occupied: List[Tuple[int, int]] = []
+            summary.setdefault(station_instance_id, {})
 
-            placed = 0
-            for _ in range(n_events):
-                # v2 durations are clamped automatically; v1 uses Range flag to clamp
-                duration =  sample_duration(input_dir,spec, Range=True)
-                start = pick_random_start_non_overlapping(duration, occupied, sim_time)
-                if start is None:
-                    break
-                end = min(sim_time, start + duration)
-
-                occupied.append((start, end))
-                placed += 1
-
-                rows.append(
-                    {
-                        "disruption_type": dtype,
-                        "station_id": station_id,
-                        "start_time": start,
-                        "end_time": end,
-                        "efficiency_percentage": 0,
-                        "order_id": "",
-                        "due_date": "",
-                        "priority": "",
-                        "variant0": "",
-                        "quantity0": "",
-                        "variant1": "",
-                        "quantity1": "",
-                        "variant2": "",
-                        "quantity2": "",
-                    }
-                )
-
-            if placed:
-                summary[station_id][dtype] = summary[station_id].get(dtype, 0) + placed
-
-        # --- Efficiency loss ---
-
-        if "efficiency loss" in station_cfg:
-            spec = station_cfg["efficiency loss"]
-
-            # v2 format: has keys like 'chance [0-1]' and 'range [0-1]' or 'range [%]' (no duration given)
-            if spec.get("chance of sim time [%]") is not None:
-                # Use ONLY 'chance of sim time [%]' (percentage, e.g. 2.4 = 2.4%)
-                chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
-
-                target_downtime = chance * sim_time
-                duration = max(1, round_half_up(target_downtime))
-
-                start = pick_random_start_non_overlapping(duration, occupied, sim_time)
-                if start is not None:
-                    end = min(sim_time, start + duration)
-                    occupied.append((start, end))
-
-                    # sample efficiency drop from provided ranges
-                    eff = 100
-                    if isinstance(spec.get("range [0-1]"), (list, tuple)) and len(spec["range [0-1]"]) == 2:
-                        lo, hi = spec["range [0-1]"]
-                        drop_frac = random.uniform(float(lo), float(hi))
-                        eff = int(clamp(round_half_up(100.0 * (1.0 - drop_frac)), 1, 100))
-                    elif isinstance(spec.get("range [%]"), (list, tuple)) and len(spec["range [%]"]) == 2:
-                        lo, hi = spec["range [%]"]
-                        drop_pct = random.uniform(float(lo), float(hi))
-                        eff = int(clamp(round_half_up(100.0 - drop_pct), 1, 100))
-
-                    rows.append(
-                        {
-                            "disruption_type": "efficiency_loss",
-                            "station_id": station_id,
-                            "start_time": start,
-                            "end_time": end,
-                            "efficiency_percentage": eff,
-                            "order_id": "",
-                            "due_date": "",
-                            "priority": "",
-                            "variant0": "",
-                            "quantity0": "",
-                            "variant1": "",
-                            "quantity1": "",
-                            "variant2": "",
-                            "quantity2": "",
-                        }
-                    )
-
-                    summary[station_id]["efficiency_loss"] = summary[station_id].get("efficiency_loss", 0) + 1
-
-            # v1 format: has duration and std for efficiency loss
-            else:
-                chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
-                target_downtime = chance * sim_time
-                mean_dur = float(spec.get("duration [s]", 0))
-
+            # --- Breakdown (supports multiple breakdown types from disruption_v2.json) ---
+            # v2 uses key: 'machine breakdowns' (list) with name/chance/range/mean/std
+            # v1 uses key: 'breakdown' (single dict)
+            for dtype, spec, chance, mean_dur in iter_breakdown_specs_v2(station_cfg):
+                target_downtime = chance * plan_time
                 n_events = sample_event_count_from_time_fraction(target_downtime, mean_dur)
 
                 placed = 0
                 for _ in range(n_events):
-                    duration = sample_duration(spec, Range=True)
-                    start = pick_random_start_non_overlapping(duration, occupied, sim_time)
+                    # v2 durations are clamped automatically; v1 uses Range flag to clamp
+                    duration =  sample_duration(data_dir,spec, Range=True)
+                    start = pick_random_start_non_overlapping(duration, occupied, plan_time)
                     if start is None:
                         break
-                    end = min(sim_time, start + duration)
+                    end = min(plan_time, start + duration)
 
                     occupied.append((start, end))
                     placed += 1
 
-                    eff = sample_efficiency_percentage(spec, Range=True)
-
                     rows.append(
                         {
-                            "disruption_type": "efficiency_loss",
-                            "station_id": station_id,
+                            "disruption_type": dtype,
+                            "station_id": station_instance_id,
                             "start_time": start,
                             "end_time": end,
-                            "efficiency_percentage": eff,
+                            "efficiency_percentage": 0,
                             "order_id": "",
                             "due_date": "",
                             "priority": "",
@@ -844,51 +773,144 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
                     )
 
                 if placed:
-                    summary[station_id]["efficiency_loss"] = summary[station_id].get("efficiency_loss", 0) + placed
+                    summary[station_instance_id][dtype] = summary[station_instance_id].get(dtype, 0) + placed
+
+            # --- Efficiency loss ---
+
+            if "efficiency loss" in station_cfg:
+                spec = station_cfg["efficiency loss"]
+
+                # v2 format: has keys like 'chance [0-1]' and 'range [0-1]' or 'range [%]' (no duration given)
+                if spec.get("chance of sim time [%]") is not None:
+                    # Use ONLY 'chance of sim time [%]' (percentage, e.g. 2.4 = 2.4%)
+                    chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
+
+                    target_downtime = chance * plan_time
+                    duration = max(1, round_half_up(target_downtime))
+
+                    start = pick_random_start_non_overlapping(duration, occupied, plan_time)
+                    if start is not None:
+                        end = min(plan_time, start + duration)
+                        occupied.append((start, end))
+
+                        # sample efficiency drop from provided ranges
+                        eff = 100
+                        if isinstance(spec.get("range [0-1]"), (list, tuple)) and len(spec["range [0-1]"]) == 2:
+                            lo, hi = spec["range [0-1]"]
+                            drop_frac = random.uniform(float(lo), float(hi))
+                            eff = int(clamp(round_half_up(100.0 * (1.0 - drop_frac)), 1, 100))
+                        elif isinstance(spec.get("range [%]"), (list, tuple)) and len(spec["range [%]"]) == 2:
+                            lo, hi = spec["range [%]"]
+                            drop_pct = random.uniform(float(lo), float(hi))
+                            eff = int(clamp(round_half_up(100.0 - drop_pct), 1, 100))
+
+                        rows.append(
+                            {
+                                "disruption_type": "efficiency_loss",
+                                "station_id": station_instance_id,
+                                "start_time": start,
+                                "end_time": end,
+                                "efficiency_percentage": eff,
+                                "order_id": "",
+                                "due_date": "",
+                                "priority": "",
+                                "variant0": "",
+                                "quantity0": "",
+                                "variant1": "",
+                                "quantity1": "",
+                                "variant2": "",
+                                "quantity2": "",
+                            }
+                        )
+
+                        summary[station_instance_id]["efficiency_loss"] = summary[station_instance_id].get("efficiency_loss", 0) + 1
+
+                # v1 format: has duration and std for efficiency loss
+                else:
+                    chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
+                    target_downtime = chance * plan_time
+                    mean_dur = float(spec.get("duration [s]", 0))
+
+                    n_events = sample_event_count_from_time_fraction(target_downtime, mean_dur)
+
+                    placed = 0
+                    for _ in range(n_events):
+                        duration = sample_duration(spec, Range=True)
+                        start = pick_random_start_non_overlapping(duration, occupied, plan_time)
+                        if start is None:
+                            break
+                        end = min(plan_time, start + duration)
+
+                        occupied.append((start, end))
+                        placed += 1
+
+                        eff = sample_efficiency_percentage(spec, Range=True)
+
+                        rows.append(
+                            {
+                                "disruption_type": "efficiency_loss",
+                                "station_id": station_instance_id,
+                                "start_time": start,
+                                "end_time": end,
+                                "efficiency_percentage": eff,
+                                "order_id": "",
+                                "due_date": "",
+                                "priority": "",
+                                "variant0": "",
+                                "quantity0": "",
+                                "variant1": "",
+                                "quantity1": "",
+                                "variant2": "",
+                                "quantity2": "",
+                            }
+                        )
+
+                    if placed:
+                        summary[station_instance_id]["efficiency_loss"] = summary[station_instance_id].get("efficiency_loss", 0) + placed
                     
-        if "inspection failure" in station_cfg:
-             spec = station_cfg["inspection failure"]
-             chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
-             target_downtime = chance * sim_time
-             mean_duration = AVE_CYCLE_TIME_PER_UNIT
+            if "inspection failure" in station_cfg:
+                 spec = station_cfg["inspection failure"]
+                 chance = float(spec.get("chance of sim time [%]", 0)) / 100.0
+                 target_downtime = chance * plan_time
+                 mean_duration = AVE_CYCLE_TIME_PER_UNIT
 
-             # For a purely probability-based event without duration, we can sample occurrences directly from the target downtime fraction.
-             n_events = sample_event_count_from_time_fraction(target_downtime, mean_duration)  
+                 # For a purely probability-based event without duration, we can sample occurrences directly from the target downtime fraction.
+                 n_events = sample_event_count_from_time_fraction(target_downtime, mean_duration)  
 
-             for _ in range(n_events):
-                 start = random.randint(0, sim_time - 1)  # Random start time for the event
-                 rows.append(
-                     {
-                         "disruption_type": "inspection_failure",
-                         "station_id": station_id,
-                         "start_time": start,
-                         "end_time": "", 
-                         "efficiency_percentage": "",
-                         "order_id": "",
-                         "due_date": "",
-                         "priority": "",
-                         "variant0": "",
-                         "quantity0": "",
-                         "variant1": "",
-                         "quantity1": "",
-                         "variant2": "",
-                         "quantity2": "",
-                     }
-                 )
+                 for _ in range(n_events):
+                     start = random.randint(0, plan_time - 1)  # Random start time for the event
+                     rows.append(
+                         {
+                             "disruption_type": "inspection_failure",
+                             "station_id": station_instance_id,
+                             "start_time": start,
+                             "end_time": "", 
+                             "efficiency_percentage": "",
+                             "order_id": "",
+                             "due_date": "",
+                             "priority": "",
+                             "variant0": "",
+                             "quantity0": "",
+                             "variant1": "",
+                             "quantity1": "",
+                             "variant2": "",
+                             "quantity2": "",
+                         }
+                     )
 
-             summary[station_id]["inspection_failure"] = summary[station_id].get("inspection_failure", 0) + n_events
-
-        
+                 summary[station_instance_id]["inspection_failure"] = summary[station_instance_id].get("inspection_failure", 0) + n_events
 
         
 
+        
 
-    #emergancy orders
+
+    #emergency orders
     eorders = round_half_up(random.normalvariate(num_orders*0.1, num_orders * 0.01))
     eunits = round_half_up(random.normalvariate(num_units*0.1, num_units * 0.01))
     if eunits < eorders:
         eorders = eunits
-    print(f"Generating {eorders} emergency orders with {eunits} units (10% of total orders with some variance).")
+    #print(f"Generating {eorders} emergency orders with {eunits} units (10% of total orders with some variance).")
     eunits_left = eunits
     for i in range(eorders):
         order_id = num_orders + i + 1
@@ -899,8 +921,8 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
         if i == eorders-1:
             eunits_per_order = eunits_left
         eunits_left -= eunits_per_order
-        start_time = round_half_up(random.uniform(0, max(sim_time-eunits_per_order*AVE_CYCLE_TIME_PER_UNIT, 0)))
-        due_date = round_half_up(random.uniform(min(start_time+eunits_per_order*AVE_CYCLE_TIME_PER_UNIT, sim_time), sim_time))
+        start_time = round_half_up(random.uniform(0, max(plan_time-eunits_per_order*AVE_CYCLE_TIME_PER_UNIT, 0)))
+        due_date = round_half_up(random.uniform(min(start_time+eunits_per_order*AVE_CYCLE_TIME_PER_UNIT, plan_time), plan_time))
         
         x50 = 0.5 # 50th percentile of the distribution (median)
         x90 = 2.0 # 90th percentile of the distribution (chosen to create a long tail for emergency orders)
@@ -908,8 +930,8 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
         k = math.log(math.log(10)/math.log(2)) / math.log(x90/x50) # shape parameter for weibull distribution (k)
         lam = x50 / (math.log(2)**(1.0/k)) # scale parameter for weibull distribution (lambda)
 
-        due_date = min(round_half_up(start_time+eunits_per_order*AVE_CYCLE_TIME_PER_UNIT*(1+random.weibullvariate(lam, k))), sim_time)
-        print(f"Due date for order {order_id}: {due_date}")
+        due_date = min(round_half_up(start_time+eunits_per_order*AVE_CYCLE_TIME_PER_UNIT*(1+random.weibullvariate(lam, k))), plan_time)
+        #print(f"Due date for order {order_id}: {due_date}")
 
         priority = PRIO_HIGH  # Emergency orders get highest priority
         variant0 = "FUSE0"
@@ -956,9 +978,9 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
     write_disruption_csv(rows, output_path)
 
     # Terminal summary
-    print("\nDisruption generation summary")
+    """print("\nDisruption generation summary")
     print("============================")
-    for station_id in sorted(summary.keys()):
+    for station_id in sorted(summary.keys(), key=lambda x: float(x)):
         types = summary[station_id]
         if not types:
             print(f"Station {station_id}: 0 events")
@@ -967,7 +989,7 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
         total = sum(types.values())
         print(f"Station {station_id}: {total} events (" + ", ".join(parts) + ")")
 
-    print(f"\nTotal events written: {len(rows)}")
+    print(f"\nTotal events written: {len(rows)}")"""
 
 # ============================================================
 # Gantt plot for disruptions
@@ -975,7 +997,7 @@ def generate_disruption_list(sim_time: int, output_path: Path, num_orders: int,n
 
 def plot_disruption_gantt(order_dir: Path,
     disruptions_csv: str | Path,
-    sim_time: int | None = None,
+    plan_time: int | None = None,
     title: str = "Disruptions Gantt Chart",
     figsize=(14, 6),
     lane_height: float = 0.8,
@@ -1028,8 +1050,8 @@ def plot_disruption_gantt(order_dir: Path,
     station_to_y = {st: i for i, st in enumerate(stations)}
 
     # --- If sim_time not provided, infer from max end_time ---
-    if sim_time is None:
-        sim_time = int(max(e["end"] for e in events))
+    if plan_time is None:
+        plan_time = int(max(e["end"] for e in events))
 
     # --- Create axes if needed ---
     if ax is None:
@@ -1079,7 +1101,7 @@ def plot_disruption_gantt(order_dir: Path,
     ax.set_yticklabels([str(st) for st in stations])
     ax.invert_yaxis()
 
-    ax.set_xlim(0, sim_time)
+    ax.set_xlim(0, plan_time)
 
     # Legend
     legend_items = [
@@ -1101,56 +1123,39 @@ def plot_disruption_gantt(order_dir: Path,
 # Main
 # ============================================================
 
-def main(num_orders = None, num_units = None):
-    base_dir = Path(__file__).resolve().parent
-    input_dir = base_dir / "input"
-    input_dir.mkdir(exist_ok=True)
-
-    n=1
-    timestamp = datetime.now().strftime("%d-%m_%H-%M")
-    orderfoldername = f"orders_{timestamp}_{n}"
-    
-    while (input_dir / orderfoldername).exists():
-        n=n+1
-        orderfoldername = f"orders_{timestamp}_{n}"
-    
+def main(seed,orders_dir,disruption_dir,num_orders = None, num_units = None):
     ordername_csv = f"unsorted_orders.csv"
-        
-    order_dir = input_dir / orderfoldername
-    order_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate paths
-    output_path_ordercsv = order_dir / ordername_csv
-    output_path_disruptioncsv = order_dir / f"disruption_list_{timestamp}_{n}.csv"
-    output_path_settingsjson = order_dir / "settings.json"
-    output_path_disruptionjson = order_dir / "disruption.json"
+    output_path_ordercsv = orders_dir / ordername_csv
+    output_path_settingsjson = orders_dir / "settings.json"
+    output_path_disruptioncsv = disruption_dir / "disruption_list.csv"
+    output_path_disruptionjson = disruption_dir / "disruption.json"
 
     # Generate settings and disruption json files
     create_setting_json(output_path_settingsjson)
     create_disruption_json(output_path_disruptionjson)
-    print("\n>>Do you wish to change the input settings?\n>>Press 'Enter' to continue when done changing the settings in settings.json")
-    input()
+    #print("\n>>Do you wish to change the input settings?\n>>Press 'Enter' to continue when done changing the settings in settings.json")
+    #input()
     if num_orders is None or num_units is None:
         num_orders = int(input("Enter amount of orders: "))
         num_units = int(input("Enter amount of units: "))
     # read settings json file
 
     settings = read_settings_json(output_path_settingsjson)
-    sim_time = int(settings.get("plan_time [s]", 576000))
-    seed = settings["seed"]
+    plan_time = int(settings.get("plan_time [s]", 576000))
     random.seed(seed)
 
     # Generate orderlist
 
     # should be in format: order_id, due_date, priority, variant0, quantity, variant1, quantity, variant2, quantity
-    generate_orderlist(num_orders, num_units, sim_time, output_path_ordercsv)
+    generate_orderlist(seed,num_orders, num_units, plan_time, output_path_ordercsv)
     if settings["random based disruptions"]["enabled"] == 2:
-        print("Generating event based disruptions")
-        generate_disruption_list(sim_time, output_path_disruptioncsv, num_orders, num_units)
-        plot_disruption_gantt(order_dir, output_path_disruptioncsv, sim_time=sim_time, title=f"Disruptions Gantt Chart for {orderfoldername}", show=False)
+        #print("Generating event based disruptions")
+        generate_disruption_list(seed,plan_time, output_path_disruptioncsv, num_orders, num_units)
+        plot_disruption_gantt(disruption_dir, output_path_disruptioncsv, plan_time=plan_time, title="Disruptions Gantt Chart", show=False)
 
-    print(f"--- Created order file: {orderfoldername} ----")
-    return order_dir
+    #print(f"--- Created order file ----")
 
 
 if __name__ == "__main__":
