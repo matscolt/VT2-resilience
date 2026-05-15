@@ -422,10 +422,8 @@ def print_orders_by_week(orders_by_week: dict, weeks_order=None):
 # main production planning pipeline
 # ==============================================================================
 
-def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
-    order_dir = Path(order_dir)
-    order_csv_path = order_dir / "unsorted_orders.csv"
-
+def create_production_plan(order_csv_path,on_going_run_path, settings,label , SECONDS_PER_WEEK):
+    
     # Read orders
     orders: list[dict] = []
     with open(order_csv_path, mode="r", newline="", encoding="utf-8") as csvfile:
@@ -464,7 +462,7 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
     )
 
     # Write production plan (add planned_day)
-    production_plan_csv_path = order_dir / "production_plan.csv"
+    production_plan_csv_path = on_going_run_path / f"production_plan_{label}.csv"
 
     fieldnames = [
         "order_id", "due date", "priority",
@@ -482,7 +480,7 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
     schedule_by_week = build_weekly_schedule_from_daily(schedule_by_day, workdays_per_week=WORKDAYS_PER_WEEK)
     all_instances = all_station_instance_names(layout_json)
 
-    print_schedule_summary_prettytable(
+    """print_schedule_summary_prettytable(
         schedule_by_week,
         variants_order=["FUSE0", "FUSE1", "FUSE2"],
         weeks_order=sorted(schedule_by_week.keys())[:4],
@@ -500,14 +498,14 @@ def create_production_plan(order_dir, settings, SECONDS_PER_WEEK):
         orders_by_day.setdefault(d, set()).add(str(o.get('order_id', '')))
     orders_by_day = {d: sorted(list(ids)) for d, ids in orders_by_day.items()}
 
-    print_orders_by_day(orders_by_day, days_order=[1, 2, 3, 4, 5])
+    print_orders_by_day(orders_by_day, days_order=[1, 2, 3, 4, 5])"""
 
 
 def main(order_dir: str, SECONDS_PER_WEEK: float):
     print("\n\n--- Starting production planning ---")
     order_dir = Path(order_dir)
 
-    settings_path = order_dir / "settings.json"
+    settings_path = DATA_DIR / "settings.json"
     if not settings_path.exists():
         print(f"Error: settings.json not found in {order_dir}")
         return

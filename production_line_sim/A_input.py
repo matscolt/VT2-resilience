@@ -673,9 +673,9 @@ def generate_orderlist(seed, plan_time, output_path: Path,num_orders, num_units)
     for p in priosum:
         priority_sum += p
     
-    print(f"Total priority in orders: {priority_sum} with a mean of {priority_sum/num_orders}")
-    print(f"Generated {num_orders} orders with a total of {total_sum} units.\nAverage units per order: {total_sum/num_orders}")
-    print(f"Average phone per hour(if possible): {total_sum/plan_time*3600}\n==============================")
+    #print(f"Total priority in orders: {priority_sum} with a mean of {priority_sum/num_orders}")
+    #print(f"Generated {num_orders} orders with a total of {total_sum} units.\nAverage units per order: {total_sum/num_orders}")
+    #print(f"Average phone per hour(if possible): {total_sum/plan_time*3600}\n==============================")
     write_order_csv(rows, output_path)
 
 # -----------------------------
@@ -714,7 +714,6 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
                 station_instances_by_station_id.setdefault(base_station_id, []).append(station_number)
             except (TypeError, ValueError):
                 continue
-    print(station_instances_by_station_id)
     # Reproducible randomness
     random.seed(seed)
 
@@ -911,7 +910,7 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
     eunits = round_half_up(random.normalvariate(num_units*0.1, num_units * 0.01))
     if eunits < eorders:
         eorders = eunits
-    print(f"Generating {eorders} emergency orders with {eunits} units (10% of total orders with some variance).")
+    #print(f"Generating {eorders} emergency orders with {eunits} units (10% of total orders with some variance).")
     eunits_left = eunits
     for i in range(eorders):
         order_id = num_orders + i + 1
@@ -932,7 +931,7 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
         lam = x50 / (math.log(2)**(1.0/k)) # scale parameter for weibull distribution (lambda)
 
         due_date = min(round_half_up(start_time+eunits_per_order*AVE_CYCLE_TIME_PER_UNIT*(1+random.weibullvariate(lam, k))), plan_time)
-        print(f"Due date for order {order_id}: {due_date}")
+        #print(f"Due date for order {order_id}: {due_date}")
 
         priority = PRIO_HIGH  # Emergency orders get highest priority
         variant0 = "FUSE0"
@@ -979,7 +978,7 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
     write_disruption_csv(rows, output_path)
 
     # Terminal summary
-    print("\nDisruption generation summary")
+    """print("\nDisruption generation summary")
     print("============================")
     for station_id in sorted(summary.keys(), key=lambda x: float(x)):
         types = summary[station_id]
@@ -990,7 +989,7 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
         total = sum(types.values())
         print(f"Station {station_id}: {total} events (" + ", ".join(parts) + ")")
 
-    print(f"\nTotal events written: {len(rows)}")
+    print(f"\nTotal events written: {len(rows)}")"""
 
 # ============================================================
 # Gantt plot for disruptions
@@ -1152,11 +1151,11 @@ def main(seed,orders_dir,disruption_dir,num_orders = None, num_units = None):
     # should be in format: order_id, due_date, priority, variant0, quantity, variant1, quantity, variant2, quantity
     generate_orderlist(seed,num_orders, num_units, plan_time, output_path_ordercsv)
     if settings["random based disruptions"]["enabled"] == 2:
-        print("Generating event based disruptions")
+        #print("Generating event based disruptions")
         generate_disruption_list(seed,plan_time, output_path_disruptioncsv, num_orders, num_units)
         plot_disruption_gantt(disruption_dir, output_path_disruptioncsv, plan_time=plan_time, title="Disruptions Gantt Chart", show=False)
 
-    print(f"--- Created order file ----")
+    #print(f"--- Created order file ----")
 
 
 if __name__ == "__main__":

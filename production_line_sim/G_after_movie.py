@@ -360,7 +360,7 @@ def _format_eta(seconds):
         s = seconds % 60
         return f"{h:d}:{m:02d}:{s:02d}" if h > 0 else f"{m:02d}:{s:02d}"
 
-def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 60) -> int:
+def progress_update( frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 60,action="rendering: ") -> int:
     # Use perf_counter for timing
     now = time.perf_counter()
 
@@ -405,7 +405,7 @@ def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width:
 
     filled = int(round((pct / 100) * bar_width))
     bar = "#" * filled + "-" * (bar_width - filled)
-    msg = f"Rendering: [{bar}] {pct:3d}%  ({frame_idx}/{total_frames})  {fps_str}  ETA {eta_str}"
+    msg = f"{action}[{bar}] {pct:3d}%  ({frame_idx}/{total_frames})  {fps_str}  ETA {eta_str}"
     print("\r" + msg, end="", flush=True)
 
     if pct >= 100:
