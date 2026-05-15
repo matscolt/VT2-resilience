@@ -48,6 +48,8 @@ LAYOUT_PATH = (
 PROCESS_TIMES_PATH = ROOT / "data" / "process_times.json"
 TRANSPORT_TIMES_PATH = ROOT / "data" / "transport_times.json"
 
+CLEAN_TEMP_OUTPUTS = True
+KEEP_ONLY_BEST_SUMMARY = True
 # ============================================================
 # GA SETTINGS / ROLLING HORIZON SETTINGS
 # ============================================================
