@@ -115,6 +115,9 @@ def main2():
    A_input.create_disruption_json(disruption_dir / "disruption.json")
 
    number = 0
+   next_pct = 0
+   max_number = len(scenarios) * len(pressures) * len(ratios) * len(seeds)
+   print(" --- Generating the order and disruption lists ---")
    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (s_id, seed) in product(
         scenarios, pressures, ratios, seeds
     ):
@@ -132,8 +135,12 @@ def main2():
       A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
       # takes wayyy too long to generate a gantt chart for each one
       # A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
+      next_pct = G_after_movie.progress_update(number, max_number, next_pct)
 
    run_idx = 0
+   next_pct = 0
+   max_idx = len(scenarios) * len(pressures) * len(ratios)* len(algos) * len(seeds)
+   print(" --- Running the different combination os scenarios ---")
    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name), (s_id, seed) in product(
         scenarios, pressures, ratios, algos, seeds
     ):
@@ -152,7 +159,7 @@ def main2():
       # Algorithm choice (pass into IPPS when you support it)
       algo_choice = {"algorithm_id": a_id, "algorithm_name": a_name}
 
-      print(f"\n--- RUN {run_idx} ---")
+      print(f"\n\n--- RUN {run_idx} ---")
       print(f"Number of units: {num_units}")
       print(f"Number of orders: {num_orders}")
       print(f"Scenario = {sc_name} layout = {layout_file}, seed = {seed}")
@@ -160,7 +167,7 @@ def main2():
 
       #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
       print("----------------------------------------------------------------------------------------------------")
-      return
+      #next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct)
 
 
 
