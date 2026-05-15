@@ -12,8 +12,12 @@ from typing import List, Set, Tuple, Dict
 
 import pandas as pd
 
-import E_production_line_sub_sim as simulator
+import E_production_line_sim as simulator
 
+
+# ============================================================
+# PATHS
+# ============================================================
 
 # ============================================================
 # PATHS
@@ -42,13 +46,7 @@ LAYOUT_PATH = (
 )
 
 PROCESS_TIMES_PATH = ROOT / "data" / "process_times.json"
-
 TRANSPORT_TIMES_PATH = ROOT / "data" / "transport_times.json"
-
-# Keep the GA run lightweight by removing temporary schedules/output folders.
-# The GA only needs unit_summary.csv long enough to calculate fitness.
-CLEAN_TEMP_OUTPUTS = True
-KEEP_ONLY_BEST_SUMMARY = True
 
 # ============================================================
 # GA SETTINGS / ROLLING HORIZON SETTINGS
@@ -59,14 +57,14 @@ SECONDS_PER_PRODUCTION_DAY = 8 * 60 * 60
 
 # Set these values here while testing.
 # Later, CURRENT_TIME_S and completed units should come from the main simulation.
-CURRENT_TIME_S = 10000
+CURRENT_TIME_S = 0
 DEFAULT_LOOKAHEAD_DAYS = 3
 
 # Temporary test input:
 # Number of units already produced before the rolling-horizon scheduler starts.
 # The code will remove the first N units from the full production plan order.
 # Later, replace this with exact completed unit IDs from the main simulation.
-COMPLETED_UNITS_COUNT = 10
+COMPLETED_UNITS_COUNT = 0
 
 # Rolling horizon options:
 # 1 day  -> schedule the rest of current day only
@@ -172,11 +170,13 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
     units = []
     order_units = {}
 
+    global_unit_counter = 1
+
     print("\n================================================")
     print("LOADING ORDERS AND UNITS FROM FILE")
     print("================================================")
 
-    for _, row in df.iterrows():
+    for _, row in df.sort_values("order_id").iterrows():
 
         order_id = int(row["order_id"])
         due_date = float(row["due date"])
@@ -184,7 +184,6 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
 
         order_units[order_id] = []
 
-        unit_counter = 1
         total_units = 0
 
         print(
@@ -204,7 +203,7 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
 
             for _ in range(qty):
 
-                internal_unit_id = f"{order_id}.{unit_counter}"
+                internal_unit_id = f"U{global_unit_counter:03d}"
 
                 unit = Unit(
                     unit_id=internal_unit_id,
@@ -217,7 +216,7 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
                 units.append(unit)
                 order_units[order_id].append(internal_unit_id)
 
-                unit_counter += 1
+                global_unit_counter += 1
                 total_units += 1
 
         order = Order(
@@ -239,7 +238,6 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
     print("================================================\n")
 
     return orders, units, order_units
-
 
 # ============================================================
 # ROLLING HORIZON / SIMULATION STATE HELPERS
@@ -516,7 +514,6 @@ def order_chromosome_to_unit_sequence(
 
     return unit_sequence
 
-
 def chromosome_to_unit_dataframe(
     chromosome,
     order_units,
@@ -538,20 +535,15 @@ def chromosome_to_unit_dataframe(
 
         unit = units_lookup[internal_unit_id]
 
-        local_unit_id = int(
-            unit.unit_id.split(".")[1]
-        )
-
         rows.append({
             "unit_seq": unit_seq,
             "order_id": unit.order_id,
-            "unit_id": local_unit_id,
+            "unit_id": unit.unit_id,
             "variant": unit.variant,
             "route_id": route_id
         })
 
     return pd.DataFrame(rows)
-
 
 # ============================================================
 # EXPORT SCHEDULE
@@ -649,6 +641,37 @@ def find_summary_folder(
     generation,
     chromosome_index
 ):
+
+    if (INPUT_DIR / "unit_summary.csv").exists():
+        return INPUT_DIR
+
+    raise FileNotFoundError(
+        f"unit_summary.csv not found in {INPUT_DIR}"
+    )
+
+    candidates = []
+
+    if (INPUT_DIR / "unit_summary.csv").exists():
+        candidates.append(INPUT_DIR)
+
+    output_root = ROOT / "output" / INPUT_DIR.name
+
+    if output_root.exists():
+        candidates.extend(
+            folder
+            for folder in output_root.iterdir()
+            if folder.is_dir() and (folder / "unit_summary.csv").exists()
+        )
+
+    if not candidates:
+        raise FileNotFoundError(
+            f"No folder with unit_summary.csv found in {INPUT_DIR} or {output_root}"
+        )
+
+    return max(
+        candidates,
+        key=lambda folder: (folder / "unit_summary.csv").stat().st_mtime
+    )
 
     output_root = ROOT / "output" / INPUT_DIR.name
 
