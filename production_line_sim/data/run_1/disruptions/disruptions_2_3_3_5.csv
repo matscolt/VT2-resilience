@@ -1,0 +1,8 @@
+disruption_type,station_id,start_time,end_time,efficiency_percentage,order_id,due_date,priority,variant0,quantity0,variant1,quantity1,variant2,quantity2
+Top Cover Stuck,5,115,1295,0,,,,,,,,,
+inspection_failure,4,275,,,,,,,,,,,
+Cover Wrong Orientation,3,473,7073,0,,,,,,,,,
+PLC Failure,3,638,9358,0,,,,,,,,,
+PLC Failure,3.4,745,12165,0,,,,,,,,,
+Cart Relised To Early,3.4,958,18458,0,,,,,,,,,
+inspection_failure,6,1167,,,,,,,,,,,
