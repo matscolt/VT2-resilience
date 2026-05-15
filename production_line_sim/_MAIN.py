@@ -130,6 +130,7 @@ def main2():
 
       A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
       A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units)
+      A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
 
    run_idx = 0
    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name), (s_id, seed) in product(
