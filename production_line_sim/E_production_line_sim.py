@@ -3717,7 +3717,7 @@ def save_run_metadata(
 # -----------------------------
 # Main
 # -----------------------------
-def main(main_settings_json: str | Path | None = None) -> None:
+def main(main_settings_json: str | Path | None = None,timestamp: int = None) -> None:
     parser = argparse.ArgumentParser(
         description="Simulate a 6-station phone production line with FIFO queues and transport times."
     )
