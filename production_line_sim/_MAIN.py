@@ -21,6 +21,7 @@ from copy import deepcopy
 from datetime import datetime
 import json
 import time as ti
+import csv
 
 # ================================================================================
 # constands, paths and global variables
@@ -63,8 +64,48 @@ def create_setting_json(
 
 
 def find_all_event_times(main_settings_json):
-   print("here we find all the timestamps for when an 'event start' or 'event ends' happens")
-   main_settings_json_read = A_input.read_settings_json(main_settings_json)
+    """Build the sorted list of disruption event times for the run.
+
+    The list always starts with 0, then includes every start_time and end_time
+    found in the disruptions CSV for the run (if present). Times are returned
+    sorted from low to high and with duplicates removed.
+
+    The disruptions CSV is resolved via main_settings.json:
+      - input_disruptions directory from pathlist
+      - label from the run
+      - filename pattern: disruptions_{label}.csv
+    """
+    print("here we find all the timestamps for when an 'event start' or 'event ends' happens")
+
+    main_settings_json_read = A_input.read_settings_json(main_settings_json)
+
+    disruptions_csv = Path(main_settings_json_read["pathlist"]["input_disruptions_csv"])
+    
+    event_times = [0]
+
+    if not disruptions_csv.exists():
+        raise FileNotFoundError(f"Could not find disruptions CSV at: {disruptions_csv}")
+
+    with disruptions_csv.open('r', encoding='utf-8', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            for col in ("start_time", "end_time"):
+                val = row.get(col, "")
+                if val is None:
+                    continue
+                val = str(val).strip()
+                if val == "" or val.lower() == "nan":
+                    continue
+                # Times in the file are integers, but be defensive.
+                try:
+                    t = int(float(val))
+                except ValueError:
+                    continue
+                event_times.append(t)
+
+    # Sort & deduplicate
+    event_times = sorted(set(event_times))
+    return event_times
 
 def main():
    #create folders/check they are there
@@ -178,7 +219,7 @@ def main():
       pathlist = {
          "input": dirs[0].parent,
          "input_disruptions": disruption_dir,
-         "input_disruptions_csv": disruption_dir / f"disruption_{label}.csv",
+         "input_disruptions_csv": disruption_dir / f"disruptions_{label}.csv",
          "input_disruptions_json": disruption_dir / f"disruption.json",
          "input_orders": orders_dir,
          "input_orders_csv": orders_dir / f"unsorted_orders_{label}.csv",
@@ -207,13 +248,15 @@ def main():
 
       #finds the event_times based on the disruption file for the run
       #event_times = find_all_event_times(main_settings_dir)
-      event_times = [100,200,300,400,500]
-
+      event_times = find_all_event_times(main_settings_dir)
+      print(f"event times: {event_times}")
       # runs a loop of the breaks for the main sim
-      
+      break
       for time in event_times:
          start = ti.perf_counter()
+         print("MAIN.py: running GA")
          MFI_GA_Scheduling_V3_3.main(main_settings_dir, time)
+         print("MAIN.py: running main sim")
          E_production_line_sim.main(main_settings_dir, time)
          end = ti.perf_counter()
          print(f"\n\nloop time : {end - start}\n\n")

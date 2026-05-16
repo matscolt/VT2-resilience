@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from typing import List, Set, Tuple, Dict
 import pandas as pd
 import E_production_line_sim as simulator
+### PATCH: NO BEST-SUMMARY FOLDER / ON_GOING ONLY
+# This file is auto-patched to ensure the GA only overwrites current_schedule.csv in ON_GOING_RUN_DIR.
+# All best-schedule summary folder creation/moves/cleanup are disabled.
+
+
 
 # ============================================================
 # PATHS / MAIN SETTINGS
@@ -27,7 +32,7 @@ DISRUPTION_HISTORY_PATH = None
 UNIT_SUMMARY_PATH = None
 
 CLEAN_TEMP_OUTPUTS = True
-KEEP_ONLY_BEST_SUMMARY = True
+# DISABLED: KEEP_ONLY_BEST_SUMMARY = True
 
 
 def load_main_settings(main_settings_path) -> dict:
@@ -582,6 +587,7 @@ def chromosome_to_unit_dataframe(
 # EXPORT SCHEDULE
 # ============================================================
 
+
 def export_schedule(
     chromosome,
     order_units,
@@ -589,6 +595,12 @@ def export_schedule(
     filename="current_schedule.csv",
     verbose=False
 ):
+    """Export ONLY the current schedule CSV into the on-going run folder.
+
+    NOTE: This intentionally avoids creating/moving any simulator summary folders.
+    The GA's sole filesystem side-effect should be overwriting
+    ON_GOING_RUN_DIR / "current_schedule.csv".
+    """
     unit_df = chromosome_to_unit_dataframe(
         chromosome=chromosome,
         order_units=order_units,
@@ -596,43 +608,28 @@ def export_schedule(
         route_id=0
     )
 
-    output_path = ON_GOING_RUN_DIR / filename
+    if ON_GOING_RUN_DIR is None:
+        raise RuntimeError("ON_GOING_RUN_DIR is not configured. Call configure_paths_from_main_settings() first.")
 
-    unit_df.to_csv(
-        output_path,
-        index=False
-    )
+    output_path = Path(ON_GOING_RUN_DIR) / "current_schedule.csv"
+    unit_df.to_csv(output_path, index=False)
 
     if verbose:
-        print(f"Saved schedule: {output_path}")
+        print(f"Schedule saved to {output_path}")
 
-    return output_path
+# DISABLED: def safe_delete_file(path: Path):
+    """NO-OP (disabled).
 
+    This project variant must NOT delete or cleanup any files as part of GA.
+    """
+    return
 
-# ============================================================
-# OUTPUT CLEANUP
-# ============================================================
+# DISABLED: def safe_delete_folder(path: Path):
+    """NO-OP (disabled).
 
-def safe_delete_file(path: Path):
-    if path is not None and path.exists() and path.is_file():
-        try:
-            path.unlink()
-        except PermissionError as exc:
-            print(f"WARNING: Could not delete file because it is locked: {path}")
-            print(f"         {exc}")
-
-
-def safe_delete_folder(path: Path):
-    if path is not None and path.exists() and path.is_dir():
-        try:
-            shutil.rmtree(path)
-        except PermissionError as exc:
-            print(f"WARNING: Could not delete folder because it is locked: {path}")
-            print(f"         {exc}")
-
-# ============================================================
-# SUMMARY READING
-# ============================================================
+    This project variant must NOT delete or cleanup any folders as part of GA.
+    """
+    return
 
 def find_summary_folder(
     generation,
@@ -951,7 +948,7 @@ def run_ga(
     best_order_solution = None
     best_unit_sequence = None
     best_simulation_result = None
-    best_summary_folder = None
+    # DISABLED: best_summary_folder = None
 
     best_fitness = float("inf")
 
@@ -1008,7 +1005,7 @@ def run_ga(
 
             if is_new_global_best:
 
-                previous_best_summary_folder = best_summary_folder
+                # DISABLED: previous_best_summary_folder = best_summary_folder
 
                 best_fitness = fitness
 
@@ -1024,7 +1021,7 @@ def run_ga(
                     simulation_result
                 )
 
-                best_summary_folder = summary_folder
+                # DISABLED: best_summary_folder = summary_folder
 
             best_marker = " <-- NEW BEST" if is_new_global_best else ""
 
@@ -1095,23 +1092,12 @@ def run_ga(
 
         population = new_population
 
-    if KEEP_ONLY_BEST_SUMMARY and best_summary_folder is not None:
-        final_summary_folder = OUTPUT_RUN_DIR / "best_schedule_summary"
-
-        if best_summary_folder.exists() and best_summary_folder != final_summary_folder:
-            try:
-                best_summary_folder.rename(final_summary_folder)
-                best_summary_folder = final_summary_folder
-            except PermissionError as exc:
-                print(f"WARNING: Could not rename best summary folder: {best_summary_folder}")
-                print(f"         {exc}")
-
     return (
         best_order_solution,
         best_unit_sequence,
         best_simulation_result,
         best_fitness,
-        best_summary_folder
+        # DISABLED: best_summary_folder
     )
 
 
@@ -1199,7 +1185,7 @@ def main(
         best_unit_sequence,
         best_simulation_result,
         best_fitness,
-        best_summary_folder
+        # DISABLED: best_summary_folder
     ) = run_ga(
         orders=orders,
         units=units,
@@ -1221,9 +1207,9 @@ def main(
             f"{best_simulation_result.get('makespan', 'N/A')}"
         )
 
-    if best_summary_folder is not None:
+    # DISABLED: if best_summary_folder is not None:
         print("\nBest summary folder:")
-        print(best_summary_folder)
+        # DISABLED: print(best_summary_folder)
 
     if best_order_solution is not None:
         units_lookup = {
