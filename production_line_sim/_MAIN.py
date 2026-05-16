@@ -20,6 +20,7 @@ from itertools import product
 from copy import deepcopy
 from datetime import datetime
 import json
+import time as ti
 
 # ================================================================================
 # constands, paths and global variables
@@ -161,6 +162,7 @@ def main():
       for dir in dirs[0:3]:
          subfolder = dir / f"run_{run_idx}"
          subfolder.mkdir(exist_ok=True)
+         print(subfolder)
 
       # creating the production plan
       label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
@@ -194,7 +196,7 @@ def main():
          "post_processing": dirs[3]
       }
       
-
+      
       # creating the selected settings json for the run
       main_settings_dir = dirs[0]/ f"run_{run_idx}"/"main_settings.json"
       create_setting_json(main_settings_dir, run_idx, layout_file, p_val, r_val, a_name, seed,
@@ -210,8 +212,11 @@ def main():
       # runs a loop of the breaks for the main sim
 
       for time in event_times:
+         start = ti.perf_counter()
          MFI_GA_Scheduling_V3_3.main(main_settings_dir, time)
          E_production_line_sim.main(main_settings_dir, time)
+         end = ti.perf_counter()
+         print(f"\n\nloop time : {end - start}\n\n")
 
 
       print(f"\n\n--- RUN {run_idx} ---")

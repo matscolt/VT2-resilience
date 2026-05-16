@@ -252,12 +252,12 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
 
         total_units = 0
 
-        print(
+        """print(
             f"\nORDER {order_id} | "
             f"Due={due_date} | "
             f"Priority={priority} | "
             f"Planned day={int(row['planned_day'])}"
-        )
+        )"""
 
         for i in range(3):
 
@@ -296,7 +296,7 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
 
         orders.append(order)
 
-        print(f"  Total units for order {order_id}: {total_units}")
+        #print(f"  Total units for order {order_id}: {total_units}")
 
     print("\n================================================")
     print(f"TOTAL ORDERS LOADED: {len(orders)}")
