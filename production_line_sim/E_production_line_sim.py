@@ -706,6 +706,19 @@ def resolve_current_schedule_path(base_dir: Path) -> Path | None:
     return None
 
 
+def _route_value_is_assigned(route_value: Any) -> bool:
+    route_text = str(route_value).strip()
+    if route_text == "" or route_text.casefold() == "nan":
+        return False
+    try:
+        numeric_value = float(route_text)
+    except (TypeError, ValueError):
+        return route_text != "0"
+    if math.isnan(numeric_value):
+        return False
+    return numeric_value != 0.0
+
+
 def _load_current_schedule_csv(schedule_csv_path: Path, valid_variants: set[str]) -> dict[str, Any]:
     scheduled_rows: list[dict[str, Any]] = []
 
@@ -718,14 +731,17 @@ def _load_current_schedule_csv(schedule_csv_path: Path, valid_variants: set[str]
         normalized_header = [re.sub(r"[^a-z0-9]", "", str(value).strip().lower()) for value in header]
         if normalized_header[:4] != ["unitseq", "orderid", "unitid", "variant"]:
             raise ValueError("current_schedule.csv must start with columns: unit_seq, order_id, unit_id, variant")
+        route_col_idx = normalized_header.index("routeid") if "routeid" in normalized_header else None
 
         for row_index, row in enumerate(reader, start=2):
             if not row or not any(str(cell).strip() for cell in row):
                 continue
-            padded_row = list(row) + [""] * max(0, 4 - len(row))
+            min_row_length = max(4, (route_col_idx + 1) if route_col_idx is not None else 4)
+            padded_row = list(row) + [""] * max(0, min_row_length - len(row))
             unit_seq = _read_int(padded_row[0], row_index - 1)
             order_id = str(padded_row[1]).strip() if str(padded_row[1]).strip() != "" else str(row_index - 1)
             variant = str(padded_row[3]).strip().upper()
+            route_id = str(padded_row[route_col_idx]).strip() if route_col_idx is not None else "0"
 
             if variant not in valid_variants:
                 raise ValueError(
@@ -737,6 +753,7 @@ def _load_current_schedule_csv(schedule_csv_path: Path, valid_variants: set[str]
                     "unit_seq": int(unit_seq),
                     "order_id": order_id,
                     "variant": variant,
+                    "route_id": route_id,
                     "row_index": int(row_index),
                 }
             )
@@ -748,6 +765,8 @@ def _load_current_schedule_csv(schedule_csv_path: Path, valid_variants: set[str]
         "unit_release_times": [0.0] * len(scheduled_rows),
         "unit_priorities": [1] * len(scheduled_rows),
         "unit_order_ids": [str(row["order_id"]) for row in scheduled_rows],
+        "unit_route_ids": [str(row.get("route_id", "0")) for row in scheduled_rows],
+        "has_assigned_route": any(_route_value_is_assigned(row.get("route_id", "0")) for row in scheduled_rows),
     }
 
 
@@ -857,6 +876,8 @@ def load_input_from_main_settings(
         "unit_release_times": list(schedule_payload["unit_release_times"]),
         "unit_priorities": list(schedule_payload["unit_priorities"]),
         "unit_order_ids": list(schedule_payload["unit_order_ids"]),
+        "unit_route_ids": list(schedule_payload.get("unit_route_ids", [])),
+        "has_assigned_route": bool(schedule_payload.get("has_assigned_route", False)),
         "simulation_time_s": simulation_time_s,
         "carriers": carriers,
         "settings_data": settings_data,
@@ -955,6 +976,8 @@ def load_latest_generated_input(
         "unit_release_times": list(schedule_payload["unit_release_times"]),
         "unit_priorities": list(schedule_payload["unit_priorities"]),
         "unit_order_ids": list(schedule_payload["unit_order_ids"]),
+        "unit_route_ids": list(schedule_payload.get("unit_route_ids", [])),
+        "has_assigned_route": bool(schedule_payload.get("has_assigned_route", False)),
         "simulation_time_s": simulation_time_s,
         "carriers": carriers,
         "settings_data": settings_data,
@@ -3761,6 +3784,7 @@ def main(main_settings_json: str | Path | None = None) -> None:
     settings_path: Path | None = None
     settings_data: dict[str, Any] = {}
     main_settings_pathlist: dict[str, Any] = {}
+    write_outputs_for_assigned_route = True
 
     if args.main_settings is not None:
         generated_input = load_input_from_main_settings(Path(args.main_settings), data_dir, valid_variants)
@@ -3769,6 +3793,7 @@ def main(main_settings_json: str | Path | None = None) -> None:
         unit_release_times = generated_input["unit_release_times"]
         unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
         unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
+        write_outputs_for_assigned_route = bool(generated_input.get("has_assigned_route", False))
         simulation_time_s = generated_input["simulation_time_s"]
         carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))
         settings_data = generated_input.get("settings_data", {})
@@ -3805,6 +3830,7 @@ def main(main_settings_json: str | Path | None = None) -> None:
         unit_release_times = generated_input["unit_release_times"]
         unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
         unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
+        write_outputs_for_assigned_route = bool(generated_input.get("has_assigned_route", False))
         simulation_time_s = generated_input["simulation_time_s"]
         carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))
         settings_data = generated_input.get("settings_data", {})
@@ -3901,23 +3927,26 @@ def main(main_settings_json: str | Path | None = None) -> None:
     if timed_disruption_csv_path is not None:
         run_metadata_extra["input_timed_disruption_csv"] = str(timed_disruption_csv_path.resolve())
 
-    run_output_dir = resolve_results_output_dir(output_root, order_text)
+    if write_outputs_for_assigned_route:
+        run_output_dir = resolve_results_output_dir(output_root, order_text)
 
-    copy_file_if_exists(settings_path, run_output_dir / "settings_used.json")
-    if int(disruption_mode) == 1:
-        copy_file_if_exists(disruption_path, run_output_dir / "disruption_used.json")
-    elif int(disruption_mode) == 2:
-        copy_file_if_exists(timed_disruption_json_path, run_output_dir / "disruption_used.json")
-        copy_file_if_exists(timed_disruption_csv_path, run_output_dir / "disruption_used.csv")
+        copy_file_if_exists(settings_path, run_output_dir / "settings_used.json")
+        if int(disruption_mode) == 1:
+            copy_file_if_exists(disruption_path, run_output_dir / "disruption_used.json")
+        elif int(disruption_mode) == 2:
+            copy_file_if_exists(timed_disruption_json_path, run_output_dir / "disruption_used.json")
+            copy_file_if_exists(timed_disruption_csv_path, run_output_dir / "disruption_used.csv")
 
-    save_run_metadata(
-        order_text,
-        ordered_units,
-        run_output_dir / "run_metadata.json",
-        data_dir,
-        run_output_dir,
-        extra_payload=run_metadata_extra,
-    )
+        save_run_metadata(
+            order_text,
+            ordered_units,
+            run_output_dir / "run_metadata.json",
+            data_dir,
+            run_output_dir,
+            extra_payload=run_metadata_extra,
+        )
+    else:
+        run_output_dir = output_root
 
     operations: list[OperationRecord] = []
     transport_records: list[TransportRecord] = []
@@ -3991,8 +4020,9 @@ def main(main_settings_json: str | Path | None = None) -> None:
         "status": "complete" if len(unproduced_units) == 0 else "partial_or_stopped",
     }
 
-    write_material_report_csv(material_report, run_output_dir / "material_report.csv")
-    save_json(production_status, run_output_dir / "production_status.json")
+    if write_outputs_for_assigned_route:
+        write_material_report_csv(material_report, run_output_dir / "material_report.csv")
+        save_json(production_status, run_output_dir / "production_status.json")
 
     kpis = calculate_kpis(
         ordered_units=completed_good_variants,
@@ -4433,54 +4463,58 @@ def main(main_settings_json: str | Path | None = None) -> None:
             6,
         )
 
-    write_kpis_csv(kpis, run_output_dir / "kpi_summary.csv")
-    write_kpis_csv(kpis_no_disruptions, run_output_dir / "kpi_summary_without_disruptions.csv")
-    write_operations_csv(operations, run_output_dir / "station_schedule.csv")
-    write_transport_csv(transport_records, run_output_dir / "transport_schedule.csv")
-    write_unit_summary_csv(unit_summaries, run_output_dir / "unit_summary.csv")
+    if write_outputs_for_assigned_route:
+        write_kpis_csv(kpis, run_output_dir / "kpi_summary.csv")
+        write_kpis_csv(kpis_no_disruptions, run_output_dir / "kpi_summary_without_disruptions.csv")
+        write_operations_csv(operations, run_output_dir / "station_schedule.csv")
+        write_transport_csv(transport_records, run_output_dir / "transport_schedule.csv")
+        write_unit_summary_csv(unit_summaries, run_output_dir / "unit_summary.csv")
+        write_station_summary_csv(
+            station_summaries,
+            run_output_dir / "station_summary.csv",
+            utilization_active_window_without_disruptions_by_station=station_utilization_active_window_without_disruptions,
+            active_order_utilization_by_station=station_active_order_utilization,
+        )
+
+        if disruptions_enabled or simulation_details.get("disruption_event_log"):
+            save_json(
+                {
+                    "disruptions_enabled": bool(disruptions_enabled),
+                    "disruption_mode": int(disruption_mode),
+                    "seed": str(disruption_seed) if disruption_seed is not None else None,
+                    "broken_material_extra_time_seconds": _broken_material_extra_time_s(disruption_config),
+                    "timed_disruption_records": list(timed_disruption_records),
+                    "disruption_counts": dict(simulation_details.get("disruption_counts", {})),
+                    "stop_reason": simulation_details.get("stop_reason"),
+                    "events": list(simulation_details.get("disruption_event_log", [])),
+                },
+                run_output_dir / "disruption_summary.json",
+            )
+
+            disruption_history_rows = build_disruption_history_rows(
+                simulation_details=simulation_details,
+                disruption_config=disruption_config,
+                timed_disruption_records=timed_disruption_records,
+            )
+            if main_settings_pathlist and _pathlist_path(main_settings_pathlist, "on_going_run_dis_his") is not None:
+                disruption_history_path = _pathlist_path(main_settings_pathlist, "on_going_run_dis_his")
+            else:
+                ongoing_run_dir = resolve_ongoing_run_dir(Path(__file__).resolve().parent)
+                disruption_history_path = ongoing_run_dir / DISRUPTION_HISTORY_FILENAME
+            write_disruption_history_csv(
+                disruption_history_path,
+                disruption_history_rows,
+            )
+
     if main_settings_pathlist and _pathlist_path(main_settings_pathlist, "on_going_run_unit_summary") is not None:
         ongoing_unit_summary_path = _pathlist_path(main_settings_pathlist, "on_going_run_unit_summary")
     else:
         ongoing_run_dir_for_summary = resolve_ongoing_run_dir(Path(__file__).resolve().parent)
         ongoing_unit_summary_path = ongoing_run_dir_for_summary / "unit_summary.csv"
     write_unit_summary_csv(unit_summaries, ongoing_unit_summary_path)
-    write_station_summary_csv(
-        station_summaries,
-        run_output_dir / "station_summary.csv",
-        utilization_active_window_without_disruptions_by_station=station_utilization_active_window_without_disruptions,
-        active_order_utilization_by_station=station_active_order_utilization,
-    )
 
-    if disruptions_enabled or simulation_details.get("disruption_event_log"):
-        save_json(
-            {
-                "disruptions_enabled": bool(disruptions_enabled),
-                "disruption_mode": int(disruption_mode),
-                "seed": str(disruption_seed) if disruption_seed is not None else None,
-                "broken_material_extra_time_seconds": _broken_material_extra_time_s(disruption_config),
-                "timed_disruption_records": list(timed_disruption_records),
-                "disruption_counts": dict(simulation_details.get("disruption_counts", {})),
-                "stop_reason": simulation_details.get("stop_reason"),
-                "events": list(simulation_details.get("disruption_event_log", [])),
-            },
-            run_output_dir / "disruption_summary.json",
-        )
-
-        disruption_history_rows = build_disruption_history_rows(
-            simulation_details=simulation_details,
-            disruption_config=disruption_config,
-            timed_disruption_records=timed_disruption_records,
-        )
-        if main_settings_pathlist and _pathlist_path(main_settings_pathlist, "on_going_run_dis_his") is not None:
-            disruption_history_path = _pathlist_path(main_settings_pathlist, "on_going_run_dis_his")
-        else:
-            ongoing_run_dir = resolve_ongoing_run_dir(Path(__file__).resolve().parent)
-            disruption_history_path = ongoing_run_dir / DISRUPTION_HISTORY_FILENAME
-        write_disruption_history_csv(
-            disruption_history_path,
-            disruption_history_rows,
-        )
-
+    if not write_outputs_for_assigned_route:
+        print("Output files skipped: all current_schedule.csv route values are 0")
     print(f"Run folder: {run_output_dir.resolve()}")
     if simulation_time_s is not None:
         print(f"Simulation time: {simulation_time_s} s")
