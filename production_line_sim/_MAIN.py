@@ -56,21 +56,45 @@ def main():
 
    pipeline(settings)
    
-def create_setting_json(output_path: Path, run_idx, layout_file, p_val, r_val, a_name, seed):
-   settings = {
-      "run number": run_idx,
-      "settings":{
-      "Scenarios": layout_file,
-      "pressure_of_capacity":p_val,
-      "order_units_ratio":r_val,
-      "algorithms":a_name,
-      "weightage":None,
-      "seed":seed
-      }
-   }
 
-   with output_path.open("w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=4) 
+def create_setting_json(
+    output_path: Path,
+    run_idx,
+    layout_file,
+    p_val,
+    r_val,
+    a_name,
+    seed,
+    label,
+    pathlist
+):
+    settings = {
+        "run number": run_idx,
+        "settings": {
+            "Scenarios": layout_file,
+            "pressure_of_capacity": p_val,
+            "order_units_ratio": r_val,
+            "algorithms": a_name,
+            "weightage": None,
+            "seed": seed
+        },
+        "label": label,
+        "pathlist": {
+            "input": str(pathlist["input"]),
+            "input_disruptions": str(pathlist["input_disruptions"]),
+            "input_orders": str(pathlist["input_orders"]),
+            "input_runs": str(pathlist["input_runs"]),
+            "input_runs_run": str(pathlist["input_runs_run"]),
+            "on_going": str(pathlist["on_going"]),
+            "on_going_run": str(pathlist["on_going_run"]),
+            "output": str(pathlist["output"]),
+            "output_run": str(pathlist["output_run"]),
+            "post processing": str(pathlist["post_processing"]),
+        }
+    }
+
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=4)
 
 def main2():
    #create folders/check they are there
@@ -168,41 +192,47 @@ def main2():
       for dir in dirs[0:3]:
          subfolder = dir / f"run_{run_idx}"
          subfolder.mkdir(exist_ok=True)
-      # creating the selected settings json for the run
-      create_setting_json(dirs[0]/ f"run_{run_idx}"/"main_settings.json", run_idx, layout_file, p_val, r_val, a_name, seed)
 
       # creating the production plan
       label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
       order_csv_path = orders_dir / f"unsorted_orders_{label}.csv"
       on_going_run_path = dirs[1] / f"run_{run_idx}"
       label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
+
+      # Path list for the folders is generated here
+      input_runs_run = dirs[0] / f"run_{run_idx}"
+      on_going_run = dirs[1] / f"run_{run_idx}"
+      output_run = dirs[2] / f"run_{run_idx}"
+
+      pathlist = {
+         "input": dirs[0].parent,          # original input main loop folder
+         "input_disruptions": disruption_dir,
+         "input_orders": orders_dir,
+         "input_runs": dirs[0],            # runs_dir
+         "input_runs_run": input_runs_run,
+         "on_going": dirs[1],
+         "on_going_run": on_going_run,
+         "output": dirs[2],
+         "output_run": output_run,
+         "post_processing": dirs[3]
+      }
+      
+
+      # creating the selected settings json for the run
+      main_settings_dir = dirs[0]/ f"run_{run_idx}"/"main_settings.json"
+      create_setting_json(main_settings_dir, run_idx, layout_file, p_val, r_val, a_name, seed,
+                          label,pathlist)
+
       
       B_production_planning.create_production_plan(order_csv_path,on_going_run_path,layout_file,label,SECONDS_PER_WEEK)
 
-      # pass explicit paths and run the simulation
-      # This avoids E_production_line_sim searching through folders to find the newest input.
-      schedule_csv_path = on_going_run_path / "schedule.csv"
-      if not schedule_csv_path.exists():
-         schedule_csv_path = on_going_run_path / "current_schedule.csv"
-      if not schedule_csv_path.exists():
-         schedule_csv_path = order_csv_path
+      #finds the event_times based on the disruption file for the run
 
-      timed_disruption_json_path = data_dir / "disruption_v2.json"
-      if not timed_disruption_json_path.exists():
-         timed_disruption_json_path = disruption_dir / "disruption.json"
+      # runs a loop of the breaks for the main sim
 
-      E_production_line_sim.run_from_paths(
-         data_dir=data_dir,
-         input_root=dirs[0],
-         output_root=dirs[2] / f"run_{run_idx}",
-         batch_dir=on_going_run_path,
-         orders_csv_path=schedule_csv_path,
-         settings_json_path=data_dir / "settings.json",
-         line_layout_file=layout_dir / layout_file,
-         disruption_json_path=disruption_dir / "disruption.json",
-         timed_disruption_csv_path=disruption_dir / f"disruptions_{label}.csv",
-         timed_disruption_json_path=timed_disruption_json_path,
-      )
+      for time in event_times:
+         GA(main_settings_dir)
+         Main_sim(main_settings_dir)
 
 
       print(f"\n\n--- RUN {run_idx} ---")
