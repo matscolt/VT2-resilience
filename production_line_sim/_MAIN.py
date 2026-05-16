@@ -45,6 +45,10 @@ def create_setting_json(
     label,
     pathlist
 ):
+    """Create the run-specific main_settings.json.
+
+    This JSON is the single source of truth for paths and run settings.
+    """
     settings = {
         "run number": run_idx,
         "settings": {
@@ -53,57 +57,67 @@ def create_setting_json(
             "order_units_ratio": r_val,
             "algorithms": a_name,
             "weightage": None,
-            "seed": seed
+            "seed": seed,
         },
         "label": label,
-        "pathlist": {k: str(v) for k, v in pathlist.items()}
+        "pathlist": {k: str(v) for k, v in pathlist.items()},
     }
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(settings, f, indent=4)
 
+    return settings
 
-def find_all_event_times(main_settings_json):
-    """Build the sorted list of disruption event times for the run.
+def find_all_event_times(main_settings_json: Path):
+    """Generate sorted event times [0, start/end times...] from the disruptions CSV.
 
-    The list always starts with 0, then includes every start_time and end_time
-    found in the disruptions CSV for the run (if present). Times are returned
-    sorted from low to high and with duplicates removed.
+    Rules:
+      - Always include 0
+      - Include all start_time and end_time values from the disruptions CSV
+      - Ignore blank/missing end_time
+      - Sort ascending and de-duplicate
 
-    The disruptions CSV is resolved via main_settings.json:
-      - input_disruptions directory from pathlist
-      - label from the run
-      - filename pattern: disruptions_{label}.csv
+    The disruptions CSV path is taken from main_settings.json['pathlist'] as:
+      - 'input_disruptions_csv' if present
+      - else: pathlist['input_disruptions']/f"disruptions_{label}.csv"
     """
-    main_settings_json_read = A_input.read_settings_json(main_settings_json)
+    main_settings_json = Path(main_settings_json)
+    main_settings = A_input.read_settings_json(main_settings_json)
 
-    disruptions_csv = Path(main_settings_json_read["pathlist"]["input_disruptions_csv"])
-    
-    event_times = [0]
+    pathlist = main_settings.get("pathlist", {})
+    label = main_settings.get("label", "")
+
+    disruptions_csv = None
+    if "input_disruptions_csv" in pathlist:
+        disruptions_csv = Path(pathlist["input_disruptions_csv"]).expanduser()
+    elif "input_disruptions" in pathlist:
+        disruptions_csv = Path(pathlist["input_disruptions"]).expanduser() / f"disruptions_{label}.csv"
+
+    if disruptions_csv is None:
+        raise KeyError("main_settings.json is missing pathlist['input_disruptions_csv'] or pathlist['input_disruptions']")
 
     if not disruptions_csv.exists():
-        raise FileNotFoundError(f"Could not find disruptions CSV at: {disruptions_csv}")
+        raise FileNotFoundError(f"Disruptions CSV not found: {disruptions_csv}")
 
-    with disruptions_csv.open('r', encoding='utf-8', newline='') as f:
+    event_times = [0]
+    with disruptions_csv.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             for col in ("start_time", "end_time"):
-                val = row.get(col, "")
-                if val is None:
+                raw = row.get(col)
+                if raw is None:
                     continue
-                val = str(val).strip()
-                if val == "" or val.lower() == "nan":
+                raw = str(raw).strip()
+                if raw == "" or raw.lower() == "nan":
                     continue
-                # Times in the file are integers, but be defensive.
                 try:
-                    t = int(float(val))
+                    t = int(float(raw))
                 except ValueError:
                     continue
                 event_times.append(t)
 
-    # Sort & deduplicate
-    event_times = sorted(set(event_times))
-    return event_times
+    return sorted(set(event_times))
 
 def main():
    #create folders/check they are there
