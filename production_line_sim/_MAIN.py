@@ -75,8 +75,6 @@ def find_all_event_times(main_settings_json):
       - label from the run
       - filename pattern: disruptions_{label}.csv
     """
-    print("here we find all the timestamps for when an 'event start' or 'event ends' happens")
-
     main_settings_json_read = A_input.read_settings_json(main_settings_json)
 
     disruptions_csv = Path(main_settings_json_read["pathlist"]["input_disruptions_csv"])
@@ -203,7 +201,7 @@ def main():
       for dir in dirs[0:3]:
          subfolder = dir / f"run_{run_idx}"
          subfolder.mkdir(exist_ok=True)
-         print(subfolder)
+         
 
       # creating the production plan
       label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
@@ -250,14 +248,15 @@ def main():
       #event_times = find_all_event_times(main_settings_dir)
       event_times = find_all_event_times(main_settings_dir)
       # runs a loop of the breaks for the main sim
-      for timestamp in event_times:
+      for time_ in event_times:
          start = ti.perf_counter()
-         print("MAIN.py: running GA")
-         GA_Scheduling.main(main_settings_dir, timestamp)
+         print(f"MAIN.py: running GA at time {time_}")
+         GA_Scheduling.main(main_settings_dir, time_)
          print("MAIN.py: running main sim")
-         E_production_line_sim.main(main_settings_dir, timestamp)
+         E_production_line_sim.main(main_settings_dir, time_)
          end = ti.perf_counter()
          print(f"\n\nloop time : {end - start}\n\n")
+         
 
 
       print(f"\n\n--- RUN {run_idx} ---")

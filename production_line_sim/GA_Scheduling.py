@@ -1242,6 +1242,13 @@ def main(
     best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(lookahead_days)
 
     feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
+    
+    print(
+        f"[GA] Horizon feasibility check: "
+        f"makespan={best_simulation_result.get('makespan') if best_simulation_result else None}, "
+        f"horizon_end_s={horizon_info.get('horizon_end_s') if horizon_info else None}, "
+        f"feasible={feasible}"
+    )
 
     # If requested horizon is 1 day and it's NOT feasible, rerun with 5 days.
     if lookahead_days == 1 and (not feasible) and (5 in ALLOWED_LOOKAHEAD_DAYS):
