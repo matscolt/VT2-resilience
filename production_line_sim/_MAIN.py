@@ -205,13 +205,13 @@ def main():
 
       #finds the event_times based on the disruption file for the run
       #event_times = find_all_event_times(main_settings_dir)
-      event_times = [1,1,1,1,1]
+      event_times = [100,200,300,400,500]
 
       # runs a loop of the breaks for the main sim
 
       for time in event_times:
-         MFI_GA_Scheduling_V3_3.main(main_settings_dir)
-         E_production_line_sim.main(main_settings_dir)
+         MFI_GA_Scheduling_V3_3.main(main_settings_dir, time)
+         E_production_line_sim.main(main_settings_dir, time)
 
 
       print(f"\n\n--- RUN {run_idx} ---")
