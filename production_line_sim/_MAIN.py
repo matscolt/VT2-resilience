@@ -45,10 +45,8 @@ def create_setting_json(
     label,
     pathlist
 ):
-    """Create the run-specific main_settings.json.
+    """Create/update run-specific main_settings.json (single source of truth for paths)."""
 
-    This JSON is the single source of truth for paths and run settings.
-    """
     settings = {
         "run number": run_idx,
         "settings": {
@@ -70,34 +68,13 @@ def create_setting_json(
     return settings
 
 def find_all_event_times(main_settings_json: Path):
-    """Generate sorted event times [0, start/end times...] from the disruptions CSV.
-
-    Rules:
-      - Always include 0
-      - Include all start_time and end_time values from the disruptions CSV
-      - Ignore blank/missing end_time
-      - Sort ascending and de-duplicate
-
-    The disruptions CSV path is taken from main_settings.json['pathlist'] as:
-      - 'input_disruptions_csv' if present
-      - else: pathlist['input_disruptions']/f"disruptions_{label}.csv"
-    """
+    """Build sorted list of disruption event times from disruptions CSV in main_settings.json."""
     main_settings_json = Path(main_settings_json)
     main_settings = A_input.read_settings_json(main_settings_json)
-
     pathlist = main_settings.get("pathlist", {})
-    label = main_settings.get("label", "")
 
-    disruptions_csv = None
-    if "input_disruptions_csv" in pathlist:
-        disruptions_csv = Path(pathlist["input_disruptions_csv"]).expanduser()
-    elif "input_disruptions" in pathlist:
-        disruptions_csv = Path(pathlist["input_disruptions"]).expanduser() / f"disruptions_{label}.csv"
-
-    if disruptions_csv is None:
-        raise KeyError("main_settings.json is missing pathlist['input_disruptions_csv'] or pathlist['input_disruptions']")
-
-    if not disruptions_csv.exists():
+    disruptions_csv = Path(pathlist["input_disruptions_csv"]) if pathlist.get("input_disruptions_csv") else None
+    if disruptions_csv is None or not disruptions_csv.exists():
         raise FileNotFoundError(f"Disruptions CSV not found: {disruptions_csv}")
 
     event_times = [0]
@@ -112,10 +89,9 @@ def find_all_event_times(main_settings_json: Path):
                 if raw == "" or raw.lower() == "nan":
                     continue
                 try:
-                    t = int(float(raw))
+                    event_times.append(int(float(raw)))
                 except ValueError:
                     continue
-                event_times.append(t)
 
     return sorted(set(event_times))
 
@@ -259,18 +235,26 @@ def main():
       B_production_planning.create_production_plan(order_csv_path,on_going_run_path,layout_file,label,SECONDS_PER_WEEK)
 
       #finds the event_times based on the disruption file for the run
-      #event_times = find_all_event_times(main_settings_dir)
       event_times = find_all_event_times(main_settings_dir)
-      # runs a loop of the breaks for the main sim
-      for time_ in event_times:
+
+      # Run simulation in segments: [t_i, t_{i+1})
+      for i, t_start in enumerate(event_times):
+         if i == len(event_times) - 1:
+            break
+         t_stop = event_times[i + 1]
+
          start = ti.perf_counter()
-         print(f"MAIN.py: running GA at time {time_}")
-         GA_Scheduling.main(main_settings_dir, time_)
+         print(f"[MAIN] Segment {i+1}/{len(event_times)-1}: t={t_start} -> {t_stop}")
+
+         print("MAIN.py: running GA")
+         GA_Scheduling.main(main_settings_dir, t_start)
+
          print("MAIN.py: running main sim")
-         E_production_line_sim.main(main_settings_dir, time_)
+         E_production_line_sim.main(main_settings_dir, t_stop)
+
          end = ti.perf_counter()
-         print(f"\n\nloop time : {end - start}\n\n")
-         break
+         print(f"[MAIN] segment wall time: {end - start}")
+
          
 
 

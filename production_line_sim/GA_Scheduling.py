@@ -84,7 +84,12 @@ def configure_paths_from_main_settings(main_settings_path):
     if "on_going_run" not in pathlist:
         raise KeyError("Missing 'pathlist.on_going_run' in main_settings.json")
 
-    ON_GOING_RUN_DIR = Path(pathlist["on_going_run"]).expanduser().resolve()
+    ON_GOING_RUN_DIR = Path(pathlist["on_going_run"])
+
+    # Event-driven state files
+    global DISRUPTION_HISTORY_PATH, UNIT_SUMMARY_PATH
+    DISRUPTION_HISTORY_PATH = Path(pathlist.get("on_going_run_dis_his", ON_GOING_RUN_DIR / "disruption_his.csv"))
+    UNIT_SUMMARY_PATH = Path(pathlist.get("on_going_run_unit_summary", ON_GOING_RUN_DIR / "unit_summary.csv")).expanduser().resolve()
     OUTPUT_RUN_DIR = Path(pathlist.get("output_run", ON_GOING_RUN_DIR)).expanduser().resolve()
 
     if not ON_GOING_RUN_DIR.exists():
@@ -793,7 +798,7 @@ def evaluate_schedule_with_simulator(
     units_lookup,
     chromosome_index,
     generation
-):
+, current_time_s: float = 0.0):
 
     filename = "current_schedule.csv"
 
@@ -806,7 +811,7 @@ def evaluate_schedule_with_simulator(
     )
 
     with contextlib.redirect_stdout(io.StringIO()):
-        simulator.main(str(MAIN_SETTINGS_PATH))
+        simulation_result = simulator.simulate_for_ga(str(MAIN_SETTINGS_PATH), current_time_s)
 
     summary_folder = find_summary_folder(
         generation=generation,
@@ -1003,7 +1008,7 @@ def run_ga(
     orders,
     units,
     order_units
-):
+, current_time_s: float = 0.0):
 
     units_lookup = {
         u.unit_id: u
