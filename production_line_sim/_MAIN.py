@@ -250,12 +250,12 @@ def main():
       #event_times = find_all_event_times(main_settings_dir)
       event_times = find_all_event_times(main_settings_dir)
       # runs a loop of the breaks for the main sim
-      for time in event_times:
+      for timestamp in event_times:
          start = ti.perf_counter()
          print("MAIN.py: running GA")
-         MFI_GA_Scheduling_V3_3.main(main_settings_dir, time)
+         MFI_GA_Scheduling_V3_3.main(main_settings_dir, timestamp)
          print("MAIN.py: running main sim")
-         E_production_line_sim.main(main_settings_dir, time)
+         E_production_line_sim.main(main_settings_dir, timestamp)
          end = ti.perf_counter()
          print(f"\n\nloop time : {end - start}\n\n")
 
