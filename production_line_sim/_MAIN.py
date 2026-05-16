@@ -63,6 +63,7 @@ def create_setting_json(
 
 def find_all_event_times(main_settings_json):
    print("here we find all the timestamps for when an 'event start' or 'event ends' happens")
+   main_settings_json_read = A_input.read_settings_json(main_settings_json)
 
 def main():
    #create folders/check they are there
