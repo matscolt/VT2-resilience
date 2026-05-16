@@ -32,31 +32,6 @@ BASE_DIR = Path(__file__).parent
 data_dir = BASE_DIR / "data"
 layout_dir = data_dir / "Layouts"
 
-#a single run of the disruption sim
-def pipeline(settings):
-   print(f"Based on the current plan_time no more than {A_input.round_half_up(settings['plan_time [s]']/A_input.AVE_CYCLE_TIME_PER_UNIT)} units should be selected")
-   num_orders = int(input("Enter amount of orders: "))
-   num_units = int(input("Enter amount of units: "))
-   order_dir = A_input.main(num_orders, num_units)
-   print("RUNNING THE PLAN!!!!!!!")
-   B_production_planning.main(order_dir,SECONDS_PER_WEEK)
-   #sim with disruption loop
-   # the sim should pause when a disruption happens and then 
-   # the IPPS should come up with a new solution to the disrupted line and continue the sim with disruptions
-   #C_IPPS.main(order_dir) #creates new plan
-   #E_production_line_sim.run_simulation() #with disruptions
-
-   #F_graphgen.main()
-   #G_after_movie.main()
-
-# -  main function  -
-def main():
-   mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
-   settings = A_input.read_settings_json(data_dir / "settings.json")
-
-   pipeline(settings)
-   
-
 def create_setting_json(
     output_path: Path,
     run_idx,
@@ -96,7 +71,10 @@ def create_setting_json(
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(settings, f, indent=4)
 
-def main2():
+def find_all_event_times(main_settings_json):
+   print("here we find all the timestamps for when an 'event start' or 'event ends' happens")
+
+def main():
    #create folders/check they are there
    input_dir = BASE_DIR / "input"
    input_dir.mkdir(exist_ok=True)
@@ -227,6 +205,7 @@ def main2():
       B_production_planning.create_production_plan(order_csv_path,on_going_run_path,layout_file,label,SECONDS_PER_WEEK)
 
       #finds the event_times based on the disruption file for the run
+      event_times = find_all_event_times(main_settings_dir)
 
       # runs a loop of the breaks for the main sim
 
@@ -249,18 +228,4 @@ def main2():
 
 
 if __name__ == "__main__":
-   loop = False #ændre den her hvis du ikke vil have et valg længere
-   if loop == True:
-      while loop == True:
-         user = input("old main(o) or new main(n)  (o/n)\n>> ").lower()
-         if user == "o":
-            main()
-            loop = False
-         if user == "n":
-            main2()
-            loop = False
-         elif loop == True:
-            print("\n--- please select between 'o' or 'n' ---")
-   else:
-      print("running main2()")
-      main2()
+   main()
