@@ -901,11 +901,19 @@ def _parse_unit_route_for_layout(
     return selected_station_indices
 
 def load_latest_generated_input(
-    input_root: Path, valid_variants: set[str]
+    input_root: Path,
+    valid_variants: set[str],
+    batch_dir: Path | None = None,
+    orders_csv_path: Path | None = None,
+    settings_path: Path | None = None,
 ) -> dict[str, Any]:
-    batch_dir = find_newest_input_batch_dir(input_root)
-    orders_csv_path = find_newest_orders_csv(batch_dir)
-    settings_path = resolve_settings_path(batch_dir)
+    # If main.py passes explicit paths, use them directly and skip expensive directory discovery.
+    if batch_dir is None:
+        batch_dir = find_newest_input_batch_dir(input_root)
+    if orders_csv_path is None:
+        orders_csv_path = find_newest_orders_csv(batch_dir)
+    if settings_path is None:
+        settings_path = resolve_settings_path(batch_dir)
 
     if settings_path is None or not settings_path.exists():
         raise FileNotFoundError(f"settings.json was not found in {batch_dir}")
@@ -3268,220 +3276,6 @@ def save_json(payload: dict[str, Any], output_path: Path) -> None:
 
 
 # -----------------------------
-# Charts
-# -----------------------------
-def _unit_color_map(unit_ids: list[str]) -> dict[str, Any]:
-    if plt is None:
-        return {}
-    cmap = plt.get_cmap("tab20")
-    sorted_unit_ids = sorted(unit_ids)
-    return {unit_id: cmap(i % cmap.N) for i, unit_id in enumerate(sorted_unit_ids)}
-
-
-def create_gantt_chart(
-    operations: list[OperationRecord],
-    transport_records: list[TransportRecord],
-    output_path: Path,
-) -> bool:
-    if plt is None:
-        return False
-
-    if not operations:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.set_title("Production line Gantt chart")
-        ax.set_xlabel("Time [s]")
-        ax.set_ylabel("Stations / Transport")
-        ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
-        fig.tight_layout()
-        fig.savefig(output_path, dpi=200, bbox_inches="tight")
-        plt.close(fig)
-        return True
-
-    station_entries: list[tuple[int, int, str]] = []
-    seen_station_names: set[str] = set()
-    for op in sorted(operations, key=lambda x: x.station_index):
-        if op.station_name in seen_station_names:
-            continue
-        stage_number, copy_number, _ = _extract_station_name_parts(op.station_name)
-        station_entries.append((stage_number or op.station_index, copy_number or 0, op.station_name))
-        seen_station_names.add(op.station_name)
-
-    transport_entries: dict[int, str] = {}
-    for tr in sorted(transport_records, key=lambda x: x.transport_index):
-        transport_stage_number = _transport_stage_number_from_name(tr.transport_name)
-        if transport_stage_number is None:
-            transport_stage_number = tr.transport_index
-        transport_entries.setdefault(transport_stage_number, tr.transport_name)
-
-    stations_by_stage: defaultdict[int, list[tuple[int, str]]] = defaultdict(list)
-    for stage_number, copy_number, station_name in station_entries:
-        stations_by_stage[stage_number].append((copy_number, station_name))
-
-    row_names: list[str] = []
-    all_stage_numbers = sorted(stations_by_stage.keys())
-    for stage_number in all_stage_numbers:
-        for _, station_name in sorted(stations_by_stage[stage_number], key=lambda item: item[0]):
-            row_names.append(station_name)
-        if stage_number in transport_entries:
-            row_names.append(transport_entries[stage_number])
-
-    row_to_y = {name: idx for idx, name in enumerate(row_names)}
-    unit_colors = _unit_color_map([op.unit_id for op in operations])
-
-    fig, ax = plt.subplots(figsize=(18, 9))
-
-    for op in operations:
-        y = row_to_y[op.station_name]
-        duration = op.finish_time_s - op.start_time_s
-        color = unit_colors.get(op.unit_id)
-        ax.barh(
-            y,
-            duration,
-            left=op.start_time_s,
-            height=0.62,
-            color=color,
-            edgecolor="black",
-            linewidth=0.25,
-        )
-        if duration > 1.0:
-            ax.text(
-                op.start_time_s + duration / 2,
-                y,
-                f"{op.unit_id}-{op.variant}",
-                ha="center",
-                va="center",
-                fontsize=5,
-            )
-
-    for tr in transport_records:
-        y = row_to_y[tr.transport_name]
-        duration = tr.finish_time_s - tr.start_time_s
-        color = unit_colors.get(tr.unit_id)
-        ax.barh(
-            y,
-            duration,
-            left=tr.start_time_s,
-            height=0.42,
-            color=color,
-            edgecolor="black",
-            linewidth=0.25,
-            alpha=0.65,
-        )
-        if duration > 1.0:
-            ax.text(
-                tr.start_time_s + duration / 2,
-                y,
-                f"{tr.unit_id}-{tr.variant}",
-                ha="center",
-                va="center",
-                fontsize=4.5,
-            )
-
-    ax.set_yticks(list(row_to_y.values()))
-    ax.set_yticklabels(list(row_to_y.keys()))
-    ax.set_xlabel("Time [s]")
-    ax.set_ylabel("Stations / Transport")
-    ax.set_title("Production line Gantt chart")
-    ax.grid(True, axis="x", alpha=0.3)
-    # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    return True
-
-
-def create_gantt_chart_no_transport(
-    operations: list[OperationRecord],
-    transport_records: list[TransportRecord],
-    output_path: Path,
-) -> bool:
-    if plt is None:
-        return False
-
-    if not operations:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.set_title("Production line Gantt chart")
-        ax.set_xlabel("Time [s]")
-        ax.set_ylabel("Stations / Transport")
-        ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
-        fig.tight_layout()
-        fig.savefig(output_path, dpi=200, bbox_inches="tight")
-        plt.close(fig)
-        return True
-
-    station_names = []
-    seen_stations = set()
-    for op in sorted(operations, key=lambda x: x.station_index):
-        if op.station_name not in seen_stations:
-            station_names.append(op.station_name)
-            seen_stations.add(op.station_name)
-
-    row_names: list[str] = []
-    for idx, station_name in enumerate(station_names):
-        row_names.append(station_name)
-
-    row_to_y = {name: idx for idx, name in enumerate(row_names)}
-    unit_colors = _unit_color_map([op.unit_id for op in operations])
-
-    fig, ax = plt.subplots(figsize=(18, 9))
-
-    for op in operations:
-        y = row_to_y[op.station_name]
-        duration = op.finish_time_s - op.start_time_s
-        color = unit_colors.get(op.unit_id)
-        ax.barh(
-            y,
-            duration,
-            left=op.start_time_s,
-            height=0.62,
-            color=color,
-            edgecolor="black",
-            linewidth=0.25,
-        )
-        if duration > 1.0:
-            ax.text(
-                op.start_time_s + duration / 2,
-                y,
-                f"{op.unit_id}-{op.variant}",
-                ha="center",
-                va="center",
-                fontsize=5,
-            )
-
-    ax.set_yticks(list(row_to_y.values()))
-    ax.set_yticklabels(list(row_to_y.keys()))
-    ax.set_xlabel("Time [s]")
-    ax.set_ylabel("Stations / Transport")
-    ax.set_title("Production line Gantt chart")
-    ax.grid(True, axis="x", alpha=0.3)
-    # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    return True
-
-
-def create_throughput_chart(unit_summaries: list[UnitSummary], output_path: Path) -> bool:
-    if plt is None:
-        return False
-
-    completion_times = sorted(u.completion_time_s for u in unit_summaries)
-    x = [0.0] + completion_times
-    y = [0] + list(range(1, len(completion_times) + 1))
-
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.step(x, y, where="post")
-    ax.set_xlabel("Time [s]")
-    ax.set_ylabel("Completed units")
-    ax.set_title("Cumulative completed phones over time")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    return True
-
-
-# -----------------------------
 # Run metadata / output folders
 # -----------------------------
 def make_order_slug(order_text: str, max_length: int = 80) -> str:
@@ -3636,14 +3430,30 @@ def resolve_results_output_dir(
     batch_dir_for_layout: Path | None,
     order_text: str,
 ) -> Path:
-    ongoing_run_dir = resolve_ongoing_run_dir(Path(__file__).resolve().parent)
-    if ongoing_run_dir.parent is not None:
-        results_dir = output_root / ongoing_run_dir.parent.name / ongoing_run_dir.name / "results"
+    # If _MAIN.py passes the exact output run folder, write results directly there.
+    # Example: output/main_15-05_21-59_0/run_1/results
+    if output_root is not None and re.match(r"^run_\d+$", output_root.name, re.IGNORECASE):
+        results_dir = output_root / "results"
         results_dir.mkdir(parents=True, exist_ok=True)
         return results_dir
 
+    # If _MAIN.py passes the output main folder and the input batch is run_N,
+    # mirror only the run folder, not main/run again.
+    # Example: output/main_15-05_21-59_0/run_1/results
     if _is_main_run_input_dir(batch_dir_for_layout):
-        results_dir = output_root / batch_dir_for_layout.parent.name / batch_dir_for_layout.name / "results"
+        if output_root.name == batch_dir_for_layout.parent.name:
+            results_dir = output_root / batch_dir_for_layout.name / "results"
+        else:
+            results_dir = output_root / batch_dir_for_layout.parent.name / batch_dir_for_layout.name / "results"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        return results_dir
+
+    ongoing_run_dir = resolve_ongoing_run_dir(Path(__file__).resolve().parent)
+    if ongoing_run_dir.parent is not None:
+        if output_root.name == ongoing_run_dir.parent.name:
+            results_dir = output_root / ongoing_run_dir.name / "results"
+        else:
+            results_dir = output_root / ongoing_run_dir.parent.name / ongoing_run_dir.name / "results"
         results_dir.mkdir(parents=True, exist_ok=True)
         return results_dir
 
@@ -3673,7 +3483,7 @@ def save_run_metadata(
 # -----------------------------
 # Main
 # -----------------------------
-def main() -> None:
+def main(argv: list[str] | None = None) -> Path | None:
     parser = argparse.ArgumentParser(
         description="Simulate a 6-station phone production line with FIFO queues and transport times."
     )
@@ -3705,7 +3515,37 @@ def main() -> None:
         default=Path(__file__).resolve().parent / "output",
         help="Root folder where a new subfolder will be created for every order run",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--batch-dir",
+        type=Path,
+        help="Explicit input/run directory to use. If provided, newest-folder discovery is skipped.",
+    )
+    parser.add_argument(
+        "--orders-csv",
+        type=Path,
+        help="Explicit orders or schedule CSV to simulate. If provided, CSV discovery is skipped.",
+    )
+    parser.add_argument(
+        "--settings-json",
+        type=Path,
+        help="Explicit settings.json to use. If provided, settings discovery is skipped.",
+    )
+    parser.add_argument(
+        "--disruption-json",
+        type=Path,
+        help="Explicit chance-based disruption JSON to use. If provided, disruption JSON discovery is skipped.",
+    )
+    parser.add_argument(
+        "--timed-disruption-csv",
+        type=Path,
+        help="Explicit timed disruption CSV to use. If provided, timed disruption CSV discovery is skipped.",
+    )
+    parser.add_argument(
+        "--timed-disruption-json",
+        type=Path,
+        help="Explicit timed disruption JSON to use. If provided, timed disruption JSON discovery is skipped.",
+    )
+    args = parser.parse_args(argv)
 
     data_dir: Path = args.data_dir
     input_root: Path = args.input_root
@@ -3744,7 +3584,13 @@ def main() -> None:
         unit_custom_ids = [f"U{idx + 1:03d}" for idx in range(len(ordered_units))]
         unit_route_ids = ["0"] * len(ordered_units)
     else:
-        generated_input = load_latest_generated_input(input_root, valid_variants)
+        generated_input = load_latest_generated_input(
+            input_root,
+            valid_variants,
+            batch_dir=args.batch_dir,
+            orders_csv_path=args.orders_csv,
+            settings_path=args.settings_json,
+        )
         order_text = generated_input["order_text"]
         ordered_units = generated_input["ordered_units"]
         unit_release_times = generated_input["unit_release_times"]
@@ -3786,9 +3632,9 @@ def main() -> None:
         line_layout_config=line_layout_config,
     )
 
-    disruption_path = resolve_disruption_path(input_root=input_root, batch_dir=batch_dir_for_layout)
-    timed_disruption_csv_path = resolve_timed_disruption_csv_path(input_root=input_root, batch_dir=batch_dir_for_layout)
-    timed_disruption_json_path = resolve_timed_disruption_json_path(input_root=input_root, batch_dir=batch_dir_for_layout)
+    disruption_path = args.disruption_json if args.disruption_json is not None else resolve_disruption_path(input_root=input_root, batch_dir=batch_dir_for_layout)
+    timed_disruption_csv_path = args.timed_disruption_csv if args.timed_disruption_csv is not None else resolve_timed_disruption_csv_path(input_root=input_root, batch_dir=batch_dir_for_layout)
+    timed_disruption_json_path = args.timed_disruption_json if args.timed_disruption_json is not None else resolve_timed_disruption_json_path(input_root=input_root, batch_dir=batch_dir_for_layout)
     disruption_mode = _settings_disruption_mode(settings_data)
     disruptions_enabled = disruption_mode != 0
     chance_based_disruptions_enabled = disruption_mode == 1
@@ -4440,6 +4286,49 @@ def main() -> None:
     endtime = time.perf_counter()
     print(f"Total execution time: {endtime - starttime:.6f} seconds")
 
+
+    return run_output_dir
+
+
+def run_from_paths(
+    *,
+    data_dir: Path | None = None,
+    input_root: Path | None = None,
+    output_root: Path | None = None,
+    batch_dir: Path | None = None,
+    orders_csv_path: Path | None = None,
+    settings_json_path: Path | None = None,
+    line_layout_file: str | Path | None = None,
+    disruption_json_path: Path | None = None,
+    timed_disruption_csv_path: Path | None = None,
+    timed_disruption_json_path: Path | None = None,
+) -> Path | None:
+    """Run the simulation using explicit paths supplied by _MAIN.py.
+
+    This bypasses the expensive newest-folder / recursive file discovery used by the CLI defaults.
+    """
+    argv: list[str] = []
+    if data_dir is not None:
+        argv.extend(["--data-dir", str(data_dir)])
+    if input_root is not None:
+        argv.extend(["--input-root", str(input_root)])
+    if output_root is not None:
+        argv.extend(["--output-root", str(output_root)])
+    if batch_dir is not None:
+        argv.extend(["--batch-dir", str(batch_dir)])
+    if orders_csv_path is not None:
+        argv.extend(["--orders-csv", str(orders_csv_path)])
+    if settings_json_path is not None:
+        argv.extend(["--settings-json", str(settings_json_path)])
+    if line_layout_file is not None:
+        argv.extend(["--line-layout-file", str(line_layout_file)])
+    if disruption_json_path is not None:
+        argv.extend(["--disruption-json", str(disruption_json_path)])
+    if timed_disruption_csv_path is not None:
+        argv.extend(["--timed-disruption-csv", str(timed_disruption_csv_path)])
+    if timed_disruption_json_path is not None:
+        argv.extend(["--timed-disruption-json", str(timed_disruption_json_path)])
+    return main(argv)
 
 if __name__ == "__main__":
     main()

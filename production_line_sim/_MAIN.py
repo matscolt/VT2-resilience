@@ -19,6 +19,7 @@ from pathlib import Path
 from itertools import product
 from copy import deepcopy
 from datetime import datetime
+import json
 
 # ================================================================================
 # constands, paths and global variables
@@ -55,7 +56,21 @@ def main():
 
    pipeline(settings)
    
+def create_setting_json(output_path: Path, run_idx, layout_file, p_val, r_val, a_name, seed):
+   settings = {
+      "run number": run_idx,
+      "settings":{
+      "Scenarios": layout_file,
+      "pressure_of_capacity":p_val,
+      "order_units_ratio":r_val,
+      "algorithms":a_name,
+      "weightage":None,
+      "seed":seed
+      }
+   }
 
+   with output_path.open("w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=4) 
 
 def main2():
    #create folders/check they are there
@@ -131,7 +146,7 @@ def main2():
 
       orderpath = orders_dir / f"unsorted_orders_{label}.csv"
       disruptionpath = disruption_dir/f"disruptions_{label}.csv"
-
+      print(f"units: {num_units} and orders: {num_orders}")
       A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
       A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
       # takes wayyy too long to generate a gantt chart for each one
@@ -153,16 +168,41 @@ def main2():
       for dir in dirs[0:3]:
          subfolder = dir / f"run_{run_idx}"
          subfolder.mkdir(exist_ok=True)
+      # creating the selected settings json for the run
+      create_setting_json(dirs[0]/ f"run_{run_idx}"/"main_settings.json", run_idx, layout_file, p_val, r_val, a_name, seed)
 
       # creating the production plan
       label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
       order_csv_path = orders_dir / f"unsorted_orders_{label}.csv"
       on_going_run_path = dirs[1] / f"run_{run_idx}"
       label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
-      B_production_planning.create_production_plan(order_csv_path,on_going_run_path,base_settings,label,SECONDS_PER_WEEK)
+      
+      B_production_planning.create_production_plan(order_csv_path,on_going_run_path,layout_file,label,SECONDS_PER_WEEK)
 
-      # Algorithm choice (pass into IPPS when you support it)
-      #E_production_line_sim.main()
+      # pass explicit paths and run the simulation
+      # This avoids E_production_line_sim searching through folders to find the newest input.
+      schedule_csv_path = on_going_run_path / "schedule.csv"
+      if not schedule_csv_path.exists():
+         schedule_csv_path = on_going_run_path / "current_schedule.csv"
+      if not schedule_csv_path.exists():
+         schedule_csv_path = order_csv_path
+
+      timed_disruption_json_path = data_dir / "disruption_v2.json"
+      if not timed_disruption_json_path.exists():
+         timed_disruption_json_path = disruption_dir / "disruption.json"
+
+      E_production_line_sim.run_from_paths(
+         data_dir=data_dir,
+         input_root=dirs[0],
+         output_root=dirs[2] / f"run_{run_idx}",
+         batch_dir=on_going_run_path,
+         orders_csv_path=schedule_csv_path,
+         settings_json_path=data_dir / "settings.json",
+         line_layout_file=layout_dir / layout_file,
+         disruption_json_path=disruption_dir / "disruption.json",
+         timed_disruption_csv_path=disruption_dir / f"disruptions_{label}.csv",
+         timed_disruption_json_path=timed_disruption_json_path,
+      )
 
 
       print(f"\n\n--- RUN {run_idx} ---")

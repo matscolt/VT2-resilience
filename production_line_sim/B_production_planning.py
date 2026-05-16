@@ -422,7 +422,7 @@ def print_orders_by_week(orders_by_week: dict, weeks_order=None):
 # main production planning pipeline
 # ==============================================================================
 
-def create_production_plan(order_csv_path,on_going_run_path, settings,label , SECONDS_PER_WEEK):
+def create_production_plan(order_csv_path,on_going_run_path, layout_name, label, SECONDS_PER_WEEK):
     
     # Read orders
     orders: list[dict] = []
@@ -439,9 +439,6 @@ def create_production_plan(order_csv_path,on_going_run_path, settings,label , SE
     orders.sort(key=due_key)
 
     # Load layout + process times
-    layout_name = settings.get("line_layout_file")
-    if not layout_name:
-        raise KeyError("settings.json must include 'line_layout_file'")
 
     layout_json = read_settings_json(LAYOUT_DIR / layout_name)
     process_times_json = read_settings_json(DATA_DIR / "process_times.json")
