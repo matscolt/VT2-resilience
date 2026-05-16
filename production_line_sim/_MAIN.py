@@ -249,9 +249,7 @@ def main():
       #finds the event_times based on the disruption file for the run
       #event_times = find_all_event_times(main_settings_dir)
       event_times = find_all_event_times(main_settings_dir)
-      print(f"event times: {event_times}")
       # runs a loop of the breaks for the main sim
-      break
       for time in event_times:
          start = ti.perf_counter()
          print("MAIN.py: running GA")
