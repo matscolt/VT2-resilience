@@ -97,27 +97,6 @@ def configure_paths_from_main_settings(main_settings_path):
 
     return MAIN_SETTINGS
 
-
-def get_current_time_from_unit_summary(default_time_s: float = 0.0) -> float:
-    """Infer current simulation time from unit_summary.csv if available."""
-
-    if UNIT_SUMMARY_PATH is None or not UNIT_SUMMARY_PATH.exists():
-        return float(default_time_s)
-
-    unit_df = pd.read_csv(UNIT_SUMMARY_PATH)
-
-    if "completion_time_s" not in unit_df.columns or unit_df.empty:
-        return float(default_time_s)
-
-    completed_times = pd.to_numeric(
-        unit_df["completion_time_s"], errors="coerce"
-    ).dropna()
-
-    if completed_times.empty:
-        return float(default_time_s)
-
-    return float(completed_times.max())
-
 def get_completed_unit_ids_from_unit_summary(current_time_s: float) -> Set[str]:
     """Return completed unit IDs from unit_summary.csv.
 
@@ -1196,14 +1175,11 @@ def run_ga(
 
 def main(
     main_settings_path,
-    current_time_s=None,
+    current_time_s,
     lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
 ):
 
     configure_paths_from_main_settings(main_settings_path)
-
-    if current_time_s is None:
-        current_time_s = get_current_time_from_unit_summary(default_time_s=0.0)
 
     completed_from_summary = get_completed_unit_ids_from_unit_summary(
         current_time_s=current_time_s
