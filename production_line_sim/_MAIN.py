@@ -54,22 +54,12 @@ def create_setting_json(
             "seed": seed
         },
         "label": label,
-        "pathlist": {
-            "input": str(pathlist["input"]),
-            "input_disruptions": str(pathlist["input_disruptions"]),
-            "input_orders": str(pathlist["input_orders"]),
-            "input_runs": str(pathlist["input_runs"]),
-            "input_runs_run": str(pathlist["input_runs_run"]),
-            "on_going": str(pathlist["on_going"]),
-            "on_going_run": str(pathlist["on_going_run"]),
-            "output": str(pathlist["output"]),
-            "output_run": str(pathlist["output_run"]),
-            "post processing": str(pathlist["post_processing"]),
-        }
+        "pathlist": {k: str(v) for k, v in pathlist.items()}
     }
 
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(settings, f, indent=4)
+
 
 def find_all_event_times(main_settings_json):
    print("here we find all the timestamps for when an 'event start' or 'event ends' happens")
@@ -183,15 +173,23 @@ def main():
       output_run = dirs[2] / f"run_{run_idx}"
 
       pathlist = {
-         "input": dirs[0].parent,          # original input main loop folder
+         "input": dirs[0].parent,
          "input_disruptions": disruption_dir,
+         "input_disruptions_csv": disruption_dir / f"disruption_{label}.csv",
+         "input_disruptions_json": disruption_dir / f"disruption.json",
          "input_orders": orders_dir,
-         "input_runs": dirs[0],            # runs_dir
+         "input_orders_csv": orders_dir / f"unsorted_orders_{label}.csv",
+         "input_runs": dirs[0],
          "input_runs_run": input_runs_run,
          "on_going": dirs[1],
          "on_going_run": on_going_run,
+         "on_going_run_current_schedule": on_going_run / f"current_schedule.csv",
+         "on_going_run_dis_his": on_going_run / f"disruption_his.csv",
+         "on_going_run_production_plan": on_going_run / f"production_plan_{label}.csv",
+         "on_going_run_unit_summary": on_going_run / f"unit_summary.csv",
          "output": dirs[2],
          "output_run": output_run,
+         "output_run_results":output_run / "results",
          "post_processing": dirs[3]
       }
       
