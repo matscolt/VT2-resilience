@@ -142,7 +142,7 @@ def get_completed_unit_ids_from_unit_summary(current_time_s: float) -> Set[str]:
 SECONDS_PER_PRODUCTION_DAY = 8 * 60 * 60
 
 # Set these values here while testing.
-DEFAULT_LOOKAHEAD_DAYS = 3
+DEFAULT_LOOKAHEAD_DAYS = 1
 
 # Rolling horizon options:
 # 1 day  -> schedule the rest of current day only
