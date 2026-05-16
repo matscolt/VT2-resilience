@@ -162,7 +162,7 @@ def main2():
       B_production_planning.create_production_plan(order_csv_path,on_going_run_path,base_settings,label,SECONDS_PER_WEEK)
 
       # Algorithm choice (pass into IPPS when you support it)
-      E_production_line_sim.main()
+      #E_production_line_sim.main()
 
 
       print(f"\n\n--- RUN {run_idx} ---")

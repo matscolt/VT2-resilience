@@ -25,7 +25,7 @@ import E_production_line_sim as simulator
 
 ROOT = Path(__file__).resolve().parent
 
-MAIN_RUN = "main_14-05_21-59_1"
+MAIN_RUN = "main_15-05_16-18_1"
 RUN_ID = 1
 
 INPUT_DIR = (
