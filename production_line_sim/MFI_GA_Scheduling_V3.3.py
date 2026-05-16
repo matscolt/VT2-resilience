@@ -1,55 +1,160 @@
 import random
 import copy
-import json
-import re
 import contextlib
 import io
 import math
 import shutil
+import json
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Set, Tuple, Dict
-
 import pandas as pd
-
 import E_production_line_sim as simulator
 
-
 # ============================================================
-# PATHS
-# ============================================================
-
-# ============================================================
-# PATHS
+# PATHS / MAIN SETTINGS
 # ============================================================
 
 ROOT = Path(__file__).resolve().parent
 
-MAIN_RUN = "main_15-05_16-18_1"
-RUN_ID = 1
-
-INPUT_DIR = (
-    ROOT
-    / "on_going"
-    / MAIN_RUN
-    / f"run_{RUN_ID}"
-)
-
-if not INPUT_DIR.exists():
-    raise FileNotFoundError(
-        f"Selected run folder not found: {INPUT_DIR}"
-    )
-
-LAYOUT_PATH = (
-    ROOT / "data" / "Layouts" /
-    "line_layout_robotcell_6staggered_example.json"
-)
-
-PROCESS_TIMES_PATH = ROOT / "data" / "process_times.json"
-TRANSPORT_TIMES_PATH = ROOT / "data" / "transport_times.json"
+# These globals are configured at runtime from main_settings.json.
+MAIN_SETTINGS_PATH = None
+MAIN_SETTINGS = None
+ON_GOING_RUN_DIR = None
+OUTPUT_RUN_DIR = None
+PRODUCTION_PLAN_PATH = None
+DISRUPTION_HISTORY_PATH = None
+UNIT_SUMMARY_PATH = None
 
 CLEAN_TEMP_OUTPUTS = True
 KEEP_ONLY_BEST_SUMMARY = True
+
+
+def load_main_settings(main_settings_path) -> dict:
+    """Load main_settings.json supplied by Main_script."""
+
+    path = Path(main_settings_path).expanduser().resolve()
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"main_settings.json not found: {path}"
+        )
+
+    with path.open("r", encoding="utf-8") as file:
+        settings = json.load(file)
+
+    return settings
+
+
+def configure_paths_from_main_settings(main_settings_path):
+    """Configure all GA paths from main_settings.json.
+
+    Expected main_settings fields:
+    - label
+    - pathlist.on_going_run
+    - pathlist.output_run (optional, but recommended)
+
+    The production plan is expected at:
+    on_going_run / f"production_plan_{label}.csv"
+
+    The simulator state files are expected in the same on_going_run folder:
+    - disruption_hist.csv
+    - unit_summary.csv
+    If they do not exist, the run is treated as t = 0 / no completed units.
+    """
+
+    global MAIN_SETTINGS_PATH, MAIN_SETTINGS, ON_GOING_RUN_DIR, OUTPUT_RUN_DIR
+    global PRODUCTION_PLAN_PATH, DISRUPTION_HISTORY_PATH, UNIT_SUMMARY_PATH
+
+    MAIN_SETTINGS_PATH = Path(main_settings_path).expanduser().resolve()
+    MAIN_SETTINGS = load_main_settings(MAIN_SETTINGS_PATH)
+
+    label = MAIN_SETTINGS.get("label")
+    pathlist = MAIN_SETTINGS.get("pathlist", {})
+
+    if not label:
+        raise KeyError("Missing 'label' in main_settings.json")
+
+    if "on_going_run" not in pathlist:
+        raise KeyError("Missing 'pathlist.on_going_run' in main_settings.json")
+
+    ON_GOING_RUN_DIR = Path(pathlist["on_going_run"]).expanduser().resolve()
+    OUTPUT_RUN_DIR = Path(pathlist.get("output_run", ON_GOING_RUN_DIR)).expanduser().resolve()
+
+    if not ON_GOING_RUN_DIR.exists():
+        raise FileNotFoundError(
+            f"on_going_run folder not found: {ON_GOING_RUN_DIR}"
+        )
+
+    PRODUCTION_PLAN_PATH = ON_GOING_RUN_DIR / f"production_plan_{label}.csv"
+    DISRUPTION_HISTORY_PATH = ON_GOING_RUN_DIR / "disruption_hist.csv"
+    UNIT_SUMMARY_PATH = ON_GOING_RUN_DIR / "unit_summary.csv"
+
+    if not PRODUCTION_PLAN_PATH.exists():
+        raise FileNotFoundError(
+            f"Production plan not found: {PRODUCTION_PLAN_PATH}"
+        )
+
+    return MAIN_SETTINGS
+
+
+def get_current_time_from_unit_summary(default_time_s: float = 0.0) -> float:
+    """Infer current simulation time from unit_summary.csv if available."""
+
+    if UNIT_SUMMARY_PATH is None or not UNIT_SUMMARY_PATH.exists():
+        return float(default_time_s)
+
+    unit_df = pd.read_csv(UNIT_SUMMARY_PATH)
+
+    if "completion_time_s" not in unit_df.columns or unit_df.empty:
+        return float(default_time_s)
+
+    completed_times = pd.to_numeric(
+        unit_df["completion_time_s"], errors="coerce"
+    ).dropna()
+
+    if completed_times.empty:
+        return float(default_time_s)
+
+    return float(completed_times.max())
+
+def get_completed_unit_ids_from_unit_summary(current_time_s: float) -> Set[str]:
+    """Return completed unit IDs from unit_summary.csv.
+
+    A unit is considered completed if completion_time_s <= current_time_s.
+    If unit_summary.csv does not exist, no units are completed.
+    """
+
+    if UNIT_SUMMARY_PATH is None or not UNIT_SUMMARY_PATH.exists():
+        return set()
+
+    unit_df = pd.read_csv(UNIT_SUMMARY_PATH)
+
+    if "completion_time_s" not in unit_df.columns:
+        raise KeyError(
+            f"Missing column 'completion_time_s' in {UNIT_SUMMARY_PATH}"
+        )
+
+    unit_id_columns = ["unit_id", "unitID", "unitId", "UnitID", "unit"]
+    unit_id_column = next((c for c in unit_id_columns if c in unit_df.columns), None)
+
+    completed_mask = (
+        pd.to_numeric(unit_df["completion_time_s"], errors="coerce")
+        <= current_time_s
+    )
+
+    if unit_id_column is None:
+        raise KeyError(
+            f"Missing unit ID column in {UNIT_SUMMARY_PATH}. "
+            "Expected one of: unit_id, unitID, unitId, UnitID, unit"
+        )
+
+    return set(
+        unit_df.loc[completed_mask, unit_id_column]
+        .dropna()
+        .astype(str)
+    )
+
 # ============================================================
 # GA SETTINGS / ROLLING HORIZON SETTINGS
 # ============================================================
@@ -58,15 +163,7 @@ KEEP_ONLY_BEST_SUMMARY = True
 SECONDS_PER_PRODUCTION_DAY = 8 * 60 * 60
 
 # Set these values here while testing.
-# Later, CURRENT_TIME_S and completed units should come from the main simulation.
-CURRENT_TIME_S = 0
 DEFAULT_LOOKAHEAD_DAYS = 3
-
-# Temporary test input:
-# Number of units already produced before the rolling-horizon scheduler starts.
-# The code will remove the first N units from the full production plan order.
-# Later, replace this with exact completed unit IDs from the main simulation.
-COMPLETED_UNITS_COUNT = 0
 
 # Rolling horizon options:
 # 1 day  -> schedule the rest of current day only
@@ -90,9 +187,8 @@ MUTATION_RATE = 0.4
 #   1) Weighted exponential penalty for each delayed order
 #   2) Weighted extra exponential penalty for the worst delayed order
 #   3) Very small linear earliness reward as a tie-breaker
-#
+# Notes:
 # Lower fitness is better.
-#
 # Times from the simulator are in seconds, so tardiness/earliness are
 # converted to days before being used in the fitness function.
 
@@ -101,7 +197,6 @@ BETA_MAX_TARDINESS = 1.5
 GAMMA_EARLINESS = 0.001
 
 TIME_SCALE = 24 * 60 * 60  # 1 calendar day in seconds
-
 
 # ============================================================
 # DATA CLASSES
@@ -130,24 +225,14 @@ class Order:
 # LOAD FILES
 # ============================================================
 
-def load_json(path: Path):
+def load_production_plan(production_plan_path: Path) -> pd.DataFrame:
 
-    print(f"Loading JSON: {path}")
+    path = Path(production_plan_path)
 
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def load_production_plan(input_dir: Path) -> pd.DataFrame:
-
-    production_files = list(input_dir.glob("production_plan*"))
-
-    if not production_files:
+    if not path.exists():
         raise FileNotFoundError(
-            f"No production_plan file found in: {input_dir}"
+            f"Production plan not found: {path}"
         )
-
-    path = production_files[0]
 
     print(f"Loading production plan from: {path}")
 
@@ -292,39 +377,6 @@ def normalize_completed_unit_ids(completed_unit_ids=None) -> Set[str]:
         return set()
 
     return {str(unit_id) for unit_id in completed_unit_ids}
-
-
-def get_completed_unit_ids_from_count(
-    units: List[Unit],
-    completed_units_count: int = 0
-) -> Set[str]:
-    """
-    Temporary helper for testing before main_sim is connected.
-
-    If completed_units_count = N, the scheduler treats the first N units in the
-    loaded production-plan order as already completed.
-
-    Later, main_sim should preferably provide exact completed unit IDs instead
-    of only a count, because exact IDs are more robust when the actual produced
-    sequence differs from the original production-plan order.
-    """
-
-    if completed_units_count is None:
-        completed_units_count = 0
-
-    completed_units_count = int(completed_units_count)
-
-    if completed_units_count < 0:
-        raise ValueError(
-            f"completed_units_count must be >= 0, got {completed_units_count}"
-        )
-
-    completed_units_count = min(completed_units_count, len(units))
-
-    return {
-        unit.unit_id
-        for unit in units[:completed_units_count]
-    }
 
 
 def filter_orders_and_units_for_rolling_horizon(
@@ -565,7 +617,7 @@ def export_schedule(
         route_id=0
     )
 
-    output_path = INPUT_DIR / filename
+    output_path = ON_GOING_RUN_DIR / filename
 
     unit_df.to_csv(
         output_path,
@@ -603,7 +655,7 @@ def safe_delete_folder(path: Path):
 def clear_old_summary_output_folder():
     """Remove old simulator summary folders for this input batch."""
 
-    output_root = ROOT / "output" / INPUT_DIR.name
+    output_root = OUTPUT_RUN_DIR
 
     if not output_root.exists():
         return
@@ -643,61 +695,37 @@ def find_summary_folder(
     generation,
     chromosome_index
 ):
+    """Find the newest simulator summary folder/file for the evaluated schedule.
 
-    if (INPUT_DIR / "unit_summary.csv").exists():
-        return INPUT_DIR
-
-    raise FileNotFoundError(
-        f"unit_summary.csv not found in {INPUT_DIR}"
-    )
+    Preferred location is on_going_run/unit_summary.csv because the simulator
+    is expected to work from the same main_settings.json paths. If the
+    simulator writes summaries into output_run instead, the newest folder
+    containing unit_summary.csv is used.
+    """
 
     candidates = []
 
-    if (INPUT_DIR / "unit_summary.csv").exists():
-        candidates.append(INPUT_DIR)
+    if UNIT_SUMMARY_PATH is not None and UNIT_SUMMARY_PATH.exists():
+        candidates.append(ON_GOING_RUN_DIR)
 
-    output_root = ROOT / "output" / INPUT_DIR.name
+    if OUTPUT_RUN_DIR is not None and OUTPUT_RUN_DIR.exists():
+        if (OUTPUT_RUN_DIR / "unit_summary.csv").exists():
+            candidates.append(OUTPUT_RUN_DIR)
 
-    if output_root.exists():
         candidates.extend(
             folder
-            for folder in output_root.iterdir()
+            for folder in OUTPUT_RUN_DIR.iterdir()
             if folder.is_dir() and (folder / "unit_summary.csv").exists()
         )
 
     if not candidates:
         raise FileNotFoundError(
-            f"No folder with unit_summary.csv found in {INPUT_DIR} or {output_root}"
+            f"No unit_summary.csv found in {ON_GOING_RUN_DIR} or {OUTPUT_RUN_DIR}"
         )
 
     return max(
         candidates,
         key=lambda folder: (folder / "unit_summary.csv").stat().st_mtime
-    )
-
-    output_root = ROOT / "output" / INPUT_DIR.name
-
-    base_name = "current_schedule_summary"
-
-    exact_folder = output_root / base_name
-
-    if exact_folder.exists():
-        return exact_folder
-
-    matching_folders = [
-        folder
-        for folder in output_root.glob(f"{base_name}*")
-        if folder.is_dir()
-    ]
-
-    if not matching_folders:
-        raise FileNotFoundError(
-            f"No summary folder found for {base_name} in {output_root}"
-        )
-
-    return max(
-        matching_folders,
-        key=lambda folder: folder.stat().st_mtime
     )
 
 
@@ -765,7 +793,7 @@ def evaluate_schedule_with_simulator(
     )
 
     with contextlib.redirect_stdout(io.StringIO()):
-        simulator.main()
+        simulator.main(str(MAIN_SETTINGS_PATH))
 
     summary_folder = find_summary_folder(
         generation=generation,
@@ -1140,7 +1168,7 @@ def run_ga(
         population = new_population
 
     if KEEP_ONLY_BEST_SUMMARY and best_summary_folder is not None:
-        final_summary_folder = ROOT / "output" / INPUT_DIR.name / "best_schedule_summary"
+        final_summary_folder = OUTPUT_RUN_DIR / "best_schedule_summary"
 
         if final_summary_folder.exists() and final_summary_folder != best_summary_folder:
             safe_delete_folder(final_summary_folder)
@@ -1167,63 +1195,57 @@ def run_ga(
 # ============================================================
 
 def main(
-    current_time_s: float = CURRENT_TIME_S,
+    main_settings_path,
+    current_time_s=None,
     lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
-    completed_units_count: int = COMPLETED_UNITS_COUNT,
-    completed_unit_ids=None
 ):
+
+    configure_paths_from_main_settings(main_settings_path)
+
+    if current_time_s is None:
+        current_time_s = get_current_time_from_unit_summary(default_time_s=0.0)
+
+    completed_from_summary = get_completed_unit_ids_from_unit_summary(
+        current_time_s=current_time_s
+    )
+
+    completed_units = completed_from_summary
 
     print("\n================================================")
     print("STARTING GA SCHEDULER")
     print("================================================")
 
-    print("\nROOT:")
-    print(ROOT)
+    print("\nmain_settings.json:")
+    print(MAIN_SETTINGS_PATH)
 
-    print("\nInput folder:")
-    print(INPUT_DIR)
+    print("\non_going_run folder:")
+    print(ON_GOING_RUN_DIR)
+
+    print("\nProduction plan:")
+    print(PRODUCTION_PLAN_PATH)
 
     print("\nRolling horizon setup:")
     print(f"Current simulation time [s]: {current_time_s}")
     print(f"Lookahead days: {lookahead_days}")
-    print(f"Completed units count: {completed_units_count}")
+    print(f"Completed units from unit_summary.csv: {len(completed_from_summary)}")
 
-    print("\nLoading files...")
+    if not DISRUPTION_HISTORY_PATH.exists():
+        print("\nNo disruption_hist.csv found. Treating this as t=0/no disruption history.")
+
+    if not UNIT_SUMMARY_PATH.exists():
+        print("No unit_summary.csv found. Treating this as t=0/no completed units.")
+
+    print("\nLoading production plan...")
 
     production_df = load_production_plan(
-        INPUT_DIR
+        PRODUCTION_PLAN_PATH
     )
 
-    load_json(
-        LAYOUT_PATH
-    )
-
-    load_json(
-        PROCESS_TIMES_PATH
-    )
-
-    load_json(
-        TRANSPORT_TIMES_PATH
-    )
-
-    print("\nFiles loaded successfully.")
+    print("\nProduction plan loaded successfully.")
 
     all_orders, all_units, all_order_units = load_orders_and_units_from_file(
         production_df
     )
-
-    completed_from_count = get_completed_unit_ids_from_count(
-        units=all_units,
-        completed_units_count=completed_units_count
-    )
-
-    completed_from_ids = normalize_completed_unit_ids(
-        completed_unit_ids
-    )
-
-    completed_units = completed_from_count.union(completed_from_ids)
-
-    print(f"Completed unit IDs used for filtering: {len(completed_units)}")
 
     orders, units, order_units, horizon_info = filter_orders_and_units_for_rolling_horizon(
         orders=all_orders,
@@ -1246,7 +1268,7 @@ def main(
 
     if not orders:
         print("\nNo remaining orders/units inside selected horizon. Nothing to schedule.")
-        return None
+        return
 
     print("\nRunning GA...")
 
@@ -1272,14 +1294,12 @@ def main(
     print(best_order_solution)
 
     if best_simulation_result is not None:
-
         print(
             f"\nBest makespan: "
             f"{best_simulation_result.get('makespan', 'N/A')}"
         )
 
     if best_summary_folder is not None:
-
         print("\nBest summary folder:")
         print(best_summary_folder)
 
@@ -1299,12 +1319,7 @@ def main(
 
     print("\nFinished.")
 
-
-if __name__ == "__main__":
-
+if __name__ == "__main__": #Kan slettes når koden kun skal køres af MAIN
     main(
-        current_time_s=CURRENT_TIME_S,
-        lookahead_days=DEFAULT_LOOKAHEAD_DAYS,
-        completed_units_count=COMPLETED_UNITS_COUNT,
-        completed_unit_ids=[]
+        r"c:\Users\mikke\OneDrive - Aalborg Universitet\Skrivebord\VT2 Project\Github mappe\VT2-resilience\production_line_sim\input\main_16-05_10-50_0\runs\run_1\main_settings.json"
     )
