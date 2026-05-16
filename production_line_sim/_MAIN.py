@@ -32,31 +32,6 @@ BASE_DIR = Path(__file__).parent
 data_dir = BASE_DIR / "data"
 layout_dir = data_dir / "Layouts"
 
-#a single run of the disruption sim
-def pipeline(settings):
-   print(f"Based on the current plan_time no more than {A_input.round_half_up(settings['plan_time [s]']/A_input.AVE_CYCLE_TIME_PER_UNIT)} units should be selected")
-   num_orders = int(input("Enter amount of orders: "))
-   num_units = int(input("Enter amount of units: "))
-   order_dir = A_input.main(num_orders, num_units)
-   print("RUNNING THE PLAN!!!!!!!")
-   B_production_planning.main(order_dir,SECONDS_PER_WEEK)
-   #sim with disruption loop
-   # the sim should pause when a disruption happens and then 
-   # the IPPS should come up with a new solution to the disrupted line and continue the sim with disruptions
-   #C_IPPS.main(order_dir) #creates new plan
-   #E_production_line_sim.run_simulation() #with disruptions
-
-   #F_graphgen.main()
-   #G_after_movie.main()
-
-# -  main function  -
-def main():
-   mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
-   settings = A_input.read_settings_json(data_dir / "settings.json")
-
-   pipeline(settings)
-   
-
 def create_setting_json(
     output_path: Path,
     run_idx,
@@ -79,24 +54,17 @@ def create_setting_json(
             "seed": seed
         },
         "label": label,
-        "pathlist": {
-            "input": str(pathlist["input"]),
-            "input_disruptions": str(pathlist["input_disruptions"]),
-            "input_orders": str(pathlist["input_orders"]),
-            "input_runs": str(pathlist["input_runs"]),
-            "input_runs_run": str(pathlist["input_runs_run"]),
-            "on_going": str(pathlist["on_going"]),
-            "on_going_run": str(pathlist["on_going_run"]),
-            "output": str(pathlist["output"]),
-            "output_run": str(pathlist["output_run"]),
-            "post processing": str(pathlist["post_processing"]),
-        }
+        "pathlist": {k: str(v) for k, v in pathlist.items()}
     }
 
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(settings, f, indent=4)
 
-def main2():
+
+def find_all_event_times(main_settings_json):
+   print("here we find all the timestamps for when an 'event start' or 'event ends' happens")
+
+def main():
    #create folders/check they are there
    input_dir = BASE_DIR / "input"
    input_dir.mkdir(exist_ok=True)
@@ -205,15 +173,23 @@ def main2():
       output_run = dirs[2] / f"run_{run_idx}"
 
       pathlist = {
-         "input": dirs[0].parent,          # original input main loop folder
+         "input": dirs[0].parent,
          "input_disruptions": disruption_dir,
+         "input_disruptions_csv": disruption_dir / f"disruption_{label}.csv",
+         "input_disruptions_json": disruption_dir / f"disruption.json",
          "input_orders": orders_dir,
-         "input_runs": dirs[0],            # runs_dir
+         "input_orders_csv": orders_dir / f"unsorted_orders_{label}.csv",
+         "input_runs": dirs[0],
          "input_runs_run": input_runs_run,
          "on_going": dirs[1],
          "on_going_run": on_going_run,
+         "on_going_run_current_schedule": on_going_run / f"current_schedule.csv",
+         "on_going_run_dis_his": on_going_run / f"disruption_his.csv",
+         "on_going_run_production_plan": on_going_run / f"production_plan_{label}.csv",
+         "on_going_run_unit_summary": on_going_run / f"unit_summary.csv",
          "output": dirs[2],
          "output_run": output_run,
+         "output_run_results":output_run / "results",
          "post_processing": dirs[3]
       }
       
@@ -227,6 +203,7 @@ def main2():
       B_production_planning.create_production_plan(order_csv_path,on_going_run_path,layout_file,label,SECONDS_PER_WEEK)
 
       #finds the event_times based on the disruption file for the run
+      event_times = find_all_event_times(main_settings_dir)
 
       # runs a loop of the breaks for the main sim
 
@@ -249,18 +226,4 @@ def main2():
 
 
 if __name__ == "__main__":
-   loop = False #ændre den her hvis du ikke vil have et valg længere
-   if loop == True:
-      while loop == True:
-         user = input("old main(o) or new main(n)  (o/n)\n>> ").lower()
-         if user == "o":
-            main()
-            loop = False
-         if user == "n":
-            main2()
-            loop = False
-         elif loop == True:
-            print("\n--- please select between 'o' or 'n' ---")
-   else:
-      print("running main2()")
-      main2()
+   main()
