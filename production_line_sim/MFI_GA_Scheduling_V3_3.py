@@ -630,42 +630,6 @@ def safe_delete_folder(path: Path):
             print(f"WARNING: Could not delete folder because it is locked: {path}")
             print(f"         {exc}")
 
-
-def clear_old_summary_output_folder():
-    """Remove old simulator summary folders for this input batch."""
-
-    output_root = OUTPUT_RUN_DIR
-
-    if not output_root.exists():
-        return
-
-    for folder in output_root.iterdir():
-        if folder.is_dir():
-            safe_delete_folder(folder)
-
-
-def cleanup_non_best_summary(summary_folder: Path, best_summary_folder: Path):
-    if not CLEAN_TEMP_OUTPUTS:
-        return
-
-    if summary_folder is None:
-        return
-
-    if KEEP_ONLY_BEST_SUMMARY and summary_folder != best_summary_folder:
-        safe_delete_folder(summary_folder)
-
-
-def cleanup_previous_best_summary(previous_best_folder: Path, new_best_folder: Path):
-    if not CLEAN_TEMP_OUTPUTS:
-        return
-
-    if not KEEP_ONLY_BEST_SUMMARY:
-        return
-
-    if previous_best_folder is not None and previous_best_folder != new_best_folder:
-        safe_delete_folder(previous_best_folder)
-
-
 # ============================================================
 # SUMMARY READING
 # ============================================================
@@ -976,9 +940,6 @@ def run_ga(
         for u in units
     }
 
-    if CLEAN_TEMP_OUTPUTS:
-        clear_old_summary_output_folder()
-
     population = create_order_population(
         orders
     )
@@ -1065,18 +1026,6 @@ def run_ga(
 
                 best_summary_folder = summary_folder
 
-                cleanup_previous_best_summary(
-                    previous_best_folder=previous_best_summary_folder,
-                    new_best_folder=best_summary_folder
-                )
-
-            else:
-
-                cleanup_non_best_summary(
-                    summary_folder=summary_folder,
-                    best_summary_folder=best_summary_folder
-                )
-
             best_marker = " <-- NEW BEST" if is_new_global_best else ""
 
             print(
@@ -1148,9 +1097,6 @@ def run_ga(
 
     if KEEP_ONLY_BEST_SUMMARY and best_summary_folder is not None:
         final_summary_folder = OUTPUT_RUN_DIR / "best_schedule_summary"
-
-        if final_summary_folder.exists() and final_summary_folder != best_summary_folder:
-            safe_delete_folder(final_summary_folder)
 
         if best_summary_folder.exists() and best_summary_folder != final_summary_folder:
             try:

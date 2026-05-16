@@ -196,7 +196,7 @@ def main():
          "post_processing": dirs[3]
       }
       
-      
+
       # creating the selected settings json for the run
       main_settings_dir = dirs[0]/ f"run_{run_idx}"/"main_settings.json"
       create_setting_json(main_settings_dir, run_idx, layout_file, p_val, r_val, a_name, seed,
@@ -210,7 +210,7 @@ def main():
       event_times = [100,200,300,400,500]
 
       # runs a loop of the breaks for the main sim
-
+      
       for time in event_times:
          start = ti.perf_counter()
          MFI_GA_Scheduling_V3_3.main(main_settings_dir, time)
