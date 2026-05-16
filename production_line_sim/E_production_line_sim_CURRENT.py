@@ -751,128 +751,6 @@ def _load_current_schedule_csv(schedule_csv_path: Path, valid_variants: set[str]
     }
 
 
-
-def _coerce_path(value: Any) -> Path | None:
-    if value is None:
-        return None
-    value_text = str(value).strip()
-    if value_text == "":
-        return None
-    return Path(value_text)
-
-
-def _pathlist_path(pathlist: dict[str, Any], key: str) -> Path | None:
-    if not isinstance(pathlist, dict):
-        return None
-    return _coerce_path(pathlist.get(key))
-
-
-def _existing_pathlist_file(pathlist: dict[str, Any], key: str) -> Path | None:
-    path = _pathlist_path(pathlist, key)
-    if path is not None and path.exists() and path.is_file():
-        return path
-    return None
-
-
-def _resolve_pathlist_disruption_csv(pathlist: dict[str, Any]) -> Path | None:
-    exact_path = _pathlist_path(pathlist, "input_disruptions_csv")
-    if exact_path is not None:
-        if exact_path.exists() and exact_path.is_file():
-            return exact_path
-        if exact_path.name.startswith("disruption_"):
-            plural_candidate = exact_path.with_name("disruptions_" + exact_path.name[len("disruption_"):])
-            if plural_candidate.exists() and plural_candidate.is_file():
-                return plural_candidate
-
-    disruption_dir = _pathlist_path(pathlist, "input_disruptions")
-    if disruption_dir is not None and disruption_dir.exists() and disruption_dir.is_dir():
-        candidates: list[Path] = []
-        for pattern in ("disruptions_*.csv", "disruption_*.csv", "disruptions*.csv", "disruption_list*.csv"):
-            candidates.extend([path for path in disruption_dir.glob(pattern) if path.is_file()])
-        if candidates:
-            return max(candidates, key=lambda path: path.stat().st_mtime)
-
-    return None
-
-
-def _resolve_pathlist_disruption_json(pathlist: dict[str, Any]) -> Path | None:
-    exact_path = _pathlist_path(pathlist, "input_disruptions_json")
-    if exact_path is not None and exact_path.exists() and exact_path.is_file():
-        return exact_path
-
-    disruption_dir = _pathlist_path(pathlist, "input_disruptions")
-    if disruption_dir is not None and disruption_dir.exists() and disruption_dir.is_dir():
-        for filename in ("disruption_v2.json", "disruption.json"):
-            candidate = disruption_dir / filename
-            if candidate.exists() and candidate.is_file():
-                return candidate
-
-        candidates = [path for path in disruption_dir.glob("disruption*.json") if path.is_file()]
-        if candidates:
-            return max(candidates, key=lambda path: path.stat().st_mtime)
-
-    return None
-
-
-def load_input_from_main_settings(
-    main_settings_path: Path,
-    data_dir: Path,
-    valid_variants: set[str],
-) -> dict[str, Any]:
-    main_settings_path = Path(main_settings_path)
-    main_settings_data = load_json(main_settings_path)
-    pathlist = dict(main_settings_data.get("pathlist", {}))
-    run_settings = dict(main_settings_data.get("settings", {}))
-
-    base_settings_path = data_dir / "settings.json"
-    settings_data: dict[str, Any] = load_json(base_settings_path) if base_settings_path.exists() else {}
-    settings_data.update(run_settings)
-
-    scenario_layout = run_settings.get("Scenarios")
-    if isinstance(scenario_layout, str) and scenario_layout.strip() != "":
-        settings_data["line_layout_file"] = scenario_layout.strip()
-
-    schedule_path = _pathlist_path(pathlist, "on_going_run_current_schedule")
-    if schedule_path is None:
-        raise FileNotFoundError("main_settings.json pathlist is missing 'on_going_run_current_schedule'.")
-    if not schedule_path.exists():
-        raise FileNotFoundError(f"current_schedule.csv was not found at {schedule_path}")
-
-    schedule_payload = _load_current_schedule_csv(schedule_path, valid_variants)
-    ordered_units = list(schedule_payload["ordered_units"])
-
-    input_root = _pathlist_path(pathlist, "input") or main_settings_path.parent
-    batch_dir = _pathlist_path(pathlist, "input_runs_run") or main_settings_path.parent
-    output_root = _pathlist_path(pathlist, "output_run_results")
-
-    simulation_time_s = float(settings_data.get("sim_time [s]", settings_data.get("Sim_time [s]", 0.0)))
-    carriers = int(float(settings_data.get("carriers", {}).get("number of carriers", MAX_UNITS_IN_SYSTEM)))
-
-    label_text = str(main_settings_data.get("label", main_settings_path.stem))
-    order_text = f"{label_text}__scheduled_{len(ordered_units)}units"
-
-    return {
-        "order_text": order_text,
-        "ordered_units": ordered_units,
-        "unit_release_times": list(schedule_payload["unit_release_times"]),
-        "unit_priorities": list(schedule_payload["unit_priorities"]),
-        "unit_order_ids": list(schedule_payload["unit_order_ids"]),
-        "simulation_time_s": simulation_time_s,
-        "carriers": carriers,
-        "settings_data": settings_data,
-        "selected_line_layout_name": _resolve_line_layout_filename_from_settings(settings_data),
-        "input_root": input_root,
-        "batch_dir": batch_dir,
-        "orders_csv_path": schedule_path,
-        "settings_path": main_settings_path,
-        "main_settings_path": main_settings_path,
-        "main_settings_data": main_settings_data,
-        "pathlist": pathlist,
-        "output_root": output_root,
-    }
-
-
-
 def _read_int(cell_value: str, default: int = 0) -> int:
     text_value = str(cell_value).strip()
     if text_value == "" or text_value.casefold() == "nan":
@@ -3048,7 +2926,6 @@ def write_transport_csv(transport_records: list[TransportRecord], output_path: P
 
 
 def write_unit_summary_csv(unit_summaries: list[UnitSummary], output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(
@@ -3694,7 +3571,7 @@ def save_run_metadata(
 # -----------------------------
 # Main
 # -----------------------------
-def main(main_settings_json: str | Path | None = None) -> None:
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Simulate a 6-station phone production line with FIFO queues and transport times."
     )
@@ -3726,14 +3603,7 @@ def main(main_settings_json: str | Path | None = None) -> None:
         default=Path(__file__).resolve().parent / "output",
         help="Root folder where a new subfolder will be created for every order run",
     )
-    parser.add_argument(
-        "--main-settings",
-        type=Path,
-        help="Path to a run-specific main_settings.json containing the pathlist for this simulation run.",
-    )
-    args = parser.parse_args([] if main_settings_json is not None else None)
-    if main_settings_json is not None:
-        args.main_settings = Path(main_settings_json)
+    args = parser.parse_args()
 
     data_dir: Path = args.data_dir
     input_root: Path = args.input_root
@@ -3760,39 +3630,8 @@ def main(main_settings_json: str | Path | None = None) -> None:
     batch_dir_for_layout: Path | None = None
     settings_path: Path | None = None
     settings_data: dict[str, Any] = {}
-    main_settings_pathlist: dict[str, Any] = {}
 
-    if args.main_settings is not None:
-        generated_input = load_input_from_main_settings(Path(args.main_settings), data_dir, valid_variants)
-        order_text = generated_input["order_text"]
-        ordered_units = generated_input["ordered_units"]
-        unit_release_times = generated_input["unit_release_times"]
-        unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
-        unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
-        simulation_time_s = generated_input["simulation_time_s"]
-        carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))
-        settings_data = generated_input.get("settings_data", {})
-        settings_path = generated_input.get("settings_path")
-        batch_dir_for_layout = generated_input["batch_dir"]
-        input_root = Path(generated_input["input_root"])
-        main_settings_pathlist = dict(generated_input.get("pathlist", {}))
-        if generated_input.get("output_root") is not None:
-            output_root = Path(generated_input["output_root"])
-        if selected_line_layout_name is None:
-            selected_line_layout_name = generated_input.get("selected_line_layout_name")
-        run_metadata_extra = {
-            "main_settings_json": str(Path(args.main_settings).resolve()),
-            "input_root": str(Path(generated_input["input_root"]).resolve()),
-            "input_batch_directory": str(Path(generated_input["batch_dir"]).resolve()),
-            "input_orders_csv": str(Path(generated_input["orders_csv_path"]).resolve()),
-            "input_settings_json": str(Path(generated_input["settings_path"]).resolve()),
-            "simulation_time_seconds": simulation_time_s,
-            "carriers": carriers,
-            "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
-            "unit_priorities": list(unit_priorities),
-            "unit_order_ids": list(unit_order_ids),
-        }
-    elif args.order:
+    if args.order:
         order_text = args.order
         ordered_units = parse_order(order_text, valid_variants)
         unit_release_times = [0.0] * len(ordered_units)
@@ -3837,14 +3676,9 @@ def main(main_settings_json: str | Path | None = None) -> None:
         line_layout_config=line_layout_config,
     )
 
-    if main_settings_pathlist:
-        disruption_path = _resolve_pathlist_disruption_json(main_settings_pathlist)
-        timed_disruption_csv_path = _resolve_pathlist_disruption_csv(main_settings_pathlist)
-        timed_disruption_json_path = _resolve_pathlist_disruption_json(main_settings_pathlist)
-    else:
-        disruption_path = resolve_disruption_path(input_root=input_root, batch_dir=batch_dir_for_layout)
-        timed_disruption_csv_path = resolve_timed_disruption_csv_path(input_root=input_root, batch_dir=batch_dir_for_layout)
-        timed_disruption_json_path = resolve_timed_disruption_json_path(input_root=input_root, batch_dir=batch_dir_for_layout)
+    disruption_path = resolve_disruption_path(input_root=input_root, batch_dir=batch_dir_for_layout)
+    timed_disruption_csv_path = resolve_timed_disruption_csv_path(input_root=input_root, batch_dir=batch_dir_for_layout)
+    timed_disruption_json_path = resolve_timed_disruption_json_path(input_root=input_root, batch_dir=batch_dir_for_layout)
     disruption_mode = _settings_disruption_mode(settings_data)
     disruptions_enabled = disruption_mode != 0
     chance_based_disruptions_enabled = disruption_mode == 1
@@ -4438,12 +4272,8 @@ def main(main_settings_json: str | Path | None = None) -> None:
     write_operations_csv(operations, run_output_dir / "station_schedule.csv")
     write_transport_csv(transport_records, run_output_dir / "transport_schedule.csv")
     write_unit_summary_csv(unit_summaries, run_output_dir / "unit_summary.csv")
-    if main_settings_pathlist and _pathlist_path(main_settings_pathlist, "on_going_run_unit_summary") is not None:
-        ongoing_unit_summary_path = _pathlist_path(main_settings_pathlist, "on_going_run_unit_summary")
-    else:
-        ongoing_run_dir_for_summary = resolve_ongoing_run_dir(Path(__file__).resolve().parent)
-        ongoing_unit_summary_path = ongoing_run_dir_for_summary / "unit_summary.csv"
-    write_unit_summary_csv(unit_summaries, ongoing_unit_summary_path)
+    ongoing_run_dir_for_summary = resolve_ongoing_run_dir(Path(__file__).resolve().parent)
+    write_unit_summary_csv(unit_summaries, ongoing_run_dir_for_summary / "unit_summary.csv")
     write_station_summary_csv(
         station_summaries,
         run_output_dir / "station_summary.csv",
@@ -4471,13 +4301,9 @@ def main(main_settings_json: str | Path | None = None) -> None:
             disruption_config=disruption_config,
             timed_disruption_records=timed_disruption_records,
         )
-        if main_settings_pathlist and _pathlist_path(main_settings_pathlist, "on_going_run_dis_his") is not None:
-            disruption_history_path = _pathlist_path(main_settings_pathlist, "on_going_run_dis_his")
-        else:
-            ongoing_run_dir = resolve_ongoing_run_dir(Path(__file__).resolve().parent)
-            disruption_history_path = ongoing_run_dir / DISRUPTION_HISTORY_FILENAME
+        ongoing_run_dir = resolve_ongoing_run_dir(Path(__file__).resolve().parent)
         write_disruption_history_csv(
-            disruption_history_path,
+            ongoing_run_dir / DISRUPTION_HISTORY_FILENAME,
             disruption_history_rows,
         )
 
