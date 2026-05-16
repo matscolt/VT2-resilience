@@ -14,7 +14,7 @@ Wants and wishes
 - display a capacity and actual units in queue 
 
 """
-import A_input, B_production_planning, C_IPPS, D_algo,MFI_GA_Scheduling_V3_3 , E_production_line_sim, F_graphgen, G_after_movie
+import A_input, B_production_planning, C_IPPS, D_algo,GA_Scheduling , E_production_line_sim, F_graphgen, G_after_movie
 from pathlib import Path
 from itertools import product
 from copy import deepcopy
@@ -253,7 +253,7 @@ def main():
       for timestamp in event_times:
          start = ti.perf_counter()
          print("MAIN.py: running GA")
-         MFI_GA_Scheduling_V3_3.main(main_settings_dir, timestamp)
+         GA_Scheduling.main(main_settings_dir, timestamp)
          print("MAIN.py: running main sim")
          E_production_line_sim.main(main_settings_dir, timestamp)
          end = ti.perf_counter()
