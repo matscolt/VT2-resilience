@@ -14,7 +14,7 @@ Wants and wishes
 - display a capacity and actual units in queue 
 
 """
-import A_input, B_production_planning, C_IPPS, D_algo, E_production_line_sim, F_graphgen, G_after_movie
+import A_input, B_production_planning, C_IPPS, D_algo,MFI_GA_Scheduling_V3_3 , E_production_line_sim, F_graphgen, G_after_movie
 from pathlib import Path
 from itertools import product
 from copy import deepcopy
@@ -204,13 +204,14 @@ def main():
       B_production_planning.create_production_plan(order_csv_path,on_going_run_path,layout_file,label,SECONDS_PER_WEEK)
 
       #finds the event_times based on the disruption file for the run
-      event_times = find_all_event_times(main_settings_dir)
+      #event_times = find_all_event_times(main_settings_dir)
+      event_times = [1,1,1,1,1]
 
       # runs a loop of the breaks for the main sim
 
       for time in event_times:
-         GA(main_settings_dir)
-         Main_sim(main_settings_dir)
+         MFI_GA_Scheduling_V3_3.main(main_settings_dir)
+         E_production_line_sim.main(main_settings_dir)
 
 
       print(f"\n\n--- RUN {run_idx} ---")
