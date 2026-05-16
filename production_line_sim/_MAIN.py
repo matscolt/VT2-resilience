@@ -256,6 +256,7 @@ def main():
          E_production_line_sim.main(main_settings_dir, time_)
          end = ti.perf_counter()
          print(f"\n\nloop time : {end - start}\n\n")
+         break
          
 
 
