@@ -5,7 +5,7 @@
     "random based disruptions": {
         "enabled": 2
     },
-    "line_layout_file": "layout_1_1_5_1_1_1.json",
+    "line_layout_file": "layout_1_1_1_1_1_1.json",
     "carriers": {
         "number of carriers": 8
     },

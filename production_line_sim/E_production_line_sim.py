@@ -4979,4 +4979,4 @@ def main(main_settings_json: str | Path | None = None,timestamp: int = None) -> 
     print(f"Total execution time: {endtime - starttime:.6f} seconds")
 
 if __name__ == "__main__":
-    main()
+    main(timestamp=1244000)

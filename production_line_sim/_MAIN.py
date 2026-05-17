@@ -246,7 +246,7 @@ def main():
          start = ti.perf_counter()
          print(f"[MAIN] Segment {i+1}/{len(event_times)-1}: t={t_start} -> {t_stop}")
 
-         print("----MAIN.py: running GA")
+         print(f"----MAIN.py: running GA in run {run_idx}")
          GA_Scheduling.main(main_settings_dir, t_start)
 
          print(f"----MAIN.py: running main sim from {t_start} to {t_stop}")
