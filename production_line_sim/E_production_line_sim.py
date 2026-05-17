@@ -4156,6 +4156,13 @@ def main(main_settings_json: str | Path | None = None,timestamp: int = None) -> 
         except (TypeError, ValueError):
             pass
 
+    # Bulletproof: ensure unit_ids is always defined before calling run_simulation
+    unit_ids = input_payload.get('unit_ids', []) if 'input_payload' in locals() else []
+    if unit_ids is None:
+        unit_ids = []
+    else:
+        unit_ids = list(unit_ids)
+
     print(">> Running sim with disruptions")
     operations, transport_records, unit_summaries, station_summaries, _, simulation_details = run_simulation(
         ordered_units=ordered_units,
