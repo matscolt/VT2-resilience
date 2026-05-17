@@ -170,4 +170,5 @@ def generate_layout():
 # Main
 # -----------------------------
 if __name__ == "__main__":
+    # we try again
     generate_layout()
