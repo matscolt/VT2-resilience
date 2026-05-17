@@ -197,7 +197,6 @@ def main():
       label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
       order_csv_path = orders_dir / f"unsorted_orders_{label}.csv"
       on_going_run_path = dirs[1] / f"run_{run_idx}"
-      label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
 
       # Path list for the folders is generated here
       input_runs_run = dirs[0] / f"run_{run_idx}"
