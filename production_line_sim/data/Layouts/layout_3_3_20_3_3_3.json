@@ -4,6 +4,7 @@
   "scaled_monthly_capacity": 79420.0,
   "capacity_percentage": "90.0%",
   "layout_name": "layout_3_3_20_3_3_3",
+  "carriers":160,
   "station_instances": [
     {
       "station_name": "Station 1: Bottom cover",

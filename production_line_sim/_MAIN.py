@@ -14,7 +14,7 @@ Wants and wishes
 - display a capacity and actual units in queue 
 
 """
-import A_input, B_production_planning, C_IPPS, D_algo,MFI_GA_Scheduling_V3_3 , E_production_line_sim, F_graphgen, G_after_movie
+import A_input, B_production_planning, C_IPPS, D_algo,GA_Scheduling , E_production_line_sim, F_graphgen, G_after_movie
 from pathlib import Path
 from itertools import product
 from copy import deepcopy
@@ -45,6 +45,8 @@ def create_setting_json(
     label,
     pathlist
 ):
+    """Create/update run-specific main_settings.json (single source of truth for paths)."""
+
     settings = {
         "run number": run_idx,
         "settings": {
@@ -53,59 +55,45 @@ def create_setting_json(
             "order_units_ratio": r_val,
             "algorithms": a_name,
             "weightage": None,
-            "seed": seed
+            "seed": seed,
         },
         "label": label,
-        "pathlist": {k: str(v) for k, v in pathlist.items()}
+        "pathlist": {k: str(v) for k, v in pathlist.items()},
     }
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(settings, f, indent=4)
 
+    return settings
 
-def find_all_event_times(main_settings_json):
-    """Build the sorted list of disruption event times for the run.
+def find_all_event_times(main_settings_json: Path):
+    """Build sorted list of disruption event times from disruptions CSV in main_settings.json."""
+    main_settings_json = Path(main_settings_json)
+    main_settings = A_input.read_settings_json(main_settings_json)
+    pathlist = main_settings.get("pathlist", {})
 
-    The list always starts with 0, then includes every start_time and end_time
-    found in the disruptions CSV for the run (if present). Times are returned
-    sorted from low to high and with duplicates removed.
+    disruptions_csv = Path(pathlist["input_disruptions_csv"]) if pathlist.get("input_disruptions_csv") else None
+    if disruptions_csv is None or not disruptions_csv.exists():
+        raise FileNotFoundError(f"Disruptions CSV not found: {disruptions_csv}")
 
-    The disruptions CSV is resolved via main_settings.json:
-      - input_disruptions directory from pathlist
-      - label from the run
-      - filename pattern: disruptions_{label}.csv
-    """
-    print("here we find all the timestamps for when an 'event start' or 'event ends' happens")
-
-    main_settings_json_read = A_input.read_settings_json(main_settings_json)
-
-    disruptions_csv = Path(main_settings_json_read["pathlist"]["input_disruptions_csv"])
-    
     event_times = [0]
-
-    if not disruptions_csv.exists():
-        raise FileNotFoundError(f"Could not find disruptions CSV at: {disruptions_csv}")
-
-    with disruptions_csv.open('r', encoding='utf-8', newline='') as f:
+    with disruptions_csv.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             for col in ("start_time", "end_time"):
-                val = row.get(col, "")
-                if val is None:
+                raw = row.get(col)
+                if raw is None:
                     continue
-                val = str(val).strip()
-                if val == "" or val.lower() == "nan":
+                raw = str(raw).strip()
+                if raw == "" or raw.lower() == "nan":
                     continue
-                # Times in the file are integers, but be defensive.
                 try:
-                    t = int(float(val))
+                    event_times.append(int(float(raw)))
                 except ValueError:
                     continue
-                event_times.append(t)
 
-    # Sort & deduplicate
-    event_times = sorted(set(event_times))
-    return event_times
+    return sorted(set(event_times))
 
 def main():
    #create folders/check they are there
@@ -203,7 +191,7 @@ def main():
       for dir in dirs[0:3]:
          subfolder = dir / f"run_{run_idx}"
          subfolder.mkdir(exist_ok=True)
-         print(subfolder)
+         
 
       # creating the production plan
       label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
@@ -247,17 +235,27 @@ def main():
       B_production_planning.create_production_plan(order_csv_path,on_going_run_path,layout_file,label,SECONDS_PER_WEEK)
 
       #finds the event_times based on the disruption file for the run
-      #event_times = find_all_event_times(main_settings_dir)
       event_times = find_all_event_times(main_settings_dir)
-      # runs a loop of the breaks for the main sim
-      for time in event_times:
+
+      # Run simulation in segments: [t_i, t_{i+1})
+      for i, t_start in enumerate(event_times):
+         if i == len(event_times) - 1:
+            break
+         t_stop = event_times[i + 1]
+
          start = ti.perf_counter()
+         print(f"[MAIN] Segment {i+1}/{len(event_times)-1}: t={t_start} -> {t_stop}")
+
          print("MAIN.py: running GA")
-         MFI_GA_Scheduling_V3_3.main(main_settings_dir, time)
+         GA_Scheduling.main(main_settings_dir, t_start)
+
          print("MAIN.py: running main sim")
-         E_production_line_sim.main(main_settings_dir, time)
+         E_production_line_sim.main(main_settings_dir, t_stop)
+
          end = ti.perf_counter()
-         print(f"\n\nloop time : {end - start}\n\n")
+         print(f"[MAIN] segment wall time: {end - start}")
+
+         
 
 
       print(f"\n\n--- RUN {run_idx} ---")

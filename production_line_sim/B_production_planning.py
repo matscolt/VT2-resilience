@@ -48,6 +48,37 @@ def load_json(path: Path) -> dict:
         return json.load(f)
 
 
+
+
+def parse_capacity_fraction(layout_json: dict, default: float = 1.0) -> float:
+    """Return a capacity scaling fraction from layout metadata.
+
+    Supports:
+      - layout_json['capacity_percentage'] as a string like '90.0%'
+      - layout_json['scaled_monthly_capacity'] / layout_json['monthly_capacity']
+
+    Returns a float in (0, 1].
+    """
+    cp = layout_json.get('capacity_percentage', None)
+    if isinstance(cp, str):
+        s = cp.strip().replace('%', '')
+        try:
+            val = float(s)
+            if val > 1.0:
+                return max(0.0, min(1.0, val / 100.0))
+            return max(0.0, min(1.0, val))
+        except ValueError:
+            pass
+
+    try:
+        mc = float(layout_json.get('monthly_capacity', 0) or 0)
+        smc = float(layout_json.get('scaled_monthly_capacity', 0) or 0)
+        if mc > 0 and smc > 0:
+            return max(0.0, min(1.0, smc / mc))
+    except (TypeError, ValueError):
+        pass
+
+    return max(0.0, min(1.0, float(default)))
 def build_bottleneck_instances(layout_json: dict, bottleneck_base: str) -> list[dict]:
     """Extract all station instances whose canonical name equals bottleneck_base."""
     instances = []
@@ -443,13 +474,17 @@ def create_production_plan(order_csv_path,on_going_run_path, layout_name, label,
     layout_json = read_settings_json(LAYOUT_DIR / layout_name)
     process_times_json = read_settings_json(DATA_DIR / "process_times.json")
 
-    bottleneck_base = layout_json.get("bottleneck_station", "Station 3: Robot cell")
+    bottleneck_base = (layout_json.get('bottleneck station') or layout_json.get('bottleneck_station') or 'Station 3: Robot cell')
+
+    # Apply layout-level capacity buffer (e.g., '90%') to weekly available time
+    capacity_fraction = parse_capacity_fraction(layout_json, default=1.0)
+    effective_seconds_per_week = float(SECONDS_PER_WEEK) * float(capacity_fraction)
 
     planned_orders, schedule_by_day, orders_by_week, orders_by_day = plan_orders_across_bottleneck_instances_days(
         orders=orders,
         process_times_json=process_times_json,
         layout_json=layout_json,
-        seconds_per_week=SECONDS_PER_WEEK,
+        seconds_per_week=effective_seconds_per_week,
         bottleneck_base=bottleneck_base,
         order_id_key="order_id",
         variant_key_normalizer=str.upper,
