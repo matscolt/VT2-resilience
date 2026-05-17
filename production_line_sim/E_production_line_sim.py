@@ -4319,13 +4319,11 @@ def main(main_settings_json: str | Path | None = None,timestamp: int = None) -> 
         )
         timed_disruption_records = _assign_missing_emergency_order_ids(
             timed_disruption_records=timed_disruption_records,
-                current_time_s=simulation_time_s,
             existing_order_ids=list(unit_order_ids),
         )
         timed_disruption_data = prepare_timed_disruption_data(
             station_sequence=list(effective_line_layout["station_sequence"]),
             timed_disruption_records=timed_disruption_records,
-                current_time_s=simulation_time_s,
             timed_disruption_config=disruption_config,
         )
 

@@ -246,16 +246,13 @@ def main():
          start = ti.perf_counter()
          print(f"[MAIN] Segment {i+1}/{len(event_times)-1}: t={t_start} -> {t_stop}")
 
-         print("MAIN.py: running GA")
+         print("----MAIN.py: running GA")
          GA_Scheduling.main(main_settings_dir, t_start)
 
-         print("MAIN.py: running main sim")
+         print(f"----MAIN.py: running main sim from {t_start} to {t_stop}")
          E_production_line_sim.main(main_settings_dir, t_stop)
          end = ti.perf_counter()
          print(f"[MAIN] segment wall time: {end - start}")
-
-
-         
 
 
       print(f"\n\n--- RUN {run_idx} ---")
