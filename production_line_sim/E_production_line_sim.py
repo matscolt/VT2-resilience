@@ -4157,11 +4157,16 @@ def main(main_settings_json: str | Path | None = None,timestamp: int = None) -> 
             pass
 
     # Bulletproof: ensure unit_ids is always defined before calling run_simulation
-    unit_ids = input_payload.get('unit_ids', []) if 'input_payload' in locals() else []
-    if unit_ids is None:
+    if 'unit_ids' not in locals():
         unit_ids = []
-    else:
-        unit_ids = list(unit_ids)
+    # Prefer IDs from the loaded schedule payload (current_schedule.csv)
+    if (not unit_ids) and 'generated_input' in locals():
+        try:
+            unit_ids = generated_input.get('unit_ids', []) or []
+        except Exception:
+            unit_ids = []
+    # Normalize to a plain list
+    unit_ids = [] if unit_ids is None else list(unit_ids)
 
     print(">> Running sim with disruptions")
     operations, transport_records, unit_summaries, station_summaries, _, simulation_details = run_simulation(
