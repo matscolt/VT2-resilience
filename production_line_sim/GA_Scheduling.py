@@ -813,15 +813,8 @@ def evaluate_schedule_with_simulator(
     with contextlib.redirect_stdout(io.StringIO()):
         simulation_result = simulator.simulate_for_ga(str(MAIN_SETTINGS_PATH), current_time_s)
 
-    summary_folder = find_summary_folder(
-        generation=generation,
-        chromosome_index=chromosome_index
-    )
-
-    simulation_result = read_simulation_result_from_unit_summary(
-        summary_folder
-    )
-
+    # No summary folder is produced when using simulate_for_ga (in-memory evaluation).
+    summary_folder = None
     return simulation_result, summary_folder
 
 

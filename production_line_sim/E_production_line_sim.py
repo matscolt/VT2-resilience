@@ -3910,6 +3910,228 @@ def save_run_metadata(
 # -----------------------------
 # Main
 # -----------------------------
+
+# -----------------------------
+# GA evaluation entry point
+# -----------------------------
+
+def load_disruption_history_rows(history_csv_path: Path | None) -> list[dict[str, Any]]:
+    """Load disruption_his.csv rows (best-effort).
+
+    The project has used slightly different column names over time, so this function
+    accepts multiple options:
+      - disruption_type / type
+      - estimated_duration / duration / duration_s
+      - station_id / station
+      - efficiency_loss / efficiency_drop
+      - start_time / start_time_s / start
+      - end_time / end_time_s / end
+
+    Returns a list of normalized dicts with keys:
+      disruption_type, station_id, estimated_duration_s, efficiency_loss, start_time_s, end_time_s
+    """
+    if history_csv_path is None:
+        return []
+    history_csv_path = Path(history_csv_path)
+    if not history_csv_path.exists() or not history_csv_path.is_file():
+        return []
+
+    def _norm_key(key: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", str(key).strip().lower())
+
+    def _to_float(value: Any, default: float | None = None) -> float | None:
+        text_value = str(value).strip() if value is not None else ""
+        if text_value == "" or text_value.casefold() == "nan":
+            return default
+        try:
+            numeric = float(text_value)
+        except (TypeError, ValueError):
+            return default
+        if math.isnan(numeric):
+            return default
+        return numeric
+
+    rows: list[dict[str, Any]] = []
+    with history_csv_path.open('r', encoding='utf-8-sig', newline='') as f:
+        reader = csv.DictReader(f)
+        # map normalized header -> original header
+        if reader.fieldnames is None:
+            return []
+        header_map = {_norm_key(h): h for h in reader.fieldnames}
+
+        def _get(d: dict[str, Any], *candidates: str) -> Any:
+            for c in candidates:
+                key = header_map.get(_norm_key(c))
+                if key is not None and key in d:
+                    return d.get(key)
+            return None
+
+        for raw in reader:
+            if not raw:
+                continue
+            disruption_type = str(_get(raw, 'disruption_type', 'type') or '').strip()
+            if disruption_type == '':
+                continue
+            station_id = _get(raw, 'station_id', 'station')
+            station_id = None if station_id is None or str(station_id).strip() == '' else str(station_id).strip()
+
+            estimated_duration_s = _to_float(_get(raw, 'estimated_duration', 'duration', 'duration_s'), 0.0) or 0.0
+            efficiency_loss = _to_float(_get(raw, 'efficiency_loss', 'efficiency_drop'), 0.0) or 0.0
+            start_time_s = _to_float(_get(raw, 'start_time', 'start_time_s', 'start'), 0.0) or 0.0
+            end_time_s = _to_float(_get(raw, 'end_time', 'end_time_s', 'end'), None)
+
+            rows.append({
+                'disruption_type': disruption_type,
+                'station_id': station_id,
+                'estimated_duration_s': float(estimated_duration_s),
+                'efficiency_loss': float(efficiency_loss),
+                'start_time_s': float(start_time_s),
+                'end_time_s': None if end_time_s is None else float(end_time_s),
+            })
+
+    return rows
+
+
+def build_timed_disruption_data_from_history(
+    history_rows: list[dict[str, Any]],
+    station_sequence: list[str],
+    current_time_s: float,
+) -> dict[str, Any]:
+    """Convert disruption history rows into timed disruption data.
+
+    IMPORTANT for GA evaluation:
+    - We include ONLY currently-active disruptions to avoid leaking future events.
+
+    A disruption is treated as active when:
+      start_time_s <= current_time_s < end_time_s
+
+    If end_time_s is missing and estimated_duration_s > 0, we compute:
+      end_time_s = start_time_s + estimated_duration_s
+    """
+    now = float(current_time_s)
+    timed_records: list[dict[str, Any]] = []
+
+    for idx, row in enumerate(history_rows or [], start=1):
+        start_time_s = float(row.get('start_time_s', 0.0) or 0.0)
+        if start_time_s > now:
+            continue
+
+        end_time_s = row.get('end_time_s')
+        end_time_s = None if end_time_s is None else float(end_time_s)
+
+        if end_time_s is None:
+            est = float(row.get('estimated_duration_s', 0.0) or 0.0)
+            end_time_s = (start_time_s + est) if est > 0 else start_time_s
+
+        # not active anymore?
+        if not (start_time_s <= now < float(end_time_s) if float(end_time_s) > start_time_s else start_time_s <= now <= float(end_time_s)):
+            continue
+
+        disruption_type = str(row.get('disruption_type', '')).strip()
+        station_id = row.get('station_id')
+        efficiency_loss = float(row.get('efficiency_loss', 0.0) or 0.0)
+        efficiency_percentage = None
+        if efficiency_loss > 0.0:
+            # efficiency_loss interpreted as percentage points lost
+            efficiency_percentage = max(0.0, 100.0 - efficiency_loss)
+
+        timed_records.append({
+            'disruption_type': disruption_type,
+            'station_id': station_id,
+            'start_time_s': float(start_time_s),
+            'end_time_s': float(end_time_s),
+            'efficiency_percentage': efficiency_percentage,
+            'row_index': int(idx),
+        })
+
+    return prepare_timed_disruption_data(
+        station_sequence=station_sequence,
+        timed_disruption_records=timed_records,
+        timed_disruption_config=None,
+    )
+
+
+def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0) -> dict[str, Any]:
+    """Lightweight simulator entry point used by GA_Scheduling.
+
+    GA_Scheduling expects this function to exist and return a dict with:
+      - order_completion_times: dict[str, float]
+      - makespan: float
+
+    This function runs the simulator on the *current_schedule.csv* referenced by main_settings.json,
+    and applies ONLY currently-active disruption entries from disruption_his.csv (if present).
+    """
+    base_dir = Path(__file__).resolve().parent
+    data_dir = base_dir / 'data'
+
+    process_time_data = load_json(data_dir / 'process_times.json')
+    transport_time_data = load_json(data_dir / 'transport_times.json')
+
+    # Optional (only used if your run_simulation consumes them in your setup)
+    bom_data = load_json(data_dir / 'bom.json') if (data_dir / 'bom.json').exists() else None
+    material_stock_data = load_json(data_dir / 'material_stock.json') if (data_dir / 'material_stock.json').exists() else None
+
+    valid_variants = set(process_time_data.get('process_times', {}).keys())
+
+    payload = load_input_from_main_settings(Path(main_settings_path), data_dir=data_dir, valid_variants=valid_variants)
+
+    # Line layout
+    line_layout_path = resolve_line_layout_path(
+        payload.get('selected_line_layout_name'),
+        payload.get('input_root'),
+        payload.get('batch_dir'),
+        data_dir,
+    )
+    line_layout_config = load_json(line_layout_path) if line_layout_path is not None else None
+
+    effective_layout = build_effective_line_layout(
+        process_time_data=process_time_data,
+        transport_time_data=transport_time_data,
+        line_layout_config=line_layout_config,
+    )
+
+    # Timed disruptions from history (active only)
+    pathlist = payload.get('pathlist', {}) or {}
+    history_path = _pathlist_path(pathlist, 'on_going_run_dis_his')
+    history_rows = load_disruption_history_rows(history_path)
+    timed_disruption_data = build_timed_disruption_data_from_history(
+        history_rows=history_rows,
+        station_sequence=effective_layout.get('station_sequence', []),
+        current_time_s=float(current_time_s),
+    )
+
+    operations, transport_records, unit_summaries, station_summaries, _, simulation_details = run_simulation(
+        ordered_units=payload.get('ordered_units', []),
+        process_time_data=process_time_data,
+        transport_time_data=transport_time_data,
+        unit_release_times=payload.get('unit_release_times'),
+        unit_priorities=payload.get('unit_priorities'),
+        unit_order_ids=payload.get('unit_order_ids'),
+        unit_ids=payload.get('unit_ids'),
+        max_units_in_system=int(payload.get('carriers', MAX_UNITS_IN_SYSTEM) or MAX_UNITS_IN_SYSTEM),
+        line_layout_config=line_layout_config,
+        bom_data=bom_data,
+        material_stock_data=material_stock_data,
+        disruptions_enabled=False,
+        disruption_config=None,
+        disruption_seed=None,
+        simulation_time_s=None,
+        timed_disruption_data=timed_disruption_data,
+    )
+
+    order_completion_times: dict[str, float] = {}
+    for summary in unit_summaries:
+        order_id = str(summary.order_id)
+        order_completion_times[order_id] = max(order_completion_times.get(order_id, 0.0), float(summary.completion_time_s))
+
+    makespan = max((float(summary.completion_time_s) for summary in unit_summaries), default=0.0)
+
+    return {
+        'order_completion_times': order_completion_times,
+        'makespan': makespan,
+        'simulation_details': simulation_details,
+    }
+
 def main(main_settings_json: str | Path | None = None,timestamp: int = None) -> None:
     parser = argparse.ArgumentParser(
         description="Simulate a 6-station phone production line with FIFO queues and transport times."
@@ -3986,6 +4208,7 @@ def main(main_settings_json: str | Path | None = None,timestamp: int = None) -> 
         unit_release_times = generated_input["unit_release_times"]
         unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
         unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
+        unit_ids = generated_input.get("unit_ids", [])
         write_outputs_for_assigned_route = bool(generated_input.get("has_assigned_route", False))
         simulation_time_s = generated_input["simulation_time_s"]
         carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))
@@ -4023,6 +4246,7 @@ def main(main_settings_json: str | Path | None = None,timestamp: int = None) -> 
         unit_release_times = generated_input["unit_release_times"]
         unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
         unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
+        unit_ids = generated_input.get("unit_ids", [])
         write_outputs_for_assigned_route = bool(generated_input.get("has_assigned_route", False))
         simulation_time_s = generated_input["simulation_time_s"]
         carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))

@@ -251,9 +251,9 @@ def main():
 
          print("MAIN.py: running main sim")
          E_production_line_sim.main(main_settings_dir, t_stop)
-
          end = ti.perf_counter()
          print(f"[MAIN] segment wall time: {end - start}")
+
 
          
 
