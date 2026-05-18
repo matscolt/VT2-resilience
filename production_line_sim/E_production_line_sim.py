@@ -4192,7 +4192,7 @@ def _prepare_disruption_inputs(ctx: dict[str, Any], effective_line_layout: dict[
         disruption_config = load_json(disruption_json_path)
     elif timed:
         timed_csv_path = _resolve_pathlist_disruption_csv(pathlist) or resolve_timed_disruption_csv_path(ctx.get("input_root"), ctx.get("batch_dir"))
-        disruption_json_path = _resolve_pathlist_disruption_json(pathlist) or resolve_timed_disruption_json_path(ctx.get("input_root"), ctx.get("batch_dir")) if 'resolve_timed_disruption_json_path' in globals() else _resolve_pathlist_disruption_json(pathlist)
+        disruption_json_path = _resolve_pathlist_disruption_json(pathlist)
         if timed_csv_path is None or not timed_csv_path.exists():
             raise FileNotFoundError("time based disruptions are enabled, but the timed disruption CSV was not found")
         if disruption_json_path is None or not disruption_json_path.exists():
