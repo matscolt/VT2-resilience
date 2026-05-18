@@ -456,11 +456,18 @@ def filter_orders_and_units_for_rolling_horizon(
 def is_schedule_feasible_within_horizon(simulation_result: dict, horizon_info: dict) -> bool:
     """True if simulated makespan finishes within horizon end."""
     if not simulation_result or not horizon_info:
+        print("something is wrong!")
+        if not simulation_result:
+            print("shit it aint here!?")
         return False
     makespan = simulation_result.get('makespan')
     horizon_end = horizon_info.get('horizon_end_s')
-    if makespan is None or horizon_end is None:
+    if  horizon_end is None:
+        print("horizon is None!!")
         return False
+    if makespan is None:
+        print("makespan is None!")
+        return True
     try:
         return float(makespan) <= float(horizon_end)
     except (TypeError, ValueError):
@@ -1172,15 +1179,112 @@ def run_ga(
     )
 
 
-# ============================================================
-# MAIN
-# ============================================================
+
+# ===============================
+# Schedule existence & coverage check
+# ===============================
+def _schedule_exists_and_has_content(schedule_path):
+    if schedule_path is None or not schedule_path.exists():
+        return False
+    try:
+        import pandas as pd
+        df = pd.read_csv(schedule_path)
+        return len(df) > 0
+    except Exception:
+        return False
+
+
+def _schedule_has_less_than_one_day(current_time_s, schedule_path, production_plan_path):
+    """Return True if the existing schedule covers less than 1 production day beyond current time.
+
+    The schedule CSV does NOT include planned_day, so we infer coverage by:
+      1) Reading distinct order_id values from current_schedule.csv
+      2) Looking up each order_id in production_plan.csv to get planned_week/planned_day
+      3) Computing the maximum absolute planned day covered by the schedule
+      4) Comparing with the current absolute planned day derived from current_time_s
+
+    If any required file/column is missing, this returns True (forcing a full-horizon schedule).
+    """
+    if schedule_path is None or production_plan_path is None:
+        return True
+
+    try:
+        schedule_df = pd.read_csv(schedule_path)
+    except Exception:
+        return True
+
+    if schedule_df is None or len(schedule_df) == 0 or 'order_id' not in schedule_df.columns:
+        return True
+
+    # Extract unique order IDs from schedule
+    order_ids = (
+        pd.to_numeric(schedule_df['order_id'], errors='coerce')
+        .dropna()
+        .astype(int)
+        .unique()
+        .tolist()
+    )
+    if not order_ids:
+        return True
+
+    try:
+        plan_df = pd.read_csv(production_plan_path)
+    except Exception:
+        return True
+
+    required_cols = {'order_id', 'planned_day'}
+    if plan_df is None or len(plan_df) == 0 or not required_cols.issubset(set(plan_df.columns)):
+        return True
+
+    # Normalize plan columns
+    plan_df = plan_df.copy()
+    plan_df['order_id'] = pd.to_numeric(plan_df['order_id'], errors='coerce')
+    plan_df['planned_day'] = pd.to_numeric(plan_df['planned_day'], errors='coerce')
+    plan_df = plan_df.dropna(subset=['order_id', 'planned_day'])
+
+    if len(plan_df) == 0:
+        return True
+
+    covered = plan_df[plan_df['order_id'].astype(int).isin([int(x) for x in order_ids])]
+    if len(covered) == 0:
+        return True
+
+    max_abs_day = int(covered['planned_day'].max())
+
+    # Current absolute day from current_time_s (each production day = 8h)
+    try:
+        current_abs_day = int(float(current_time_s) // SECONDS_PER_PRODUCTION_DAY) + 1
+    except Exception:
+        current_abs_day = 1
+
+    # If the schedule does not extend into at least the next day, treat as < 1 day left.
+    return (max_abs_day - current_abs_day) < 1
+
+
 
 def main(
     main_settings_path,
     current_time_s,
     lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
 ):
+
+    # ===============================
+    # NEW: schedule pre-check
+    # ===============================
+    schedule_path = None
+    if ON_GOING_RUN_DIR is not None:
+        schedule_path = ON_GOING_RUN_DIR / "current_schedule.csv"
+
+    need_full_horizon = False
+
+    if not _schedule_exists_and_has_content(schedule_path):
+        need_full_horizon = True
+    elif _schedule_has_less_than_one_day(current_time_s, schedule_path, PRODUCTION_PLAN_PATH):
+        need_full_horizon = True
+
+    if need_full_horizon:
+        print("!!!NEEDED A FULL HORIZON!!!")
+        lookahead_days = max(ALLOWED_LOOKAHEAD_DAYS)
 
     if lookahead_days not in ALLOWED_LOOKAHEAD_DAYS:
         raise ValueError(
@@ -1249,8 +1353,9 @@ def main(
     )
 
     # If requested horizon is 1 day and it's NOT feasible, rerun with 5 days.
-    if lookahead_days == 1 and (not feasible) and (5 in ALLOWED_LOOKAHEAD_DAYS):
-        best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(5)
+    if lookahead_days == 1 and (not feasible):
+        best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(max(ALLOWED_LOOKAHEAD_DAYS))
+        print(f"had to expand our horizon - running max: {max(ALLOWED_LOOKAHEAD_DAYS)}")
         # In this case we keep the 5-day schedule regardless of its feasibility.
         feasible = False  # only affects merge logic
 

@@ -173,7 +173,7 @@ def main():
       A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
       A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
       # takes wayyy too long to generate a gantt chart for each one
-      # A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
+      A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
       #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
       break
 
