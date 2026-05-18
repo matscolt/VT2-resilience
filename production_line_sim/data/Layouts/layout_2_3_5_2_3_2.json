@@ -1,0 +1,112 @@
+{
+  "bottleneck station": "Station 3: Robot cell",
+  "monthly_capacity": 9738.5,
+  "scaled_monthly_capacity": 8764.7,
+  "capacity_percentage": "90.0%",
+  "layout_name": "layout_2_3_5_2_3_2",
+  "carriers": 72,
+  "station_instances": [
+    {
+      "station_name": "Station 1: Bottom cover",
+      "time_scale_factor": 17.0,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 0.0
+    },
+    {
+      "station_name": "Station 1.1: Bottom cover",
+      "time_scale_factor": 17.0,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 20.0
+    },
+    {
+      "station_name": "Station 2: Drill station",
+      "time_scale_factor": 17.0,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 0.0
+    },
+    {
+      "station_name": "Station 2.1: Drill station",
+      "time_scale_factor": 17.0,
+      "branch_transport_from_previous_s": 20.0,
+      "branch_transport_to_next_s": 20.0
+    },
+    {
+      "station_name": "Station 2.2: Drill station",
+      "time_scale_factor": 17.0,
+      "branch_transport_from_previous_s": 40.0,
+      "branch_transport_to_next_s": 40.0
+    },
+    {
+      "station_name": "Station 3: Robot cell",
+      "time_scale_factor": 4.0,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 0.0
+    },
+    {
+      "station_name": "Station 3.1: Robot cell",
+      "time_scale_factor": 4.0,
+      "branch_transport_from_previous_s": 20.0,
+      "branch_transport_to_next_s": 20.0
+    },
+    {
+      "station_name": "Station 3.2: Robot cell",
+      "time_scale_factor": 4.0,
+      "branch_transport_from_previous_s": 40.0,
+      "branch_transport_to_next_s": 40.0
+    },
+    {
+      "station_name": "Station 3.3: Robot cell",
+      "time_scale_factor": 4.0,
+      "branch_transport_from_previous_s": 60.0,
+      "branch_transport_to_next_s": 60.0
+    },
+    {
+      "station_name": "Station 3.4: Robot cell",
+      "time_scale_factor": 4.0,
+      "branch_transport_from_previous_s": 80.0,
+      "branch_transport_to_next_s": 80.0
+    },
+    {
+      "station_name": "Station 4: Inspection",
+      "time_scale_factor": 56.0,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 20.0
+    },
+    {
+      "station_name": "Station 4.1: Inspection",
+      "time_scale_factor": 56.0,
+      "branch_transport_from_previous_s": 20.0,
+      "branch_transport_to_next_s": 0.0
+    },
+    {
+      "station_name": "Station 5: Top cover",
+      "time_scale_factor": 38.0,
+      "branch_transport_from_previous_s": 40.0,
+      "branch_transport_to_next_s": 40.0
+    },
+    {
+      "station_name": "Station 5.1: Top cover",
+      "time_scale_factor": 38.0,
+      "branch_transport_from_previous_s": 20.0,
+      "branch_transport_to_next_s": 20.0
+    },
+    {
+      "station_name": "Station 5.2: Top cover",
+      "time_scale_factor": 38.0,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 0.0
+    },
+    {
+      "station_name": "Station 6: Packaging",
+      "time_scale_factor": 29.0,
+      "branch_transport_from_previous_s": 20.0,
+      "branch_transport_to_next_s": 0.0
+    },
+    {
+      "station_name": "Station 6.1: Packaging",
+      "time_scale_factor": 29.0,
+      "branch_transport_from_previous_s": 0.0,
+      "branch_transport_to_next_s": 0.0
+    }
+  ]
+}
