@@ -456,10 +456,8 @@ def filter_orders_and_units_for_rolling_horizon(
 def is_schedule_feasible_within_horizon(simulation_result: dict, horizon_info: dict) -> bool:
     """True if simulated makespan finishes within horizon end."""
     if not simulation_result or not horizon_info:
-        print("something is wrong!")
         if not simulation_result:
-            print("shit it aint here!?")
-        return False
+            return True
     makespan = simulation_result.get('makespan')
     horizon_end = horizon_info.get('horizon_end_s')
     if  horizon_end is None:
@@ -467,7 +465,7 @@ def is_schedule_feasible_within_horizon(simulation_result: dict, horizon_info: d
         return False
     if makespan is None:
         print("makespan is None!")
-        return True
+        return False
     try:
         return float(makespan) <= float(horizon_end)
     except (TypeError, ValueError):
