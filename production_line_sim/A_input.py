@@ -66,7 +66,7 @@ def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(x, hi))
 
 
-def sample_duration(settings_dir,spec: Dict[str, Any], Range: bool = False) -> int:
+def sample_duration(main_settings_dir,spec: Dict[str, Any], Range: bool = False) -> int:
     """Sample a disruption duration in seconds as an int >= 1.
 
     Supports two spec formats:
@@ -86,7 +86,7 @@ def sample_duration(settings_dir,spec: Dict[str, Any], Range: bool = False) -> i
             std_frac = float(std_pct) / 100.0 if std_pct is not None else 0.0
         std = float(std_frac) * mean
         
-        settings = read_settings_json(settings_dir / "settings.json")
+        settings = read_settings_json(main_settings_dir)
         dur = mean if std <= 0 else max(random.normalvariate(mean, std), mean - settings["lowest acceptable standard deviation [std below]"] * std)
         
         rng = spec.get("range [s]")
@@ -343,7 +343,7 @@ def generate_orderlist(seed, plan_time, output_path: Path,num_orders, num_units)
 # Disruption generation
 # ============================================================
 
-def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders: int,num_units: int,layout_path = None) -> None:
+def generate_disruption_list(main_settings_dir,seed, plan_time: int, output_path: Path, num_orders: int,num_units: int,layout_path = None) -> None:
     """Generate disruptions.csv based on settings.json and disruption.json.
 
     Your requested semantics implemented:
@@ -356,7 +356,6 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
       - prints a per-station summary to terminal
     """
 
-    settings = read_settings_json(data_dir / "settings.json")
     disruption_file = (data_dir / "disruption_v2.json") if (data_dir / "disruption_v2.json").exists() else (data_dir / "disruption.json")
     disruption_settings = read_disruption_json(disruption_file)
 
@@ -405,7 +404,7 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
                 placed = 0
                 for _ in range(n_events):
                     # v2 durations are clamped automatically; v1 uses Range flag to clamp
-                    duration =  sample_duration(data_dir,spec, Range=True)
+                    duration =  sample_duration(main_settings_dir,spec, Range=True)
                     start = pick_random_start_non_overlapping(duration, occupied, plan_time)
                     if start is None:
                         break
@@ -452,7 +451,7 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
 
                     placed = 0
                     for _ in range(n_events):
-                        duration = sample_duration(data_dir, spec, Range=True)
+                        duration = sample_duration(main_settings_dir, spec, Range=True)
                         start = pick_random_start_non_overlapping(duration, occupied, plan_time)
                         if start is None:
                             break

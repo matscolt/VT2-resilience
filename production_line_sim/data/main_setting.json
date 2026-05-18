@@ -1,4 +1,6 @@
 {
+    "plan_time [s]": 576000,
+    "lowest acceptable standard deviation [std below]": 3,
     "Scenarios":{
         "small": "layout_2_2_5_2_2_2.json",
         "medium": "layout_2_3_5_2_3_2.json"

@@ -159,7 +159,6 @@ def main():
    print("reading settings")
    #read settings
    mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
-   base_settings = A_input.read_settings_json(data_dir / "settings.json")
    scenarios = list(mainsettings["Scenarios"].items())
    pressures = list(mainsettings["pressure_of_capacity"].items())
    ratios = list(mainsettings["order_units_ratio"].items())
@@ -173,7 +172,7 @@ def main():
    s_idx  = {k: i+1 for i, (k, _) in enumerate(seeds)}
 
 
-   plan_time = base_settings["plan_time [s]"]
+   plan_time = mainsettings["plan_time [s]"]
    #generate the order lists and the disruption lists
    A_input.create_disruption_json(disruption_dir / "disruption.json")
 
@@ -196,7 +195,7 @@ def main():
       disruptionpath = disruption_dir/f"disruptions_{label}.csv"
       print(f"units: {num_units} and orders: {num_orders}")
       A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
-      A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
+      A_input.generate_disruption_list(data_dir /"main_setting.json",seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
       # takes wayyy too long to generate a gantt chart for each one
       A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
       #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
@@ -211,7 +210,6 @@ def main():
         scenarios, pressures, ratios, algos, seeds
     ):
       run_idx += 1
-      settings = deepcopy(base_settings)
       #creating the run dirs
       for dir in dirs[0:3]:
          subfolder = dir / f"run_{run_idx}"

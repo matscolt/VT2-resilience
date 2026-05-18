@@ -4131,22 +4131,15 @@ def _load_run_context_from_main_settings(main_settings_path: Path, simulation_ti
         raise FileNotFoundError(f"current_schedule.csv was not found at {schedule_path}")
     schedule = _read_current_schedule(schedule_path, valid_variants)
 
-    default_settings_path = data_dir / "settings.json"
-    settings_data = load_json(default_settings_path) if default_settings_path.exists() else {}
-    settings_data.update(run_settings)
-    scenario_layout = run_settings.get("Scenarios")
-    if isinstance(scenario_layout, str) and scenario_layout.strip():
-        settings_data["line_layout_file"] = scenario_layout.strip()
+    layout_json = load_json(data_dir / "Layouts" / run_settings.get("Scenarios"))
+    carriers = layout_json.get("carriers")
 
-    sim_time = float(settings_data.get("sim_time [s]", settings_data.get("Sim_time [s]", 0.0)) or 0.0)
-    if simulation_time_limit_s is not None:
-        sim_time = float(simulation_time_limit_s)
-    carriers = int(float(settings_data.get("carriers", {}).get("number of carriers", MAX_UNITS_IN_SYSTEM))) if isinstance(settings_data.get("carriers", {}), dict) else MAX_UNITS_IN_SYSTEM
+    
     label = str(main_settings.get("label", main_settings_path.stem))
     return {
         "main_settings_path": main_settings_path,
         "main_settings": main_settings,
-        "settings_data": settings_data,
+        "settings_data": run_settings,
         "pathlist": pathlist,
         "data_dir": data_dir,
         "process_time_data": process_time_data,
@@ -4162,7 +4155,7 @@ def _load_run_context_from_main_settings(main_settings_path: Path, simulation_ti
         "unit_priorities": [1] * len(schedule["ordered_units"]),
         "simulation_time_s": sim_time,
         "carriers": carriers,
-        "selected_line_layout_name": _resolve_line_layout_filename_from_settings(settings_data),
+        "selected_line_layout_name": _resolve_line_layout_filename_from_settings(run_settings),
         "input_root": _pathlist_path(pathlist, "input"),
         "batch_dir": _pathlist_path(pathlist, "input_runs_run") or main_settings_path.parent,
         "output_results": _pathlist_path(pathlist, "output_run_results"),
@@ -4244,7 +4237,7 @@ def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0)
         disruptions_enabled=enabled,
         disruption_config=dis_cfg if chance_based else None,
         disruption_seed=seed if chance_based else None,
-        simulation_time_s=ctx["simulation_time_s"],
+        simulation_time_s=current_time_s,
         timed_disruption_data=timed_data,
     )
     return _simulation_result_from_summaries(units, details)
@@ -4361,6 +4354,8 @@ def _write_outputs_for_integrated_run(ctx: dict[str, Any], operations, transport
 def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: float | None = None) -> None:
     if main_settings_path is None:
         # Keep legacy CLI behavior available.
+        print("\nEy man dont run it from here bro\n")
+        exit()
         return _legacy_cli_main()
     starttime = time.perf_counter()
     ctx = _load_run_context_from_main_settings(Path(main_settings_path), simulation_time_limit_s)
@@ -4384,7 +4379,7 @@ def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: 
         disruptions_enabled=enabled,
         disruption_config=dis_cfg if chance_based else None,
         disruption_seed=seed if chance_based else None,
-        simulation_time_s=ctx["simulation_time_s"],
+        simulation_time_s=,
         timed_disruption_data=timed_data,
     )
     completed_good_variants = list(details.get("completed_good_variants", []))
