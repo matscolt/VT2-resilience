@@ -8,7 +8,7 @@
   "station_instances": [
     {
       "station_name": "Station 1: Bottom cover",
-      "time_scale_factor": 1.0,
+      "time_scale_factor": 10.0,
       "branch_transport_from_previous_s": 0.0,
       "branch_transport_to_next_s": 0.0
     },
@@ -20,7 +20,7 @@
     },
     {
       "station_name": "Station 2: Drill station",
-      "time_scale_factor": 1.0,
+      "time_scale_factor": 10.0,
       "branch_transport_from_previous_s": 0.0,
       "branch_transport_to_next_s": 0.0
     },
