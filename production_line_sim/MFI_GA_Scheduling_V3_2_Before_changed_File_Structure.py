@@ -1,149 +1,39 @@
 import random
 import copy
+import re
 import contextlib
 import io
 import math
 import shutil
-import json
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Set, Tuple, Dict
 import pandas as pd
 import E_production_line_sim as simulator
-# OPTION A: if makespan > horizon_end_s for 1-day horizon, rerun GA with 5 days (no further fallback)
-### PATCH: NO BEST-SUMMARY FOLDER / ON_GOING ONLY
-# This file is auto-patched to ensure the GA only overwrites current_schedule.csv in ON_GOING_RUN_DIR.
-# All best-schedule summary folder creation/moves/cleanup are disabled.
-
-
 
 # ============================================================
-# PATHS / MAIN SETTINGS
+# PATHS
 # ============================================================
 
 ROOT = Path(__file__).resolve().parent
 
-# These globals are configured at runtime from main_settings.json.
-MAIN_SETTINGS_PATH = None
-MAIN_SETTINGS = None
-ON_GOING_RUN_DIR = None
-OUTPUT_RUN_DIR = None
-PRODUCTION_PLAN_PATH = None
-DISRUPTION_HISTORY_PATH = None
-UNIT_SUMMARY_PATH = None
+MAIN_RUN = "main_16-05_10-13_0"
+RUN_ID = 1
+
+INPUT_DIR = (
+    ROOT
+    / "on_going"
+    / MAIN_RUN
+    / f"run_{RUN_ID}"
+)
+
+if not INPUT_DIR.exists():
+    raise FileNotFoundError(
+        f"Selected run folder not found: {INPUT_DIR}"
+    )
 
 CLEAN_TEMP_OUTPUTS = True
-# DISABLED: KEEP_ONLY_BEST_SUMMARY = True
-
-
-def load_main_settings(main_settings_path) -> dict:
-    """Load main_settings.json supplied by Main_script."""
-
-    path = Path(main_settings_path).expanduser().resolve()
-
-    if not path.exists():
-        raise FileNotFoundError(
-            f"main_settings.json not found: {path}"
-        )
-
-    with path.open("r", encoding="utf-8") as file:
-        settings = json.load(file)
-
-    return settings
-
-
-def configure_paths_from_main_settings(main_settings_path):
-    """Configure all GA paths from main_settings.json.
-
-    Expected main_settings fields:
-    - label
-    - pathlist.on_going_run
-    - pathlist.output_run (optional, but recommended)
-
-    The production plan is expected at:
-    on_going_run / f"production_plan_{label}.csv"
-
-    The simulator state files are expected in the same on_going_run folder:
-    - disruption_hist.csv
-    - unit_summary.csv
-    If they do not exist, the run is treated as t = 0 / no completed units.
-    """
-
-    global MAIN_SETTINGS_PATH, MAIN_SETTINGS, ON_GOING_RUN_DIR, OUTPUT_RUN_DIR
-    global PRODUCTION_PLAN_PATH, DISRUPTION_HISTORY_PATH, UNIT_SUMMARY_PATH
-
-    MAIN_SETTINGS_PATH = Path(main_settings_path).expanduser().resolve()
-    MAIN_SETTINGS = load_main_settings(MAIN_SETTINGS_PATH)
-
-    label = MAIN_SETTINGS.get("label")
-    pathlist = MAIN_SETTINGS.get("pathlist", {})
-
-    if not label:
-        raise KeyError("Missing 'label' in main_settings.json")
-
-    if "on_going_run" not in pathlist:
-        raise KeyError("Missing 'pathlist.on_going_run' in main_settings.json")
-
-    ON_GOING_RUN_DIR = Path(pathlist["on_going_run"])
-
-    # Event-driven state files
-    global DISRUPTION_HISTORY_PATH, UNIT_SUMMARY_PATH
-    DISRUPTION_HISTORY_PATH = Path(pathlist.get("on_going_run_dis_his", ON_GOING_RUN_DIR / "disruption_his.csv"))
-    UNIT_SUMMARY_PATH = Path(pathlist.get("on_going_run_unit_summary", ON_GOING_RUN_DIR / "unit_summary.csv")).expanduser().resolve()
-    OUTPUT_RUN_DIR = Path(pathlist.get("output_run", ON_GOING_RUN_DIR)).expanduser().resolve()
-
-    if not ON_GOING_RUN_DIR.exists():
-        raise FileNotFoundError(
-            f"on_going_run folder not found: {ON_GOING_RUN_DIR}"
-        )
-
-    PRODUCTION_PLAN_PATH = Path(pathlist.get("on_going_run_production_plan", ON_GOING_RUN_DIR / f"production_plan_{label}.csv")).expanduser().resolve()
-    DISRUPTION_HISTORY_PATH = Path(pathlist.get("on_going_run_dis_his", ON_GOING_RUN_DIR / "disruption_his.csv")).expanduser().resolve()
-    UNIT_SUMMARY_PATH = Path(pathlist.get("on_going_run_unit_summary", ON_GOING_RUN_DIR / "unit_summary.csv")).expanduser().resolve()
-
-    if not PRODUCTION_PLAN_PATH.exists():
-        raise FileNotFoundError(
-            f"Production plan not found: {PRODUCTION_PLAN_PATH}"
-        )
-
-    return MAIN_SETTINGS
-
-def get_completed_unit_ids_from_unit_summary(current_time_s: float) -> Set[str]:
-    """Return completed unit IDs from unit_summary.csv.
-
-    A unit is considered completed if completion_time_s <= current_time_s.
-    If unit_summary.csv does not exist, no units are completed.
-    """
-
-    if UNIT_SUMMARY_PATH is None or not UNIT_SUMMARY_PATH.exists():
-        return set()
-
-    unit_df = pd.read_csv(UNIT_SUMMARY_PATH)
-
-    if "completion_time_s" not in unit_df.columns:
-        raise KeyError(
-            f"Missing column 'completion_time_s' in {UNIT_SUMMARY_PATH}"
-        )
-
-    unit_id_columns = ["unit_id", "unitID", "unitId", "UnitID", "unit"]
-    unit_id_column = next((c for c in unit_id_columns if c in unit_df.columns), None)
-
-    completed_mask = (
-        pd.to_numeric(unit_df["completion_time_s"], errors="coerce")
-        <= current_time_s
-    )
-
-    if unit_id_column is None:
-        raise KeyError(
-            f"Missing unit ID column in {UNIT_SUMMARY_PATH}. "
-            "Expected one of: unit_id, unitID, unitId, UnitID, unit"
-        )
-
-    return set(
-        unit_df.loc[completed_mask, unit_id_column]
-        .dropna()
-        .astype(str)
-    )
+KEEP_ONLY_BEST_SUMMARY = True
 
 # ============================================================
 # GA SETTINGS / ROLLING HORIZON SETTINGS
@@ -153,13 +43,22 @@ def get_completed_unit_ids_from_unit_summary(current_time_s: float) -> Set[str]:
 SECONDS_PER_PRODUCTION_DAY = 8 * 60 * 60
 
 # Set these values here while testing.
-DEFAULT_LOOKAHEAD_DAYS = 1
+# Later, CURRENT_TIME_S and completed units should come from the main simulation.
+CURRENT_TIME_S = 0
+DEFAULT_LOOKAHEAD_DAYS = 3
+
+# Temporary test input:
+# Number of units already produced before the rolling-horizon scheduler starts.
+# The code will remove the first N units from the full production plan order.
+# Later, replace this with exact completed unit IDs from the main simulation.
+COMPLETED_UNITS_COUNT = 0
 
 # Rolling horizon options:
 # 1 day  -> schedule the rest of current day only
 # 3 days -> schedule rest of current day + 2 full days
 # 5 days -> schedule rest of current day + 4 full days
 ALLOWED_LOOKAHEAD_DAYS = {1, 3, 5}
+
 SWAPS = 3
 POPULATION_SIZE = 6
 GENERATIONS = 4
@@ -214,14 +113,16 @@ class Order:
 # LOAD FILES
 # ============================================================
 
-def load_production_plan(production_plan_path: Path) -> pd.DataFrame:
+def load_production_plan(input_dir: Path) -> pd.DataFrame:
 
-    path = Path(production_plan_path)
+    production_files = list(input_dir.glob("production_plan*"))
 
-    if not path.exists():
+    if not production_files:
         raise FileNotFoundError(
-            f"Production plan not found: {path}"
+            f"No production_plan file found in: {input_dir}"
         )
+
+    path = production_files[0]
 
     print(f"Loading production plan from: {path}")
 
@@ -262,12 +163,12 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
 
         total_units = 0
 
-        """print(
+        print(
             f"\nORDER {order_id} | "
             f"Due={due_date} | "
             f"Priority={priority} | "
             f"Planned day={int(row['planned_day'])}"
-        )"""
+        )
 
         for i in range(3):
 
@@ -306,7 +207,7 @@ def load_orders_and_units_from_file(df: pd.DataFrame):
 
         orders.append(order)
 
-        #print(f"  Total units for order {order_id}: {total_units}")
+        print(f"  Total units for order {order_id}: {total_units}")
 
     print("\n================================================")
     print(f"TOTAL ORDERS LOADED: {len(orders)}")
@@ -366,6 +267,39 @@ def normalize_completed_unit_ids(completed_unit_ids=None) -> Set[str]:
         return set()
 
     return {str(unit_id) for unit_id in completed_unit_ids}
+
+
+def get_completed_unit_ids_from_count(
+    units: List[Unit],
+    completed_units_count: int = 0
+) -> Set[str]:
+    """
+    Temporary helper for testing before main_sim is connected.
+
+    If completed_units_count = N, the scheduler treats the first N units in the
+    loaded production-plan order as already completed.
+
+    Later, main_sim should preferably provide exact completed unit IDs instead
+    of only a count, because exact IDs are more robust when the actual produced
+    sequence differs from the original production-plan order.
+    """
+
+    if completed_units_count is None:
+        completed_units_count = 0
+
+    completed_units_count = int(completed_units_count)
+
+    if completed_units_count < 0:
+        raise ValueError(
+            f"completed_units_count must be >= 0, got {completed_units_count}"
+        )
+
+    completed_units_count = min(completed_units_count, len(units))
+
+    return {
+        unit.unit_id
+        for unit in units[:completed_units_count]
+    }
 
 
 def filter_orders_and_units_for_rolling_horizon(
@@ -452,83 +386,6 @@ def filter_orders_and_units_for_rolling_horizon(
     }
 
     return horizon_orders, horizon_units, horizon_order_units, horizon_info
-
-def is_schedule_feasible_within_horizon(simulation_result: dict, horizon_info: dict) -> bool:
-    """True if simulated makespan finishes within horizon end."""
-    if not simulation_result or not horizon_info:
-        if not simulation_result:
-            return True
-    makespan = simulation_result.get('makespan')
-    horizon_end = horizon_info.get('horizon_end_s')
-    if  horizon_end is None:
-        print("horizon is None!!")
-        return False
-    if makespan is None:
-        print("makespan is None!")
-        return False
-    try:
-        return float(makespan) <= float(horizon_end)
-    except (TypeError, ValueError):
-        return False
-
-
-def merge_schedule_with_previous_tail(
-    new_schedule_df: pd.DataFrame,
-    previous_schedule_df: pd.DataFrame,
-    planned_day_by_order: dict,
-    cut_day: int,
-    completed_unit_ids: Set[str]
-) -> pd.DataFrame:
-    """Append the untouched future days from the previous schedule.
-
-    - Keeps only previous rows where planned_day(order_id) > cut_day.
-    - Drops any completed units.
-    - Drops duplicates already present in new_schedule_df.
-    - Renumbers unit_seq from 1..N.
-    """
-    if previous_schedule_df is None or previous_schedule_df.empty:
-        merged = new_schedule_df.copy()
-        merged['unit_seq'] = range(1, len(merged) + 1)
-        return merged
-
-    prev = previous_schedule_df.copy()
-
-    if 'order_id' not in prev.columns or 'unit_id' not in prev.columns:
-        merged = new_schedule_df.copy()
-        merged['unit_seq'] = range(1, len(merged) + 1)
-        return merged
-
-    # Map planned_day onto previous schedule rows
-    prev['planned_day'] = prev['order_id'].map(lambda oid: planned_day_by_order.get(int(oid)))
-
-    # Keep only future days beyond the cut
-    prev = prev[prev['planned_day'].notna()]
-    prev = prev[prev['planned_day'] > cut_day]
-
-    # Remove completed units
-    if completed_unit_ids:
-        prev = prev[~prev['unit_id'].isin(completed_unit_ids)]
-
-    # Remove units already in new schedule
-    new_unit_ids = set(new_schedule_df['unit_id'].tolist()) if 'unit_id' in new_schedule_df.columns else set()
-    if new_unit_ids:
-        prev = prev[~prev['unit_id'].isin(new_unit_ids)]
-
-    # Drop helper column
-    if 'planned_day' in prev.columns:
-        prev = prev.drop(columns=['planned_day'])
-
-    merged = pd.concat([new_schedule_df, prev], ignore_index=True)
-
-    # Renumber unit_seq
-    merged['unit_seq'] = range(1, len(merged) + 1)
-
-    # Keep original column order if possible
-    cols = ['unit_seq', 'order_id', 'unit_id', 'variant', 'route_id']
-    merged = merged[[c for c in cols if c in merged.columns]]
-
-    return merged
-
 
 
 # ============================================================
@@ -638,8 +495,7 @@ def chromosome_to_unit_dataframe(
     chromosome,
     order_units,
     units_lookup,
-    route_id=0,
-    route_id_by_unit_id=None,
+    route_id=0
 ):
 
     unit_sequence = order_chromosome_to_unit_sequence(
@@ -661,7 +517,7 @@ def chromosome_to_unit_dataframe(
             "order_id": unit.order_id,
             "unit_id": unit.unit_id,
             "variant": unit.variant,
-            "route_id": (route_id_by_unit_id or {}).get(str(unit.unit_id), route_id)
+            "route_id": route_id
         })
 
     return pd.DataFrame(rows)
@@ -670,88 +526,153 @@ def chromosome_to_unit_dataframe(
 # EXPORT SCHEDULE
 # ============================================================
 
-
 def export_schedule(
     chromosome,
     order_units,
     units_lookup,
     filename="current_schedule.csv",
-    verbose=False,
-    route_id_by_unit_id=None,
+    verbose=False
 ):
-    """Export ONLY the current schedule CSV into the on-going run folder.
-
-    The GA's sole filesystem side-effect should be overwriting:
-        ON_GOING_RUN_DIR / "current_schedule.csv"
-    """
     unit_df = chromosome_to_unit_dataframe(
         chromosome=chromosome,
         order_units=order_units,
         units_lookup=units_lookup,
-        route_id=0,
-        route_id_by_unit_id=route_id_by_unit_id,
+        route_id=0
     )
 
-    if ON_GOING_RUN_DIR is None:
-        raise RuntimeError(
-            "ON_GOING_RUN_DIR is not configured. Call configure_paths_from_main_settings() first."
-        )
+    output_path = INPUT_DIR / filename
 
-    output_path = Path(ON_GOING_RUN_DIR) / "current_schedule.csv"
-    unit_df.to_csv(output_path, index=False)
+    unit_df.to_csv(
+        output_path,
+        index=False
+    )
 
     if verbose:
-        print(f"Schedule saved to {output_path}")
+        print(f"Saved schedule: {output_path}")
 
     return output_path
 
 
+# ============================================================
+# OUTPUT CLEANUP
+# ============================================================
 
 def safe_delete_file(path: Path):
-    """NO-OP (disabled)."""
-    return
-
+    if path is not None and path.exists() and path.is_file():
+        try:
+            path.unlink()
+        except PermissionError as exc:
+            print(f"WARNING: Could not delete file because it is locked: {path}")
+            print(f"         {exc}")
 
 
 def safe_delete_folder(path: Path):
-    """NO-OP (disabled)."""
-    return
+    if path is not None and path.exists() and path.is_dir():
+        try:
+            shutil.rmtree(path)
+        except PermissionError as exc:
+            print(f"WARNING: Could not delete folder because it is locked: {path}")
+            print(f"         {exc}")
+
+
+def clear_old_summary_output_folder():
+    """Remove old simulator summary folders for this input batch."""
+
+    output_root = ROOT / "output" / INPUT_DIR.name
+
+    if not output_root.exists():
+        return
+
+    for folder in output_root.iterdir():
+        if folder.is_dir():
+            safe_delete_folder(folder)
+
+
+def cleanup_non_best_summary(summary_folder: Path, best_summary_folder: Path):
+    if not CLEAN_TEMP_OUTPUTS:
+        return
+
+    if summary_folder is None:
+        return
+
+    if KEEP_ONLY_BEST_SUMMARY and summary_folder != best_summary_folder:
+        safe_delete_folder(summary_folder)
+
+
+def cleanup_previous_best_summary(previous_best_folder: Path, new_best_folder: Path):
+    if not CLEAN_TEMP_OUTPUTS:
+        return
+
+    if not KEEP_ONLY_BEST_SUMMARY:
+        return
+
+    if previous_best_folder is not None and previous_best_folder != new_best_folder:
+        safe_delete_folder(previous_best_folder)
+
+
+# ============================================================
+# SUMMARY READING
+# ============================================================
 
 def find_summary_folder(
     generation,
     chromosome_index
 ):
-    """Find the newest simulator summary folder/file for the evaluated schedule.
 
-    Preferred location is on_going_run/unit_summary.csv because the simulator
-    is expected to work from the same main_settings.json paths. If the
-    simulator writes summaries into output_run instead, the newest folder
-    containing unit_summary.csv is used.
-    """
+    if (INPUT_DIR / "unit_summary.csv").exists():
+        return INPUT_DIR
+
+    raise FileNotFoundError(
+        f"unit_summary.csv not found in {INPUT_DIR}"
+    )
 
     candidates = []
 
-    if UNIT_SUMMARY_PATH is not None and UNIT_SUMMARY_PATH.exists():
-        candidates.append(ON_GOING_RUN_DIR)
+    if (INPUT_DIR / "unit_summary.csv").exists():
+        candidates.append(INPUT_DIR)
 
-    if OUTPUT_RUN_DIR is not None and OUTPUT_RUN_DIR.exists():
-        if (OUTPUT_RUN_DIR / "unit_summary.csv").exists():
-            candidates.append(OUTPUT_RUN_DIR)
+    output_root = ROOT / "output" / INPUT_DIR.name
 
+    if output_root.exists():
         candidates.extend(
             folder
-            for folder in OUTPUT_RUN_DIR.iterdir()
+            for folder in output_root.iterdir()
             if folder.is_dir() and (folder / "unit_summary.csv").exists()
         )
 
     if not candidates:
         raise FileNotFoundError(
-            f"No unit_summary.csv found in {ON_GOING_RUN_DIR} or {OUTPUT_RUN_DIR}"
+            f"No folder with unit_summary.csv found in {INPUT_DIR} or {output_root}"
         )
 
     return max(
         candidates,
         key=lambda folder: (folder / "unit_summary.csv").stat().st_mtime
+    )
+
+    output_root = ROOT / "output" / INPUT_DIR.name
+
+    base_name = "current_schedule_summary"
+
+    exact_folder = output_root / base_name
+
+    if exact_folder.exists():
+        return exact_folder
+
+    matching_folders = [
+        folder
+        for folder in output_root.glob(f"{base_name}*")
+        if folder.is_dir()
+    ]
+
+    if not matching_folders:
+        raise FileNotFoundError(
+            f"No summary folder found for {base_name} in {output_root}"
+        )
+
+    return max(
+        matching_folders,
+        key=lambda folder: folder.stat().st_mtime
     )
 
 
@@ -806,7 +727,7 @@ def evaluate_schedule_with_simulator(
     units_lookup,
     chromosome_index,
     generation
-, current_time_s: float = 0.0):
+):
 
     filename = "current_schedule.csv"
 
@@ -819,10 +740,17 @@ def evaluate_schedule_with_simulator(
     )
 
     with contextlib.redirect_stdout(io.StringIO()):
-        simulation_result = simulator.simulate_for_ga(str(MAIN_SETTINGS_PATH), current_time_s)
+        simulator.main()
 
-    # No summary folder is produced when using simulate_for_ga (in-memory evaluation).
-    summary_folder = None
+    summary_folder = find_summary_folder(
+        generation=generation,
+        chromosome_index=chromosome_index
+    )
+
+    simulation_result = read_simulation_result_from_unit_summary(
+        summary_folder
+    )
+
     return simulation_result, summary_folder
 
 
@@ -849,7 +777,7 @@ def calculate_fitness(
     """
 
     order_info = {
-        str(o.order_id): {
+        o.order_id: {
             "due_date": o.due_date
         }
         for o in orders
@@ -864,12 +792,12 @@ def calculate_fitness(
         simulation_result["order_completion_times"].items()
     ):
 
-        order_id_key = str(order_id)
+        order_id = int(order_id)
 
-        if order_id_key not in order_info:
+        if order_id not in order_info:
             continue
 
-        due = order_info[order_id_key]["due_date"]
+        due = order_info[order_id]["due_date"]
 
         lateness = completion - due
 
@@ -1009,12 +937,15 @@ def run_ga(
     orders,
     units,
     order_units
-, current_time_s: float = 0.0):
+):
 
     units_lookup = {
         u.unit_id: u
         for u in units
     }
+
+    if CLEAN_TEMP_OUTPUTS:
+        clear_old_summary_output_folder()
 
     population = create_order_population(
         orders
@@ -1027,7 +958,7 @@ def run_ga(
     best_order_solution = None
     best_unit_sequence = None
     best_simulation_result = None
-    # DISABLED: best_summary_folder = None
+    best_summary_folder = None
 
     best_fitness = float("inf")
 
@@ -1060,8 +991,7 @@ def run_ga(
                 order_units=order_units,
                 units_lookup=units_lookup,
                 chromosome_index=chromosome_index,
-                generation=generation_number,
-                current_time_s=current_time_s,
+                generation=generation_number
             )
 
             fitness_result = calculate_fitness(
@@ -1085,7 +1015,7 @@ def run_ga(
 
             if is_new_global_best:
 
-                # DISABLED: previous_best_summary_folder = best_summary_folder
+                previous_best_summary_folder = best_summary_folder
 
                 best_fitness = fitness
 
@@ -1101,7 +1031,19 @@ def run_ga(
                     simulation_result
                 )
 
-                # DISABLED: best_summary_folder = summary_folder
+                best_summary_folder = summary_folder
+
+                cleanup_previous_best_summary(
+                    previous_best_folder=previous_best_summary_folder,
+                    new_best_folder=best_summary_folder
+                )
+
+            else:
+
+                cleanup_non_best_summary(
+                    summary_folder=summary_folder,
+                    best_summary_folder=best_summary_folder
+                )
 
             best_marker = " <-- NEW BEST" if is_new_global_best else ""
 
@@ -1172,245 +1114,160 @@ def run_ga(
 
         population = new_population
 
+    if KEEP_ONLY_BEST_SUMMARY and best_summary_folder is not None:
+        final_summary_folder = ROOT / "output" / INPUT_DIR.name / "best_schedule_summary"
+
+        if final_summary_folder.exists() and final_summary_folder != best_summary_folder:
+            safe_delete_folder(final_summary_folder)
+
+        if best_summary_folder.exists() and best_summary_folder != final_summary_folder:
+            try:
+                best_summary_folder.rename(final_summary_folder)
+                best_summary_folder = final_summary_folder
+            except PermissionError as exc:
+                print(f"WARNING: Could not rename best summary folder: {best_summary_folder}")
+                print(f"         {exc}")
+
     return (
         best_order_solution,
         best_unit_sequence,
         best_simulation_result,
         best_fitness,
-        # DISABLED: best_summary_folder
+        best_summary_folder
     )
 
 
-
-# ===============================
-# Schedule existence & coverage check
-# ===============================
-def _schedule_exists_and_has_content(schedule_path):
-    if schedule_path is None or not schedule_path.exists():
-        return False
-    try:
-        import pandas as pd
-        df = pd.read_csv(schedule_path)
-        return len(df) > 0
-    except Exception:
-        return False
-
-
-def _schedule_has_less_than_one_day(current_time_s, schedule_path, production_plan_path):
-    """Return True if the existing schedule covers less than 1 production day beyond current time.
-
-    The schedule CSV does NOT include planned_day, so we infer coverage by:
-      1) Reading distinct order_id values from current_schedule.csv
-      2) Looking up each order_id in production_plan.csv to get planned_week/planned_day
-      3) Computing the maximum absolute planned day covered by the schedule
-      4) Comparing with the current absolute planned day derived from current_time_s
-
-    If any required file/column is missing, this returns True (forcing a full-horizon schedule).
-    """
-    if schedule_path is None or production_plan_path is None:
-        return True
-
-    try:
-        schedule_df = pd.read_csv(schedule_path)
-    except Exception:
-        return True
-
-    if schedule_df is None or len(schedule_df) == 0 or 'order_id' not in schedule_df.columns:
-        return True
-
-    # Extract unique order IDs from schedule
-    order_ids = (
-        pd.to_numeric(schedule_df['order_id'], errors='coerce')
-        .dropna()
-        .astype(int)
-        .unique()
-        .tolist()
-    )
-    if not order_ids:
-        return True
-
-    try:
-        plan_df = pd.read_csv(production_plan_path)
-    except Exception:
-        return True
-
-    required_cols = {'order_id', 'planned_day'}
-    if plan_df is None or len(plan_df) == 0 or not required_cols.issubset(set(plan_df.columns)):
-        return True
-
-    # Normalize plan columns
-    plan_df = plan_df.copy()
-    plan_df['order_id'] = pd.to_numeric(plan_df['order_id'], errors='coerce')
-    plan_df['planned_day'] = pd.to_numeric(plan_df['planned_day'], errors='coerce')
-    plan_df = plan_df.dropna(subset=['order_id', 'planned_day'])
-
-    if len(plan_df) == 0:
-        return True
-
-    covered = plan_df[plan_df['order_id'].astype(int).isin([int(x) for x in order_ids])]
-    if len(covered) == 0:
-        return True
-
-    max_abs_day = int(covered['planned_day'].max())
-
-    # Current absolute day from current_time_s (each production day = 8h)
-    try:
-        current_abs_day = int(float(current_time_s) // SECONDS_PER_PRODUCTION_DAY) + 1
-    except Exception:
-        current_abs_day = 1
-
-    # If the schedule does not extend into at least the next day, treat as < 1 day left.
-    return (max_abs_day - current_abs_day) < 1
-
-
+# ============================================================
+# MAIN
+# ============================================================
 
 def main(
-    main_settings_path,
-    current_time_s,
+    current_time_s: float = CURRENT_TIME_S,
     lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+    completed_units_count: int = COMPLETED_UNITS_COUNT,
+    completed_unit_ids=None
 ):
 
-    # ===============================
-    # NEW: schedule pre-check
-    # ===============================
-    schedule_path = None
-    if ON_GOING_RUN_DIR is not None:
-        schedule_path = ON_GOING_RUN_DIR / "current_schedule.csv"
+    print("\n================================================")
+    print("STARTING GA SCHEDULER")
+    print("================================================")
 
-    need_full_horizon = False
+    print("\nROOT:")
+    print(ROOT)
 
-    if not _schedule_exists_and_has_content(schedule_path):
-        need_full_horizon = True
-    elif _schedule_has_less_than_one_day(current_time_s, schedule_path, PRODUCTION_PLAN_PATH):
-        need_full_horizon = True
+    print("\nInput folder:")
+    print(INPUT_DIR)
 
-    if need_full_horizon:
-        print("!!!NEEDED A FULL HORIZON!!!")
-        lookahead_days = max(ALLOWED_LOOKAHEAD_DAYS)
+    print("\nRolling horizon setup:")
+    print(f"Current simulation time [s]: {current_time_s}")
+    print(f"Lookahead days: {lookahead_days}")
+    print(f"Completed units count: {completed_units_count}")
 
-    if lookahead_days not in ALLOWED_LOOKAHEAD_DAYS:
-        raise ValueError(
-            f"lookahead_days={lookahead_days} is not in ALLOWED_LOOKAHEAD_DAYS={ALLOWED_LOOKAHEAD_DAYS}"
-        )
+    print("\nLoading file...")
 
-    # Configure paths and load production plan once (also used for merge mapping).
-    configure_paths_from_main_settings(main_settings_path)
-
-    # Snapshot the previous schedule BEFORE GA evaluations overwrite current_schedule.csv.
-    previous_schedule_df = None
-    prev_schedule_path = Path(ON_GOING_RUN_DIR) / 'current_schedule.csv'
-    if prev_schedule_path.exists():
-        try:
-            previous_schedule_df = pd.read_csv(prev_schedule_path)
-        except Exception:
-            previous_schedule_df = None
-
-    completed_units = get_completed_unit_ids_from_unit_summary(
-        current_time_s=current_time_s
+    production_df = load_production_plan(
+        INPUT_DIR
     )
 
-    production_df = load_production_plan(PRODUCTION_PLAN_PATH)
+    print("\nFile loaded successfully.")
 
-    # Build order_id -> planned_day mapping for merge logic.
-    planned_day_by_order = (
+    all_orders, all_units, all_order_units = load_orders_and_units_from_file(
         production_df
-        .set_index('order_id')['planned_day']
-        .astype(int)
-        .to_dict()
     )
 
-    all_orders, all_units, all_order_units = load_orders_and_units_from_file(production_df)
+    completed_from_count = get_completed_unit_ids_from_count(
+        units=all_units,
+        completed_units_count=completed_units_count
+    )
 
-    def _run_once(lookahead_days_local: int):
-        orders, units, order_units, horizon_info = filter_orders_and_units_for_rolling_horizon(
-            orders=all_orders,
-            units=all_units,
-            order_units=all_order_units,
-            current_time_s=current_time_s,
-            lookahead_days=lookahead_days_local,
-            completed_unit_ids=completed_units
-        )
+    completed_from_ids = normalize_completed_unit_ids(
+        completed_unit_ids
+    )
 
-        if not orders:
-            return None, None, float('inf'), None, horizon_info, units, order_units
+    completed_units = completed_from_count.union(completed_from_ids)
 
-        best_order_solution, best_unit_sequence, best_simulation_result, best_fitness, *_ = run_ga(
-            orders=orders,
-            units=units,
-            order_units=order_units,
-            current_time_s=current_time_s,
-        )
+    print(f"Completed unit IDs used for filtering: {len(completed_units)}")
 
-        return best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, order_units
+    orders, units, order_units, horizon_info = filter_orders_and_units_for_rolling_horizon(
+        orders=all_orders,
+        units=all_units,
+        order_units=all_order_units,
+        current_time_s=current_time_s,
+        lookahead_days=lookahead_days,
+        completed_unit_ids=completed_units
+    )
 
-    # --- Try 1 day first (or the requested lookahead) ---
-    best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(lookahead_days)
-
-    feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
-    
+    print("\nRolling horizon result:")
     print(
-        f"[GA] Horizon feasibility check: "
-        f"makespan={best_simulation_result.get('makespan') if best_simulation_result else None}, "
-        f"horizon_end_s={horizon_info.get('horizon_end_s') if horizon_info else None}, "
-        f"feasible={feasible}"
+        f"Planned day window: {horizon_info['first_planned_day']} "
+        f"-> {horizon_info['last_planned_day']}"
+    )
+    print(f"Horizon start [s]: {horizon_info['horizon_start_s']}")
+    print(f"Horizon end [s]: {horizon_info['horizon_end_s']}")
+    print(f"Orders inside horizon: {len(orders)} / {len(all_orders)}")
+    print(f"Remaining units inside horizon: {len(units)} / {len(all_units)}")
+
+    if not orders:
+        print("\nNo remaining orders/units inside selected horizon. Nothing to schedule.")
+        return None
+
+    print("\nRunning GA...")
+
+    (
+        best_order_solution,
+        best_unit_sequence,
+        best_simulation_result,
+        best_fitness,
+        best_summary_folder
+    ) = run_ga(
+        orders=orders,
+        units=units,
+        order_units=order_units
     )
 
-    # If requested horizon is 1 day and it's NOT feasible, rerun with 5 days.
-    if lookahead_days == 1 and (not feasible):
-        best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(max(ALLOWED_LOOKAHEAD_DAYS))
-        print(f"had to expand our horizon - running max: {max(ALLOWED_LOOKAHEAD_DAYS)}")
-        # In this case we keep the 5-day schedule regardless of its feasibility.
-        feasible = False  # only affects merge logic
+    print("\n================================================")
+    print("GA FINISHED")
+    print("================================================")
 
-    # --- Export logic ---
-    if best_order_solution is None:
-        return
+    print(f"\nBest fitness: {best_fitness:.4f}")
 
-    # Build the new schedule dataframe
-    units_lookup = {u.unit_id: u for u in units}
-    best_route_map = {}
-    if isinstance(best_simulation_result, dict):
-        best_route_map = dict(best_simulation_result.get("route_id_by_unit_id", {}))
+    print("\nBest order solution:")
+    print(best_order_solution)
 
-    new_schedule_df = chromosome_to_unit_dataframe(
-        chromosome=best_order_solution,
-        order_units=order_units,
-        units_lookup=units_lookup,
-        route_id=0,
-        route_id_by_unit_id=best_route_map,
-    )
+    if best_simulation_result is not None:
 
-    # If it WAS feasible within 1 day, append the untouched tail (future days) from the previous schedule.
-    # cut_day is the last planned day included in the *new* horizon.
-    if lookahead_days == 1 and feasible and previous_schedule_df is not None:
-        cut_day = int(horizon_info.get('last_planned_day', get_current_planned_day(current_time_s)))
-        final_schedule_df = merge_schedule_with_previous_tail(
-            new_schedule_df=new_schedule_df,
-            previous_schedule_df=previous_schedule_df,
-            planned_day_by_order=planned_day_by_order,
-            cut_day=cut_day,
-            completed_unit_ids=completed_units
-        )
-    else:
-        final_schedule_df = new_schedule_df.copy()
-        final_schedule_df['unit_seq'] = range(1, len(final_schedule_df) + 1)
-
-    if "route_id" not in final_schedule_df.columns:
-        final_schedule_df["route_id"] = "0"
-    if best_route_map:
-        final_schedule_df["route_id"] = final_schedule_df.apply(
-            lambda row: best_route_map.get(str(row.get("unit_id")), row.get("route_id", "0")),
-            axis=1,
+        print(
+            f"\nBest makespan: "
+            f"{best_simulation_result.get('makespan', 'N/A')}"
         )
 
-    # Write final schedule (overwrite)
-    output_path = Path(ON_GOING_RUN_DIR) / 'current_schedule.csv'
-    final_schedule_df.to_csv(output_path, index=False)
+    if best_summary_folder is not None:
 
-    return
+        print("\nBest summary folder:")
+        print(best_summary_folder)
+
+    if best_order_solution is not None:
+        units_lookup = {
+            u.unit_id: u
+            for u in units
+        }
+
+        export_schedule(
+            chromosome=best_order_solution,
+            order_units=order_units,
+            units_lookup=units_lookup,
+            filename="current_schedule.csv",
+            verbose=True
+        )
+
+    print("\nFinished.")
 
 
-if __name__ == "__main__": #Kan slettes når koden kun skal køres af MAIN
+if __name__ == "__main__":
+
     main(
-        r"c:\Users\mikke\OneDrive - Aalborg Universitet\Skrivebord\VT2 Project\Github mappe\VT2-resilience\production_line_sim\input\main_16-05_10-50_0\runs\run_1\main_settings.json"
+        current_time_s=CURRENT_TIME_S,
+        lookahead_days=DEFAULT_LOOKAHEAD_DAYS,
+        completed_units_count=COMPLETED_UNITS_COUNT,
+        completed_unit_ids=[]
     )
