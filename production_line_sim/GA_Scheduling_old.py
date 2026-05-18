@@ -97,9 +97,9 @@ def configure_paths_from_main_settings(main_settings_path):
             f"on_going_run folder not found: {ON_GOING_RUN_DIR}"
         )
 
-    PRODUCTION_PLAN_PATH = Path(pathlist.get("on_going_run_production_plan", ON_GOING_RUN_DIR / f"production_plan_{label}.csv")).expanduser().resolve()
-    DISRUPTION_HISTORY_PATH = Path(pathlist.get("on_going_run_dis_his", ON_GOING_RUN_DIR / "disruption_his.csv")).expanduser().resolve()
-    UNIT_SUMMARY_PATH = Path(pathlist.get("on_going_run_unit_summary", ON_GOING_RUN_DIR / "unit_summary.csv")).expanduser().resolve()
+    PRODUCTION_PLAN_PATH = ON_GOING_RUN_DIR / f"production_plan_{label}.csv"
+    DISRUPTION_HISTORY_PATH = ON_GOING_RUN_DIR / "disruption_hist.csv"
+    UNIT_SUMMARY_PATH = ON_GOING_RUN_DIR / "unit_summary.csv"
 
     if not PRODUCTION_PLAN_PATH.exists():
         raise FileNotFoundError(
@@ -159,7 +159,7 @@ DEFAULT_LOOKAHEAD_DAYS = 1
 # 1 day  -> schedule the rest of current day only
 # 3 days -> schedule rest of current day + 2 full days
 # 5 days -> schedule rest of current day + 4 full days
-ALLOWED_LOOKAHEAD_DAYS = {1, 3, 5}
+ALLOWED_LOOKAHEAD_DAYS = {1, 3}
 SWAPS = 3
 POPULATION_SIZE = 6
 GENERATIONS = 4
@@ -633,8 +633,7 @@ def chromosome_to_unit_dataframe(
     chromosome,
     order_units,
     units_lookup,
-    route_id=0,
-    route_id_by_unit_id=None,
+    route_id=0
 ):
 
     unit_sequence = order_chromosome_to_unit_sequence(
@@ -656,7 +655,7 @@ def chromosome_to_unit_dataframe(
             "order_id": unit.order_id,
             "unit_id": unit.unit_id,
             "variant": unit.variant,
-            "route_id": (route_id_by_unit_id or {}).get(str(unit.unit_id), route_id)
+            "route_id": route_id
         })
 
     return pd.DataFrame(rows)
@@ -671,8 +670,7 @@ def export_schedule(
     order_units,
     units_lookup,
     filename="current_schedule.csv",
-    verbose=False,
-    route_id_by_unit_id=None,
+    verbose=False
 ):
     """Export ONLY the current schedule CSV into the on-going run folder.
 
@@ -683,8 +681,7 @@ def export_schedule(
         chromosome=chromosome,
         order_units=order_units,
         units_lookup=units_lookup,
-        route_id=0,
-        route_id_by_unit_id=route_id_by_unit_id,
+        route_id=0
     )
 
     if ON_GOING_RUN_DIR is None:
@@ -844,7 +841,7 @@ def calculate_fitness(
     """
 
     order_info = {
-        str(o.order_id): {
+        o.order_id: {
             "due_date": o.due_date
         }
         for o in orders
@@ -859,12 +856,12 @@ def calculate_fitness(
         simulation_result["order_completion_times"].items()
     ):
 
-        order_id_key = str(order_id)
+        order_id = int(order_id)
 
-        if order_id_key not in order_info:
+        if order_id not in order_info:
             continue
 
-        due = order_info[order_id_key]["due_date"]
+        due = order_info[order_id]["due_date"]
 
         lateness = completion - due
 
@@ -1055,8 +1052,7 @@ def run_ga(
                 order_units=order_units,
                 units_lookup=units_lookup,
                 chromosome_index=chromosome_index,
-                generation=generation_number,
-                current_time_s=current_time_s,
+                generation=generation_number
             )
 
             fitness_result = calculate_fitness(
@@ -1235,8 +1231,7 @@ def main(
         best_order_solution, best_unit_sequence, best_simulation_result, best_fitness, *_ = run_ga(
             orders=orders,
             units=units,
-            order_units=order_units,
-            current_time_s=current_time_s,
+            order_units=order_units
         )
 
         return best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, order_units
@@ -1265,16 +1260,11 @@ def main(
 
     # Build the new schedule dataframe
     units_lookup = {u.unit_id: u for u in units}
-    best_route_map = {}
-    if isinstance(best_simulation_result, dict):
-        best_route_map = dict(best_simulation_result.get("route_id_by_unit_id", {}))
-
     new_schedule_df = chromosome_to_unit_dataframe(
         chromosome=best_order_solution,
         order_units=order_units,
         units_lookup=units_lookup,
-        route_id=0,
-        route_id_by_unit_id=best_route_map,
+        route_id=0
     )
 
     # If it WAS feasible within 1 day, append the untouched tail (future days) from the previous schedule.
@@ -1291,14 +1281,6 @@ def main(
     else:
         final_schedule_df = new_schedule_df.copy()
         final_schedule_df['unit_seq'] = range(1, len(final_schedule_df) + 1)
-
-    if "route_id" not in final_schedule_df.columns:
-        final_schedule_df["route_id"] = "0"
-    if best_route_map:
-        final_schedule_df["route_id"] = final_schedule_df.apply(
-            lambda row: best_route_map.get(str(row.get("unit_id")), row.get("route_id", "0")),
-            axis=1,
-        )
 
     # Write final schedule (overwrite)
     output_path = Path(ON_GOING_RUN_DIR) / 'current_schedule.csv'
