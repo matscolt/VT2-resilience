@@ -97,9 +97,9 @@ def configure_paths_from_main_settings(main_settings_path):
             f"on_going_run folder not found: {ON_GOING_RUN_DIR}"
         )
 
-    PRODUCTION_PLAN_PATH = Path(pathlist.get("on_going_run_production_plan", ON_GOING_RUN_DIR / f"production_plan_{label}.csv")).expanduser().resolve()
-    DISRUPTION_HISTORY_PATH = Path(pathlist.get("on_going_run_dis_his", ON_GOING_RUN_DIR / "disruption_his.csv")).expanduser().resolve()
-    UNIT_SUMMARY_PATH = Path(pathlist.get("on_going_run_unit_summary", ON_GOING_RUN_DIR / "unit_summary.csv")).expanduser().resolve()
+    PRODUCTION_PLAN_PATH = ON_GOING_RUN_DIR / f"production_plan_{label}.csv"
+    DISRUPTION_HISTORY_PATH = ON_GOING_RUN_DIR / "disruption_hist.csv"
+    UNIT_SUMMARY_PATH = ON_GOING_RUN_DIR / "unit_summary.csv"
 
     if not PRODUCTION_PLAN_PATH.exists():
         raise FileNotFoundError(
@@ -159,7 +159,7 @@ DEFAULT_LOOKAHEAD_DAYS = 1
 # 1 day  -> schedule the rest of current day only
 # 3 days -> schedule rest of current day + 2 full days
 # 5 days -> schedule rest of current day + 4 full days
-ALLOWED_LOOKAHEAD_DAYS = {1, 3, 5}
+ALLOWED_LOOKAHEAD_DAYS = {1, 3}
 SWAPS = 3
 POPULATION_SIZE = 6
 GENERATIONS = 4
@@ -456,15 +456,10 @@ def filter_orders_and_units_for_rolling_horizon(
 def is_schedule_feasible_within_horizon(simulation_result: dict, horizon_info: dict) -> bool:
     """True if simulated makespan finishes within horizon end."""
     if not simulation_result or not horizon_info:
-        if not simulation_result:
-            return True
+        return False
     makespan = simulation_result.get('makespan')
     horizon_end = horizon_info.get('horizon_end_s')
-    if  horizon_end is None:
-        print("horizon is None!!")
-        return False
-    if makespan is None:
-        print("makespan is None!")
+    if makespan is None or horizon_end is None:
         return False
     try:
         return float(makespan) <= float(horizon_end)
@@ -638,8 +633,7 @@ def chromosome_to_unit_dataframe(
     chromosome,
     order_units,
     units_lookup,
-    route_id=0,
-    route_id_by_unit_id=None,
+    route_id=0
 ):
 
     unit_sequence = order_chromosome_to_unit_sequence(
@@ -661,7 +655,7 @@ def chromosome_to_unit_dataframe(
             "order_id": unit.order_id,
             "unit_id": unit.unit_id,
             "variant": unit.variant,
-            "route_id": (route_id_by_unit_id or {}).get(str(unit.unit_id), route_id)
+            "route_id": route_id
         })
 
     return pd.DataFrame(rows)
@@ -676,8 +670,7 @@ def export_schedule(
     order_units,
     units_lookup,
     filename="current_schedule.csv",
-    verbose=False,
-    route_id_by_unit_id=None,
+    verbose=False
 ):
     """Export ONLY the current schedule CSV into the on-going run folder.
 
@@ -688,8 +681,7 @@ def export_schedule(
         chromosome=chromosome,
         order_units=order_units,
         units_lookup=units_lookup,
-        route_id=0,
-        route_id_by_unit_id=route_id_by_unit_id,
+        route_id=0
     )
 
     if ON_GOING_RUN_DIR is None:
@@ -849,7 +841,7 @@ def calculate_fitness(
     """
 
     order_info = {
-        str(o.order_id): {
+        o.order_id: {
             "due_date": o.due_date
         }
         for o in orders
@@ -864,12 +856,12 @@ def calculate_fitness(
         simulation_result["order_completion_times"].items()
     ):
 
-        order_id_key = str(order_id)
+        order_id = int(order_id)
 
-        if order_id_key not in order_info:
+        if order_id not in order_info:
             continue
 
-        due = order_info[order_id_key]["due_date"]
+        due = order_info[order_id]["due_date"]
 
         lateness = completion - due
 
@@ -1060,8 +1052,7 @@ def run_ga(
                 order_units=order_units,
                 units_lookup=units_lookup,
                 chromosome_index=chromosome_index,
-                generation=generation_number,
-                current_time_s=current_time_s,
+                generation=generation_number
             )
 
             fitness_result = calculate_fitness(
@@ -1181,112 +1172,15 @@ def run_ga(
     )
 
 
-
-# ===============================
-# Schedule existence & coverage check
-# ===============================
-def _schedule_exists_and_has_content(schedule_path):
-    if schedule_path is None or not schedule_path.exists():
-        return False
-    try:
-        import pandas as pd
-        df = pd.read_csv(schedule_path)
-        return len(df) > 0
-    except Exception:
-        return False
-
-
-def _schedule_has_less_than_one_day(current_time_s, schedule_path, production_plan_path):
-    """Return True if the existing schedule covers less than 1 production day beyond current time.
-
-    The schedule CSV does NOT include planned_day, so we infer coverage by:
-      1) Reading distinct order_id values from current_schedule.csv
-      2) Looking up each order_id in production_plan.csv to get planned_week/planned_day
-      3) Computing the maximum absolute planned day covered by the schedule
-      4) Comparing with the current absolute planned day derived from current_time_s
-
-    If any required file/column is missing, this returns True (forcing a full-horizon schedule).
-    """
-    if schedule_path is None or production_plan_path is None:
-        return True
-
-    try:
-        schedule_df = pd.read_csv(schedule_path)
-    except Exception:
-        return True
-
-    if schedule_df is None or len(schedule_df) == 0 or 'order_id' not in schedule_df.columns:
-        return True
-
-    # Extract unique order IDs from schedule
-    order_ids = (
-        pd.to_numeric(schedule_df['order_id'], errors='coerce')
-        .dropna()
-        .astype(int)
-        .unique()
-        .tolist()
-    )
-    if not order_ids:
-        return True
-
-    try:
-        plan_df = pd.read_csv(production_plan_path)
-    except Exception:
-        return True
-
-    required_cols = {'order_id', 'planned_day'}
-    if plan_df is None or len(plan_df) == 0 or not required_cols.issubset(set(plan_df.columns)):
-        return True
-
-    # Normalize plan columns
-    plan_df = plan_df.copy()
-    plan_df['order_id'] = pd.to_numeric(plan_df['order_id'], errors='coerce')
-    plan_df['planned_day'] = pd.to_numeric(plan_df['planned_day'], errors='coerce')
-    plan_df = plan_df.dropna(subset=['order_id', 'planned_day'])
-
-    if len(plan_df) == 0:
-        return True
-
-    covered = plan_df[plan_df['order_id'].astype(int).isin([int(x) for x in order_ids])]
-    if len(covered) == 0:
-        return True
-
-    max_abs_day = int(covered['planned_day'].max())
-
-    # Current absolute day from current_time_s (each production day = 8h)
-    try:
-        current_abs_day = int(float(current_time_s) // SECONDS_PER_PRODUCTION_DAY) + 1
-    except Exception:
-        current_abs_day = 1
-
-    # If the schedule does not extend into at least the next day, treat as < 1 day left.
-    return (max_abs_day - current_abs_day) < 1
-
-
+# ============================================================
+# MAIN
+# ============================================================
 
 def main(
     main_settings_path,
     current_time_s,
     lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
 ):
-
-    # ===============================
-    # NEW: schedule pre-check
-    # ===============================
-    schedule_path = None
-    if ON_GOING_RUN_DIR is not None:
-        schedule_path = ON_GOING_RUN_DIR / "current_schedule.csv"
-
-    need_full_horizon = False
-
-    if not _schedule_exists_and_has_content(schedule_path):
-        need_full_horizon = True
-    elif _schedule_has_less_than_one_day(current_time_s, schedule_path, PRODUCTION_PLAN_PATH):
-        need_full_horizon = True
-
-    if need_full_horizon:
-        print("!!!NEEDED A FULL HORIZON!!!")
-        lookahead_days = max(ALLOWED_LOOKAHEAD_DAYS)
 
     if lookahead_days not in ALLOWED_LOOKAHEAD_DAYS:
         raise ValueError(
@@ -1337,8 +1231,7 @@ def main(
         best_order_solution, best_unit_sequence, best_simulation_result, best_fitness, *_ = run_ga(
             orders=orders,
             units=units,
-            order_units=order_units,
-            current_time_s=current_time_s,
+            order_units=order_units
         )
 
         return best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, order_units
@@ -1356,9 +1249,8 @@ def main(
     )
 
     # If requested horizon is 1 day and it's NOT feasible, rerun with 5 days.
-    if lookahead_days == 1 and (not feasible):
-        best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(max(ALLOWED_LOOKAHEAD_DAYS))
-        print(f"had to expand our horizon - running max: {max(ALLOWED_LOOKAHEAD_DAYS)}")
+    if lookahead_days == 1 and (not feasible) and (5 in ALLOWED_LOOKAHEAD_DAYS):
+        best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(5)
         # In this case we keep the 5-day schedule regardless of its feasibility.
         feasible = False  # only affects merge logic
 
@@ -1368,16 +1260,11 @@ def main(
 
     # Build the new schedule dataframe
     units_lookup = {u.unit_id: u for u in units}
-    best_route_map = {}
-    if isinstance(best_simulation_result, dict):
-        best_route_map = dict(best_simulation_result.get("route_id_by_unit_id", {}))
-
     new_schedule_df = chromosome_to_unit_dataframe(
         chromosome=best_order_solution,
         order_units=order_units,
         units_lookup=units_lookup,
-        route_id=0,
-        route_id_by_unit_id=best_route_map,
+        route_id=0
     )
 
     # If it WAS feasible within 1 day, append the untouched tail (future days) from the previous schedule.
@@ -1394,14 +1281,6 @@ def main(
     else:
         final_schedule_df = new_schedule_df.copy()
         final_schedule_df['unit_seq'] = range(1, len(final_schedule_df) + 1)
-
-    if "route_id" not in final_schedule_df.columns:
-        final_schedule_df["route_id"] = "0"
-    if best_route_map:
-        final_schedule_df["route_id"] = final_schedule_df.apply(
-            lambda row: best_route_map.get(str(row.get("unit_id")), row.get("route_id", "0")),
-            axis=1,
-        )
 
     # Write final schedule (overwrite)
     output_path = Path(ON_GOING_RUN_DIR) / 'current_schedule.csv'

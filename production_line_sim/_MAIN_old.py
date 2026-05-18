@@ -14,7 +14,7 @@ Wants and wishes
 - display a capacity and actual units in queue 
 
 """
-import A_input, B_production_planning, GA_Scheduling, E_production_line_sim, F_graphgen, G_after_movie
+import A_input, B_production_planning, C_IPPS, D_algo,GA_Scheduling , E_production_line_sim, F_graphgen, G_after_movie
 from pathlib import Path
 from itertools import product
 from copy import deepcopy
@@ -68,23 +68,17 @@ def create_setting_json(
     return settings
 
 def find_all_event_times(main_settings_json: Path):
-    """Build sorted event times from disruptions CSV, plus t=0 and the planning/simulation horizon.
-
-    This drives the event-based loop: GA is called at every start/end time already reached,
-    then the simulation is advanced only until the next event time. Future events are not
-    written into the on-going history before their timestamp is reached.
-    """
+    """Build sorted list of disruption event times from disruptions CSV in main_settings.json."""
     main_settings_json = Path(main_settings_json)
     main_settings = A_input.read_settings_json(main_settings_json)
     pathlist = main_settings.get("pathlist", {})
-    run_settings = main_settings.get("settings", {})
 
     disruptions_csv = Path(pathlist["input_disruptions_csv"]) if pathlist.get("input_disruptions_csv") else None
     if disruptions_csv is None or not disruptions_csv.exists():
         raise FileNotFoundError(f"Disruptions CSV not found: {disruptions_csv}")
 
     event_times = [0]
-    with disruptions_csv.open("r", encoding="utf-8-sig", newline="") as f:
+    with disruptions_csv.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             for col in ("start_time", "end_time"):
@@ -99,26 +93,7 @@ def find_all_event_times(main_settings_json: Path):
                 except ValueError:
                     continue
 
-    # Add final horizon so the final segment runs after the last disruption event.
-    try:
-        base_settings = A_input.read_settings_json(data_dir / "settings.json")
-    except Exception:
-        base_settings = {}
-    horizon = (
-        run_settings.get("sim_time [s]")
-        or run_settings.get("Sim_time [s]")
-        or base_settings.get("sim_time [s]")
-        or base_settings.get("Sim_time [s]")
-        or base_settings.get("plan_time [s]")
-        or SECONDS_PER_WEEK
-    )
-    try:
-        horizon = int(float(horizon))
-        event_times.append(horizon)
-    except Exception:
-        pass
-
-    return sorted(set(int(t) for t in event_times if int(t) >= 0))
+    return sorted(set(event_times))
 
 def main():
    #create folders/check they are there
@@ -198,7 +173,7 @@ def main():
       A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
       A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
       # takes wayyy too long to generate a gantt chart for each one
-      A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
+      # A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
       #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
       break
 
@@ -222,6 +197,7 @@ def main():
       label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
       order_csv_path = orders_dir / f"unsorted_orders_{label}.csv"
       on_going_run_path = dirs[1] / f"run_{run_idx}"
+      label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
 
       # Path list for the folders is generated here
       input_runs_run = dirs[0] / f"run_{run_idx}"
@@ -261,30 +237,23 @@ def main():
       #finds the event_times based on the disruption file for the run
       event_times = find_all_event_times(main_settings_dir)
 
-      # Run simulation in event-driven segments: [t_i, t_{i+1}).
-      # GA is called at t=0 to create the first routed schedule. If the selected
-      # algorithm name contains GA, it is also called again at every disruption
-      # start/end timestamp so it can react only to already-known events.
-      rolling_ga_enabled = "ga" in str(a_name).casefold()
-      for i in range(max(0, len(event_times) - 1)):
-         t_start = event_times[i]
+      # Run simulation in segments: [t_i, t_{i+1})
+      for i, t_start in enumerate(event_times):
+         if i == len(event_times) - 1:
+            break
          t_stop = event_times[i + 1]
-         if t_stop <= t_start:
-            continue
 
          start = ti.perf_counter()
          print(f"[MAIN] Segment {i+1}/{len(event_times)-1}: t={t_start} -> {t_stop}")
 
-         if i == 0 or rolling_ga_enabled:
-            print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
-            GA_Scheduling.main(main_settings_dir, t_start)
-         else:
-            print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
+         print(f"----MAIN.py: running GA in run {run_idx}")
+         GA_Scheduling.main(main_settings_dir, t_start)
 
-         print(f"----MAIN.py: running main sim until {t_stop}")
+         print(f"----MAIN.py: running main sim from {t_start} to {t_stop}")
          E_production_line_sim.main(main_settings_dir, t_stop)
          end = ti.perf_counter()
          print(f"[MAIN] segment wall time: {end - start}")
+
 
       print(f"\n\n--- RUN {run_idx} ---")
       print(f"Number of units: {num_units}")
