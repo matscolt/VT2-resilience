@@ -1,8 +1,7 @@
 {
     "Scenarios":{
-        "small": "layout_1_1_5_1_1_1.json",
-        "medium": "layout_2_2_10_2_2_2.json",
-        "big": "layout_3_3_20_3_3_3.json"
+        "small": "layout_2_2_5_2_2_2.json",
+        "medium": "layout_2_3_5_2_3_2.json"
     },
     "pressure_of_capacity":{
         "light": 0.9,
