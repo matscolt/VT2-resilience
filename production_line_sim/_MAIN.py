@@ -56,6 +56,9 @@ def create_setting_json(
             "algorithms": a_name,
             "weightage": None,
             "seed": seed,
+            "random based disruptions": {
+               "enabled": 2
+            },
         },
         "label": label,
         "pathlist": {k: str(v) for k, v in pathlist.items()},
@@ -158,7 +161,7 @@ def main():
    
    print("reading settings")
    #read settings
-   mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
+   mainsettings = A_input.read_settings_json(data_dir / "base_setting.json")
    scenarios = list(mainsettings["Scenarios"].items())
    pressures = list(mainsettings["pressure_of_capacity"].items())
    ratios = list(mainsettings["order_units_ratio"].items())
@@ -195,9 +198,9 @@ def main():
       disruptionpath = disruption_dir/f"disruptions_{label}.csv"
       print(f"units: {num_units} and orders: {num_orders}")
       A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
-      A_input.generate_disruption_list(data_dir /"main_setting.json",seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
+      A_input.generate_disruption_list(data_dir /"base_setting.json",seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
       # takes wayyy too long to generate a gantt chart for each one
-      A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
+      #A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
       #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
       break
 
@@ -280,7 +283,7 @@ def main():
             print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
 
          print(f"----MAIN.py: running main sim until {t_stop}")
-         E_production_line_sim.main(main_settings_dir, t_stop)
+         E_production_line_sim.main(main_settings_dir, t_stop, t_start)
          end = ti.perf_counter()
          print(f"[MAIN] segment wall time: {end - start}")
 
