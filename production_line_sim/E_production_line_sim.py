@@ -138,6 +138,8 @@ MATERIAL_STAGE_TO_MATERIAL = {
 INSPECTION_STAGE_NUMBER = 6
 BROKEN_MATERIAL_EXTRA_TIME_DEFAULT_S = 30.0
 
+BASE_DIR = Path(__file__).parent
+data_dir = BASE_DIR / "data"
 
 # -----------------------------
 # Data loading / order parsing
@@ -4134,8 +4136,8 @@ def _load_run_context_from_main_settings(main_settings_path: Path, simulation_ti
     layout_json = load_json(data_dir / "Layouts" / run_settings.get("Scenarios"))
     carriers = layout_json.get("carriers")
 
-    
     label = str(main_settings.get("label", main_settings_path.stem))
+
     return {
         "main_settings_path": main_settings_path,
         "main_settings": main_settings,
@@ -4153,7 +4155,6 @@ def _load_run_context_from_main_settings(main_settings_path: Path, simulation_ti
         "has_assigned_route": bool(schedule["has_assigned_route"]),
         "unit_release_times": [0.0] * len(schedule["ordered_units"]),
         "unit_priorities": [1] * len(schedule["ordered_units"]),
-        "simulation_time_s": sim_time,
         "carriers": carriers,
         "selected_line_layout_name": _resolve_line_layout_filename_from_settings(run_settings),
         "input_root": _pathlist_path(pathlist, "input"),
@@ -4215,12 +4216,13 @@ def _simulation_result_from_summaries(unit_summaries: list[UnitSummary], details
     }
 
 
-def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0) -> dict[str, Any]:
+def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0, simulation_time_limit_s: float | None = None, return_route_map: bool = False) -> dict[str, Any]:
     ctx = _load_run_context_from_main_settings(Path(main_settings_path), None)
     line_layout_path = resolve_line_layout_path(ctx["selected_line_layout_name"], ctx.get("input_root"), ctx.get("batch_dir"), ctx["data_dir"])
     line_layout_config, _ = load_line_layout_config(line_layout_path, ctx["process_time_data"])
     effective = build_effective_line_layout(ctx["process_time_data"], ctx["transport_time_data"], line_layout_config)
     valid_variants = set(ctx["process_time_data"]["process_times"].keys())
+    base_setting = load_json(data_dir / "base_setting.json")
     mode, enabled, chance_based, timed, seed, dis_cfg, timed_records, timed_data, _, _ = _prepare_disruption_inputs(ctx, effective, valid_variants)
     ops, trs, units, stations, _, details = run_simulation(
         ordered_units=list(ctx["ordered_units"]),
@@ -4237,7 +4239,7 @@ def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0)
         disruptions_enabled=enabled,
         disruption_config=dis_cfg if chance_based else None,
         disruption_seed=seed if chance_based else None,
-        simulation_time_s=current_time_s,
+        simulation_time_s=base_setting.get("plan_time [s]"),
         timed_disruption_data=timed_data,
     )
     return _simulation_result_from_summaries(units, details)
@@ -4351,7 +4353,7 @@ def _write_outputs_for_integrated_run(ctx: dict[str, Any], operations, transport
         save_json({"disruptions_enabled": bool(disruptions_enabled), "disruption_mode": int(disruption_mode), "seed": str(disruption_seed) if disruption_seed is not None else None, "timed_disruption_records": list(timed_records), "disruption_counts": dict(simulation_details.get("disruption_counts", {})), "events": list(simulation_details.get("disruption_event_log", []))}, run_output_dir / "disruption_summary.json")
 
 
-def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: float | None = None) -> None:
+def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: float | None = None, segment_start_s: float | None = None) -> None:
     if main_settings_path is None:
         # Keep legacy CLI behavior available.
         print("\nEy man dont run it from here bro\n")
@@ -4379,7 +4381,7 @@ def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: 
         disruptions_enabled=enabled,
         disruption_config=dis_cfg if chance_based else None,
         disruption_seed=seed if chance_based else None,
-        simulation_time_s=,
+        simulation_time_s=ctx["simulation_time_s"],
         timed_disruption_data=timed_data,
     )
     completed_good_variants = list(details.get("completed_good_variants", []))

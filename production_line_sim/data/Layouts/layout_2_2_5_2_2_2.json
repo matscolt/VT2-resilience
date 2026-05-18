@@ -71,7 +71,7 @@
     },
     {
       "station_name": "Station 4: Inspection",
-      "time_scale_factor": 4.0,
+      "time_scale_factor": 1.0,
       "branch_transport_from_previous_s": 0.0,
       "branch_transport_to_next_s": 40.0
     },
