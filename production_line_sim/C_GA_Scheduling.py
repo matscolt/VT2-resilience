@@ -1359,12 +1359,12 @@ def main(
     feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
     def horizon_print():
         print(
-            f"[GA] Horizon feasibility check: \n"
+            f"\n[GA] Horizon feasibility check: \n"
             f"-makespan={best_simulation_result.get('makespan') if best_simulation_result else None}, \n"
             f"-horizon_window_s={(horizon_info.get('horizon_window_s') if horizon_info and horizon_info.get('horizon_window_s') is not None else ( (float(horizon_info.get('horizon_end_s')) - float(horizon_info.get('horizon_start_s'))) if horizon_info and horizon_info.get('horizon_end_s') is not None and horizon_info.get('horizon_start_s') is not None else None ))}, \n"
             f"-horizon_start_s={horizon_info.get('horizon_start_s') if horizon_info else None}, \n"
             f"-horizon_end_s={horizon_info.get('horizon_end_s') if horizon_info else None}, \n"
-            f"-feasible={feasible}"
+            f"-feasible={feasible}\n"
         )
     horizon_print()
     
