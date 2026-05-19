@@ -283,7 +283,7 @@ def main():
          print(f"----MAIN.py: running main sim until {t_stop}")
          D_production_line_sim.main(main_settings_dir, t_stop)
          end = ti.perf_counter()
-         print(f"[MAIN] segment wall time: {end - start}")
+         print(f"[MAIN] segment wall time: {end - start}\n\n\n - - - - - \n")
 
       print(f"\n\n--- RUN {run_idx} ---")
       print(f"Number of units: {num_units}")
