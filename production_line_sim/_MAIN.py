@@ -14,7 +14,7 @@ Wants and wishes
 - display a capacity and actual units in queue 
 
 """
-import A_input, B_production_planning, GA_Scheduling, E_production_line_sim, F_graphgen, G_after_movie
+import A_input, B_production_planning, C_GA_Scheduling, D_production_line_sim, F_graphgen, G_after_movie
 from pathlib import Path
 from itertools import product
 from copy import deepcopy
@@ -277,12 +277,12 @@ def main():
 
          if i == 0 or rolling_ga_enabled:
             print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
-            GA_Scheduling.main(main_settings_dir, t_start)
+            C_GA_Scheduling.main(main_settings_dir, t_start)
          else:
             print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
 
          print(f"----MAIN.py: running main sim until {t_stop}")
-         E_production_line_sim.main(main_settings_dir, t_stop)
+         D_production_line_sim.main(main_settings_dir, t_stop)
          end = ti.perf_counter()
          print(f"[MAIN] segment wall time: {end - start}")
 
