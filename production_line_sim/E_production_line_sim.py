@@ -188,6 +188,33 @@ def build_transport_lookup(
     return lookup
 
 
+def _load_optional_transport_time_data(data_dir: Path) -> dict[str, Any] | None:
+    transport_path = data_dir / "transport_times.json"
+    if transport_path.exists():
+        return load_json(transport_path)
+    return None
+
+
+def _transport_time_data_for_layout(
+    line_layout_config: dict[str, Any],
+    transport_time_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if (
+        isinstance(transport_time_data, dict)
+        and isinstance(transport_time_data.get("transport_times_between_consecutive_stations"), dict)
+    ):
+        return transport_time_data
+
+    layout_transport_times = line_layout_config.get("transport_times_between_consecutive_stations")
+    if isinstance(layout_transport_times, dict):
+        return {"transport_times_between_consecutive_stations": layout_transport_times}
+
+    raise FileNotFoundError(
+        "Transport times were not found. Add 'transport_times_between_consecutive_stations' "
+        "to the selected layout JSON, or restore data/transport_times.json."
+    )
+
+
 def _extract_station_name_parts(station_name: str) -> tuple[int | None, int | None, str]:
     match = STATION_NAME_NUMBER_RE.match(str(station_name).strip())
     if not match:
@@ -243,11 +270,12 @@ def _build_base_station_number_lookup(process_time_data: dict[str, Any]) -> dict
 
 def _build_effective_line_layout_from_stage_definitions(
     process_time_data: dict[str, Any],
-    transport_time_data: dict[str, Any],
+    transport_time_data: dict[str, Any] | None,
     line_layout_config: dict[str, Any],
 ) -> dict[str, Any]:
     base_station_sequence = list(process_time_data["station_sequence"])
-    base_transport_lookup = build_transport_lookup(base_station_sequence, transport_time_data)
+    resolved_transport_time_data = _transport_time_data_for_layout(line_layout_config, transport_time_data)
+    base_transport_lookup = build_transport_lookup(base_station_sequence, resolved_transport_time_data)
 
     raw_stages = line_layout_config.get("stages")
     if not isinstance(raw_stages, list) or not raw_stages:
@@ -423,11 +451,12 @@ def _normalize_station_instance_entries(
 
 def _build_effective_line_layout_from_station_instances(
     process_time_data: dict[str, Any],
-    transport_time_data: dict[str, Any],
+    transport_time_data: dict[str, Any] | None,
     line_layout_config: dict[str, Any],
 ) -> dict[str, Any]:
     base_station_sequence = list(process_time_data["station_sequence"])
-    base_transport_lookup = build_transport_lookup(base_station_sequence, transport_time_data)
+    resolved_transport_time_data = _transport_time_data_for_layout(line_layout_config, transport_time_data)
+    base_transport_lookup = build_transport_lookup(base_station_sequence, resolved_transport_time_data)
     base_station_by_stage_number = _build_base_station_number_lookup(process_time_data)
     normalized_entries = _normalize_station_instance_entries(process_time_data, line_layout_config)
 
@@ -533,7 +562,7 @@ def load_line_layout_config(layout_path: Path | None, process_time_data: dict[st
 
 def build_effective_line_layout(
     process_time_data: dict[str, Any],
-    transport_time_data: dict[str, Any],
+    transport_time_data: dict[str, Any] | None,
     line_layout_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if line_layout_config is None:
@@ -3327,7 +3356,7 @@ def _legacy_cli_main() -> None:
     starttime = time.perf_counter()
 
     process_time_data = load_json(data_dir / "process_times.json")
-    transport_time_data = load_json(data_dir / "transport_times.json")
+    transport_time_data = _load_optional_transport_time_data(data_dir)
     material_stock_data = load_json(data_dir / "material_stock.json")
     bom_data = load_json(data_dir / "bom.json")
 
@@ -4150,7 +4179,7 @@ def _load_run_context_from_main_settings(main_settings_path: Path, simulation_ti
         "pathlist": pathlist,
         "data_dir": data_dir,
         "process_time_data": process_time_data,
-        "transport_time_data": load_json(data_dir / "transport_times.json"),
+        "transport_time_data": _load_optional_transport_time_data(data_dir),
         "material_stock_data": load_json(data_dir / "material_stock.json"),
         "bom_data": load_json(data_dir / "bom.json"),
         "schedule_path": schedule_path,
