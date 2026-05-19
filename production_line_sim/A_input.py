@@ -509,8 +509,8 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
 
 
     #emergency orders
-    eorders = round_half_up(random.normalvariate(num_orders*0.1, num_orders * 0.01))
-    eunits = round_half_up(random.normalvariate(num_units*0.1, num_units * 0.01))
+    eorders = round_half_up(random.normalvariate(num_orders*0.05, num_orders * 0.01))
+    eunits = round_half_up(random.normalvariate(num_units*0.05, num_units * 0.01))
     if eunits < eorders:
         eorders = eunits
     #print(f"Generating {eorders} emergency orders with {eunits} units (10% of total orders with some variance).")

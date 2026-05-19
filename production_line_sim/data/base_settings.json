@@ -29,7 +29,7 @@
         "4": 4567,
         "5": 5678
     },
-    "sim_time [s]": 1244000,
+    "sim_time [s]": 800000,
     "plan_time [s]": 576000,
     "seed": "",
     "random based disruptions": {
