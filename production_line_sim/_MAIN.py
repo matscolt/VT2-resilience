@@ -201,7 +201,7 @@ def main():
         A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
         #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
         break
-
+    input("HELLO. BITCH PLEASE ADD A FUCKED DISRUPTION PLEASE")
     run_idx = 0
     next_pct = 0
     max_idx = len(scenarios) * len(pressures) * len(ratios)* len(algos) * len(seeds)
