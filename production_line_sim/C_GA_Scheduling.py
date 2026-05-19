@@ -1358,9 +1358,15 @@ def main(
     # If requested horizon is 1 day and it's NOT feasible, rerun with 5 days.
     if lookahead_days == 1 and (not feasible):
         best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(max(ALLOWED_LOOKAHEAD_DAYS))
-        print(f"had to expand our horizon - running max: {max(ALLOWED_LOOKAHEAD_DAYS)}")
-        # In this case we keep the 5-day schedule regardless of its feasibility.
-        feasible = False  # only affects merge logic
+        print(f"had to expand our horizon - running max days: {max(ALLOWED_LOOKAHEAD_DAYS)}")
+        # In this case we keep the 5-day schedule regardless of its feasibility.feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
+        feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
+        print(
+            f"[GA] Horizon feasibility check: "
+            f"makespan={best_simulation_result.get('makespan') if best_simulation_result else None}, "
+            f"horizon_end_s={horizon_info.get('horizon_end_s') if horizon_info else None}, "
+            f"feasible={feasible}"
+        )
 
     # --- Export logic ---
     if best_order_solution is None:
