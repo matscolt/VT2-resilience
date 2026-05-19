@@ -342,12 +342,6 @@ def get_planned_day_window(
     lookahead_days=5 keeps current planned_day + 4 following planned days.
     """
 
-    if lookahead_days not in ALLOWED_LOOKAHEAD_DAYS:
-        raise ValueError(
-            f"lookahead_days must be one of {sorted(ALLOWED_LOOKAHEAD_DAYS)}, "
-            f"got {lookahead_days}"
-        )
-
     first_day = get_current_planned_day(current_time_s)
     last_day = first_day + lookahead_days - 1
 
