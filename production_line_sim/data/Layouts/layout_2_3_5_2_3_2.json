@@ -5,6 +5,13 @@
   "capacity_percentage": "90.0%",
   "layout_name": "layout_2_3_5_2_3_2",
   "carriers": 72,
+  "transport_times_between_consecutive_stations": {
+    "Station 1: Bottom cover -> Station 2: Drill station": 39.0,
+    "Station 2: Drill station -> Station 3: Robot cell": 39.0,
+    "Station 3: Robot cell -> Station 4: Inspection": 39.0,
+    "Station 4: Inspection -> Station 5: Top cover": 91.0,
+    "Station 5: Top cover -> Station 6: Packaging": 39.0
+  },
   "station_instances": [
     {
       "station_name": "Station 1: Bottom cover",
