@@ -381,13 +381,11 @@ def filter_orders_and_units_for_rolling_horizon(
 
     The filter does two things:
     1) Removes units that have already been completed by the main simulation.
-    2) Keeps all unfinished carry-over orders from earlier planned days plus
-       the orders up to the rolling look-ahead window end.
+    2) Keeps only orders where production_plan.planned_day is inside the
+       rolling look-ahead window.
 
-    Important: If disruptions delay production, unfinished orders from earlier
-    planned days are carried into the next horizon instead of being discarded.
-    If an order has partly completed units, the remaining quantity is scheduled
-    as a reduced order with the same order_id/due_date/priority.
+    Important: If an order has partly completed units, the remaining quantity is
+    scheduled as a reduced order with the same order_id/due_date/priority.
     """
 
     completed = normalize_completed_unit_ids(completed_unit_ids)
@@ -408,13 +406,7 @@ def filter_orders_and_units_for_rolling_horizon(
 
     for order in orders:
 
-        # Carry-over logic:
-        # If an order was planned for an earlier day but did not finish because
-        # disruptions pushed the schedule late, it must stay in the scheduling
-        # problem until it is completed. Therefore the GA includes every
-        # unfinished order up to the end of the current look-ahead window,
-        # not only orders whose planned_day is inside [first_day, last_day].
-        if int(order.planned_day) > int(last_planned_day):
+        if not (first_planned_day <= order.planned_day <= last_planned_day):
             continue
 
         remaining_unit_ids = [
@@ -487,18 +479,12 @@ def merge_schedule_with_previous_tail(
     cut_day: int,
     completed_unit_ids: Set[str]
 ) -> pd.DataFrame:
-    """Merge the newly optimized horizon with any unfinished previous schedule rows.
+    """Append the untouched future days from the previous schedule.
 
-    This is the carry-over protection that prevents units/orders from being
-    discarded when disruptions push the makespan past the current horizon.
-
-    Rules:
-    - Start with the newly optimized schedule.
-    - Append every row from the previous current_schedule.csv that is not
-      completed and not already present in the new schedule.
-    - This keeps untouched future units, emergency/unknown-plan units, and any
-      older unfinished units that somehow were not included by the new horizon.
-    - Renumber unit_seq from 1..N.
+    - Keeps only previous rows where planned_day(order_id) > cut_day.
+    - Drops any completed units.
+    - Drops duplicates already present in new_schedule_df.
+    - Renumbers unit_seq from 1..N.
     """
     if previous_schedule_df is None or previous_schedule_df.empty:
         merged = new_schedule_df.copy()
@@ -507,35 +493,41 @@ def merge_schedule_with_previous_tail(
 
     prev = previous_schedule_df.copy()
 
-    if 'unit_id' not in prev.columns:
+    if 'order_id' not in prev.columns or 'unit_id' not in prev.columns:
         merged = new_schedule_df.copy()
         merged['unit_seq'] = range(1, len(merged) + 1)
         return merged
 
-    # Remove completed units from the previous schedule snapshot.
-    if completed_unit_ids:
-        prev = prev[~prev['unit_id'].astype(str).isin({str(u) for u in completed_unit_ids})]
+    # Map planned_day onto previous schedule rows
+    prev['planned_day'] = prev['order_id'].map(lambda oid: planned_day_by_order.get(int(oid)))
 
-    # Remove units already covered by the newly optimized horizon.
-    new_unit_ids = set(new_schedule_df['unit_id'].astype(str).tolist()) if 'unit_id' in new_schedule_df.columns else set()
+    # Keep only future days beyond the cut
+    prev = prev[prev['planned_day'].notna()]
+    prev = prev[prev['planned_day'] > cut_day]
+
+    # Remove completed units
+    if completed_unit_ids:
+        prev = prev[~prev['unit_id'].isin(completed_unit_ids)]
+
+    # Remove units already in new schedule
+    new_unit_ids = set(new_schedule_df['unit_id'].tolist()) if 'unit_id' in new_schedule_df.columns else set()
     if new_unit_ids:
-        prev = prev[~prev['unit_id'].astype(str).isin(new_unit_ids)]
+        prev = prev[~prev['unit_id'].isin(new_unit_ids)]
+
+    # Drop helper column
+    if 'planned_day' in prev.columns:
+        prev = prev.drop(columns=['planned_day'])
 
     merged = pd.concat([new_schedule_df, prev], ignore_index=True)
 
-    # Drop any accidental duplicate unit rows while preserving first occurrence.
-    if 'unit_id' in merged.columns:
-        merged = merged.drop_duplicates(subset=['unit_id'], keep='first')
-
-    # Renumber unit_seq.
+    # Renumber unit_seq
     merged['unit_seq'] = range(1, len(merged) + 1)
 
-    # Keep expected column order if possible.
+    # Keep original column order if possible
     cols = ['unit_seq', 'order_id', 'unit_id', 'variant', 'route_id']
     merged = merged[[c for c in cols if c in merged.columns]]
 
     return merged
-
 
 
 
@@ -1394,10 +1386,9 @@ def main(
         route_id_by_unit_id=best_route_map,
     )
 
-    # Always merge against the previous schedule when it exists.
-    # This prevents uncompleted units from being lost when disruptions make the
-    # chosen horizon finish late. Completed units are removed inside the merge.
-    if previous_schedule_df is not None:
+    # If it WAS feasible within 1 day, append the untouched tail (future days) from the previous schedule.
+    # cut_day is the last planned day included in the *new* horizon.
+    if lookahead_days == 1 and feasible and previous_schedule_df is not None:
         cut_day = int(horizon_info.get('last_planned_day', get_current_planned_day(current_time_s)))
         final_schedule_df = merge_schedule_with_previous_tail(
             new_schedule_df=new_schedule_df,
