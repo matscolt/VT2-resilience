@@ -1204,7 +1204,7 @@ def _schedule_exists_and_has_content(schedule_path):
         return False
 
 
-def _schedule_has_less_than_one_day(current_time_s, schedule_path, production_plan_path):
+def _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, production_plan_path):
     """Return True if the existing schedule covers less than 1 production day beyond current time.
 
     The schedule CSV does NOT include planned_day, so we infer coverage by:
@@ -1260,21 +1260,24 @@ def _schedule_has_less_than_one_day(current_time_s, schedule_path, production_pl
         return True
 
     max_abs_day = int(covered['planned_day'].max())
+    segment_end_day = int(float(segment_end_time_s) // SECONDS_PER_PRODUCTION_DAY) + 1
 
+    highest_day = max(max_abs_day,segment_end_day)
     # Current absolute day from current_time_s (each production day = 8h)
     try:
         current_abs_day = int(float(current_time_s) // SECONDS_PER_PRODUCTION_DAY) + 1
     except Exception:
         current_abs_day = 1
-
+    print(f"this is the highest day the horizon should use {highest_day}")
     # If the schedule does not extend into at least the next day, treat as < 1 day left.
-    return (max_abs_day - current_abs_day) < 1
+    return (highest_day - current_abs_day) < 1
 
 
 
 def main(
     main_settings_path,
     current_time_s,
+    segment_end_time_s,
     lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
 ):
 
@@ -1293,7 +1296,7 @@ def main(
     if not _schedule_exists_and_has_content(schedule_path):
         print("\nschedule is missing\n")
         need_full_horizon = True
-    elif _schedule_has_less_than_one_day(current_time_s, schedule_path, PRODUCTION_PLAN_PATH):
+    elif _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH):
         print("\nhorizon less than a day\n")
         need_full_horizon = True
 
