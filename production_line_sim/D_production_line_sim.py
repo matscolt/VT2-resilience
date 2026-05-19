@@ -3201,7 +3201,7 @@ def _load_run_context_from_main_settings(main_settings_path: Path, simulation_ti
         raise FileNotFoundError(f"current_schedule.csv was not found at {schedule_path}")
     schedule = _read_current_schedule(schedule_path, valid_variants)
 
-    default_settings_path = data_dir / "settings.json"
+    default_settings_path = data_dir / "base_settings.json"
     settings_data = load_json(default_settings_path) if default_settings_path.exists() else {}
     settings_data.update(run_settings)
     scenario_layout = run_settings.get("Scenarios")

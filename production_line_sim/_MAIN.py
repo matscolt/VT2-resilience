@@ -101,7 +101,7 @@ def find_all_event_times(main_settings_json: Path):
 
     # Add final horizon so the final segment runs after the last disruption event.
     try:
-        base_settings = A_input.read_settings_json(data_dir / "settings.json")
+        base_settings = A_input.read_settings_json(data_dir / "base_settings.json")
     except Exception:
         base_settings = {}
     horizon = (
@@ -158,8 +158,8 @@ def main():
    
    print("reading settings")
    #read settings
-   mainsettings = A_input.read_settings_json(data_dir / "main_setting.json")
-   base_settings = A_input.read_settings_json(data_dir / "settings.json")
+   mainsettings = A_input.read_settings_json(data_dir / "base_settings.json")
+   base_settings = A_input.read_settings_json(data_dir / "base_settings.json")
    scenarios = list(mainsettings["Scenarios"].items())
    pressures = list(mainsettings["pressure_of_capacity"].items())
    ratios = list(mainsettings["order_units_ratio"].items())
@@ -211,7 +211,6 @@ def main():
         scenarios, pressures, ratios, algos, seeds
     ):
       run_idx += 1
-      settings = deepcopy(base_settings)
       #creating the run dirs
       for dir in dirs[0:3]:
          subfolder = dir / f"run_{run_idx}"

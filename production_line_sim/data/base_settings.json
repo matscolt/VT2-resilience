@@ -1,33 +1,41 @@
 {
-    "Scenarios":{
+    "Scenarios": {
         "small": "layout_2_2_5_2_2_2.json",
         "medium": "layout_2_3_5_2_3_2.json"
     },
-    "pressure_of_capacity":{
+    "pressure_of_capacity": {
         "light": 0.9,
-        "medium":1,
-        "heavy":1.2
+        "medium": 1,
+        "heavy": 1.2
     },
-    "order_units_ratio":{
+    "order_units_ratio": {
         "small": 20,
         "medium": 50,
-        "heavy": 100                
+        "heavy": 100
     },
-    "algorithms":{
+    "algorithms": {
         "1": "genetic algortihm",
         "2": "simulated annealing"
     },
-    "weightage":{
+    "weightage": {
         "tardines": "?",
         "max_lateness": "?",
         "makespan": "?"
     },
-    "seeds":{
+    "seeds": {
         "1": 1234,
         "2": 2345,
         "3": 3456,
         "4": 4567,
         "5": 5678
+    },
+    "sim_time [s]": 1244000,
+    "plan_time [s]": 576000,
+    "seed": "",
+    "random based disruptions": {
+        "enabled": 2
+    },
+    "carriers": {
+        "number of carriers": 8
     }
-
 }
