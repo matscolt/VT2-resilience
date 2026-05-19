@@ -1270,6 +1270,9 @@ def main(
     lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
 ):
 
+    # Configure paths before the schedule pre-check, otherwise ON_GOING_RUN_DIR is still None.
+    configure_paths_from_main_settings(main_settings_path)
+
     # ===============================
     # NEW: schedule pre-check
     # ===============================
@@ -1292,9 +1295,6 @@ def main(
         raise ValueError(
             f"lookahead_days={lookahead_days} is not in ALLOWED_LOOKAHEAD_DAYS={ALLOWED_LOOKAHEAD_DAYS}"
         )
-
-    # Configure paths and load production plan once (also used for merge mapping).
-    configure_paths_from_main_settings(main_settings_path)
 
     # Snapshot the previous schedule BEFORE GA evaluations overwrite current_schedule.csv.
     previous_schedule_df = None

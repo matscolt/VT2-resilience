@@ -264,7 +264,8 @@ def main():
       # GA is called at t=0 to create the first routed schedule. If the selected
       # algorithm name contains GA, it is also called again at every disruption
       # start/end timestamp so it can react only to already-known events.
-      rolling_ga_enabled = "ga" in str(a_name).casefold()
+      # Run GA at every segment boundary so it can reschedule from the current snapshot.
+      rolling_ga_enabled = True
       for i in range(max(0, len(event_times) - 1)):
          t_start = event_times[i]
          t_stop = event_times[i + 1]
@@ -280,8 +281,8 @@ def main():
          else:
             print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
 
-         print(f"----MAIN.py: running main sim until {t_stop}")
-         D_production_line_sim.main(main_settings_dir, t_stop)
+         print(f"----MAIN.py: running main sim from {t_start} until {t_stop}")
+         D_production_line_sim.main(main_settings_dir, t_stop, t_start)
          end = ti.perf_counter()
          print(f"[MAIN] segment wall time: {end - start}\n\n\n - - - - - \n")
          input("Press [ENTER] to continue the loop")
