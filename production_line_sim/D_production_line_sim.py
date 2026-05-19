@@ -65,6 +65,7 @@ class UnitSummary:
     time_spent_producing: float
     throughput_efficiency: float
     attempts: int
+    route_taken: str = "0"
 
 
 @dataclass
@@ -2497,6 +2498,21 @@ def run_simulation(
     for station_state in station_states:
         _update_queue_area(station_state, makespan_s)
 
+    def _route_taken_for_root(root_index: int) -> str:
+        chosen_by_stage = unit_chosen_route_by_root.get(int(root_index), {})
+        forced_route = unit_route_station_indices[int(root_index)] if int(root_index) < len(unit_route_station_indices) else None
+
+        route_indices: list[int | None] = []
+        for stage_index, stage_instances in enumerate(stage_instance_indices):
+            chosen_station_index = chosen_by_stage.get(stage_index)
+            if chosen_station_index is None and forced_route is not None and stage_index < len(forced_route):
+                chosen_station_index = forced_route[stage_index]
+            if chosen_station_index is None:
+                chosen_station_index = int(stage_instances[0]) if stage_instances else None
+            route_indices.append(chosen_station_index)
+
+        return _route_indices_to_route_id(route_indices, stage_instance_indices)
+
     unit_summaries: list[UnitSummary] = []
     completed_good_variants: list[str] = []
     completed_root_positions: list[int] = []
@@ -2539,6 +2555,7 @@ def run_simulation(
                 time_spent_producing=float(time_spent_producing),
                 throughput_efficiency=float(throughput_efficiency),
                 attempts=max(int(attempt_numbers[idx]) for idx in attempt_indices),
+                route_taken=_route_taken_for_root(root_index),
             )
         )
         completed_good_variants.append(variant)
@@ -2599,12 +2616,8 @@ def run_simulation(
         "unit_order_ids": list(root_order_ids),
         "unit_ids": list(root_unit_ids),
         "route_id_by_unit_id": {
-            _root_unit_id_text(root_index): _route_indices_to_route_id(
-                [unit_chosen_route_by_root.get(root_index, {}).get(stage_index) for stage_index in range(len(stage_instance_indices))],
-                stage_instance_indices,
-            )
+            _root_unit_id_text(root_index): _route_taken_for_root(root_index)
             for root_index in range(initial_requested_unit_count)
-            if unit_chosen_route_by_root.get(root_index)
         },
     }
 
@@ -2990,6 +3003,7 @@ def write_unit_summary_csv(unit_summaries: list[UnitSummary], output_path: Path)
                 "time_spent_producing",
                 "throughput_efficiency",
                 "Attempts",
+                "route_taken",
             ]
         )
         for summary in unit_summaries:
@@ -3006,6 +3020,7 @@ def write_unit_summary_csv(unit_summaries: list[UnitSummary], output_path: Path)
                     round(summary.time_spent_producing, 4),
                     round(summary.throughput_efficiency, 6),
                     int(summary.attempts),
+                    getattr(summary, "route_taken", "0"),
                 ]
             )
 
@@ -3332,6 +3347,7 @@ def _read_previous_unit_summaries(unit_summary_path: Path | None, cutoff_time_s:
                     time_spent_producing=_f(row, "time_spent_producing"),
                     throughput_efficiency=_f(row, "throughput_efficiency"),
                     attempts=int(_f(row, "Attempts", 1.0)),
+                    route_taken=str(row.get("route_taken", row.get("route_id", "0"))).strip() or "0",
                 )
             )
     return summaries
@@ -3368,16 +3384,24 @@ def _shift_timed_records_for_segment(
     timed_records: list[dict[str, Any]],
     segment_start_s: float,
     segment_stop_s: float | None,
+    visibility_cutoff_s: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Convert absolute disruption timestamps into local segment timestamps.
+    """Return only disruptions visible at the current segment start.
 
-    The full disruption CSV remains the source for disruption_his.csv.  This shifted
-    copy is only used by run_simulation(), whose local clock starts at 0 for every
-    segment.
+    Important:
+    - The simulation/GA must not see future disruptions.
+    - A timed disruption becomes visible only when its start_time has been reached.
+    - The current segment may still simulate an already-visible active disruption
+      until the next segment boundary.
+    - Emergency orders are hidden until their start_time is reached. Once visible,
+      they are only released into this simulation window when their Order_time falls
+      inside the current simulated window.
     """
     segment_start_s = float(segment_start_s or 0.0)
     segment_stop_s = None if segment_stop_s is None else float(segment_stop_s)
+    visibility_cutoff_s = segment_start_s if visibility_cutoff_s is None else float(visibility_cutoff_s)
     shifted: list[dict[str, Any]] = []
+    eps = 1e-9
 
     for record in timed_records:
         start_abs = float(record.get("start_time_s", 0.0) or 0.0)
@@ -3385,31 +3409,59 @@ def _shift_timed_records_for_segment(
         end_abs = float(end_raw) if end_raw is not None else start_abs
         dtype = str(record.get("disruption_type", "")).strip().casefold()
 
-        # Include disruptions/emergency orders that intersect this segment.
-        active_at_or_after_start = end_abs >= segment_start_s or dtype == "emergency_order"
-        before_stop = True if segment_stop_s is None else start_abs <= segment_stop_s
-        if not (active_at_or_after_start and before_stop):
+        # Do not expose future disruption events to the simulator/GA.
+        if start_abs > visibility_cutoff_s + eps:
             continue
 
         new_record = dict(record)
+
+        if dtype == "emergency_order":
+            order_time_raw = record.get("order_time_s")
+            order_time_abs = float(order_time_raw) if order_time_raw is not None else start_abs
+
+            # Already released emergency orders should now be represented by the
+            # current schedule/snapshot, not appended repeatedly every segment.
+            if order_time_abs < segment_start_s - eps:
+                continue
+
+            # Do not release the emergency order inside this simulated window
+            # before its Order_time is reached.
+            if segment_stop_s is not None and order_time_abs > segment_stop_s + eps:
+                continue
+
+            new_record["start_time_s"] = max(0.0, start_abs - segment_start_s)
+            new_record["order_time_s"] = max(0.0, order_time_abs - segment_start_s)
+            shifted.append(new_record)
+            continue
+
+        if dtype in {"failed_inspection", "inspection_failure", "inspection failure"}:
+            # Failed inspection is a one-shot event. It should only be injected
+            # into the segment where the event timestamp is reached.
+            if start_abs < segment_start_s - eps:
+                continue
+            if segment_stop_s is not None and start_abs > segment_stop_s + eps:
+                continue
+            new_record["start_time_s"] = max(0.0, start_abs - segment_start_s)
+            if end_raw is not None:
+                new_record["end_time_s"] = max(0.0, end_abs - segment_start_s)
+            shifted.append(new_record)
+            continue
+
+        # Breakdown/efficiency-loss subtype: include only if it is already known
+        # and intersects this segment window.
+        if end_abs < segment_start_s - eps:
+            continue
+        if segment_stop_s is not None and start_abs > segment_stop_s + eps:
+            continue
+
         new_record["start_time_s"] = max(0.0, start_abs - segment_start_s)
         if end_raw is not None:
             new_record["end_time_s"] = max(0.0, end_abs - segment_start_s)
 
-        if new_record.get("order_time_s") is not None:
-            order_time_abs = float(new_record.get("order_time_s"))
-            if segment_stop_s is not None and order_time_abs > segment_stop_s:
-                # Future emergency orders are not visible in this segment.
-                continue
-            if order_time_abs < segment_start_s:
-                # Already released in an earlier segment. It should now be represented
-                # by the current schedule/snapshot instead of being appended repeatedly.
-                continue
-            new_record["order_time_s"] = max(0.0, order_time_abs - segment_start_s)
-
         shifted.append(new_record)
 
     return shifted
+
 
 
 def _offset_simulation_times_to_absolute(
@@ -3493,6 +3545,7 @@ def _prepare_disruption_inputs(ctx: dict[str, Any], effective_line_layout: dict[
             timed_records=timed_records,
             segment_start_s=float(ctx.get("segment_start_s", 0.0) or 0.0),
             segment_stop_s=float(ctx.get("absolute_stop_time_s", ctx.get("simulation_time_s", 0.0)) or 0.0),
+            visibility_cutoff_s=float(ctx.get("segment_start_s", 0.0) or 0.0),
         )
         timed_data = prepare_timed_disruption_data(
             list(effective_line_layout["station_sequence"]),
@@ -3599,39 +3652,65 @@ def _estimate_breakdown_duration_from_config(
 
     return 0.0
 
-def _write_disruption_history_from_timed_csv(path: Path | None, timed_records: list[dict[str, Any]], disruption_config: dict[str, Any] | None, cutoff_time_s: float | None = None) -> None:
+def _write_disruption_history_from_timed_csv(
+    path: Path | None,
+    timed_records: list[dict[str, Any]],
+    disruption_config: dict[str, Any] | None,
+    cutoff_time_s: float | None = None,
+) -> None:
+    """Write cumulative disruption history only up to the current known timestamp.
+
+    Future disruptions are not written. If a disruption has started but its
+    end_time is still in the future relative to cutoff_time_s, end_time is left
+    blank until a later segment reaches that end timestamp.
+    """
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
+    cutoff = None if cutoff_time_s is None else float(cutoff_time_s)
     fieldnames = ["disruption_type", "estimated_duration", "station_id", "efficiency_loss", "start_time", "end_time"]
     with path.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for record in sorted(timed_records, key=lambda r: (float(r.get("start_time_s", 0.0)), int(r.get("row_index", 0)))):
             start = float(record.get("start_time_s", 0.0) or 0.0)
-            if cutoff_time_s is not None and start > float(cutoff_time_s):
+            if cutoff is not None and start > cutoff:
                 continue
+
             dtype = str(record.get("disruption_type", "")).strip()
             dtype_cf = dtype.casefold()
             station_id = "" if dtype_cf in {"failed_inspection", "inspection_failure", "inspection failure", "emergency_order"} else ("" if record.get("station_id") is None else str(record.get("station_id")))
+
             eff_loss = 0.0
             if dtype_cf in {"efficiency_loss", "efficiency loss"} and record.get("efficiency_percentage") is not None:
                 eff_loss = max(0.0, 100.0 - float(record.get("efficiency_percentage")))
+
             estimated = 0.0
             stage = None
             if station_id:
-                try: stage = int(float(str(station_id).split('.')[0]))
-                except Exception: stage = None
+                try:
+                    stage = int(float(str(station_id).split(".")[0]))
+                except Exception:
+                    stage = None
             if dtype_cf not in {"efficiency_loss", "efficiency loss", "failed_inspection", "inspection_failure", "inspection failure", "emergency_order"}:
                 estimated = _estimate_breakdown_duration_from_config(disruption_config, stage, dtype)
+
+            end_value: str | float = ""
+            end_raw = record.get("end_time_s")
+            if end_raw is not None:
+                end_abs = float(end_raw)
+                if cutoff is None or end_abs <= cutoff:
+                    end_value = round(end_abs, 6)
+
             writer.writerow({
                 "disruption_type": dtype,
                 "estimated_duration": round(float(estimated), 6),
                 "station_id": station_id,
                 "efficiency_loss": round(float(eff_loss), 6),
                 "start_time": round(start, 6),
-                "end_time": "" if record.get("end_time_s") is None else round(float(record.get("end_time_s")), 6),
+                "end_time": end_value,
             })
+
 
 
 def _write_outputs_for_integrated_run(ctx: dict[str, Any], operations, transport_records, unit_summaries, station_summaries, simulation_details, material_report, kpis, disruptions_enabled, disruption_mode, disruption_seed, disruption_config, timed_records, dis_json_path, timed_csv_path, settings_path, run_output_dir: Path) -> None:
@@ -3700,7 +3779,12 @@ def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: 
     ongoing_unit_summary = ctx.get("ongoing_unit_summary")
     if ongoing_unit_summary is not None:
         write_unit_summary_csv(combined_unit_summaries, ongoing_unit_summary)
-    _write_disruption_history_from_timed_csv(ctx.get("ongoing_disruption_history"), timed_records, dis_cfg, cutoff_time_s=ctx["simulation_time_s"])
+    _write_disruption_history_from_timed_csv(
+        ctx.get("ongoing_disruption_history"),
+        timed_records,
+        dis_cfg,
+        cutoff_time_s=ctx.get("absolute_stop_time_s", ctx["simulation_time_s"]),
+    )
     if bool(ctx.get("has_assigned_route")):
         output_results = ctx.get("output_results") or (Path(__file__).resolve().parent / "output" / "results")
         _write_outputs_for_integrated_run(ctx, operations, transport_records, combined_unit_summaries, station_summaries, details, material_report, kpis, enabled, mode, seed, dis_cfg, timed_records, dis_json_path, timed_csv_path, ctx["main_settings_path"], Path(output_results))
