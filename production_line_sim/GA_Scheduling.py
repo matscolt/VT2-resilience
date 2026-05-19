@@ -159,7 +159,7 @@ DEFAULT_LOOKAHEAD_DAYS = 1
 # 1 day  -> schedule the rest of current day only
 # 3 days -> schedule rest of current day + 2 full days
 # 5 days -> schedule rest of current day + 4 full days
-ALLOWED_LOOKAHEAD_DAYS = {1, 3, 5}
+ALLOWED_LOOKAHEAD_DAYS = {1,3}
 SWAPS = 3
 POPULATION_SIZE = 6
 GENERATIONS = 4
