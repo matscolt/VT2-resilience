@@ -1417,6 +1417,4 @@ def main(
 
 
 if __name__ == "__main__": #Kan slettes når koden kun skal køres af MAIN
-    main(
-        r"c:\Users\mikke\OneDrive - Aalborg Universitet\Skrivebord\VT2 Project\Github mappe\VT2-resilience\production_line_sim\input\main_16-05_10-50_0\runs\run_1\main_settings.json"
-    )
+    print("\n lmao u idiot dont run it from here\n")
