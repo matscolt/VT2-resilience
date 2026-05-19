@@ -1262,15 +1262,15 @@ def _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_
     max_abs_day = int(covered['planned_day'].max())
     segment_end_day = int(float(segment_end_time_s) // SECONDS_PER_PRODUCTION_DAY) + 1
 
-    highest_day = max(max_abs_day,segment_end_day)
+    
     # Current absolute day from current_time_s (each production day = 8h)
     try:
         current_abs_day = int(float(current_time_s) // SECONDS_PER_PRODUCTION_DAY) + 1
     except Exception:
         current_abs_day = 1
-    print(f"this is the highest day the horizon should use {highest_day}")
+    
     # If the schedule does not extend into at least the next day, treat as < 1 day left.
-    return (highest_day - current_abs_day) < 1
+    return (max_abs_day - current_abs_day) < 1, max_abs_day < segment_end_day, segment_end_day - current_abs_day+1
 
 
 
@@ -1296,18 +1296,16 @@ def main(
     if not _schedule_exists_and_has_content(schedule_path):
         print("\nschedule is missing\n")
         need_full_horizon = True
-    elif _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH):
+    elif _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[0]:
         print("\nhorizon less than a day\n")
         need_full_horizon = True
-
+    elif _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[1]:
+        lookahead_days = _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[2]
+        print(f"new lookahead_days: {lookahead_days}")
+    
     if need_full_horizon:
         print("!!!NEEDED A FULL HORIZON!!!")
         lookahead_days = max(ALLOWED_LOOKAHEAD_DAYS)
-
-    if lookahead_days not in ALLOWED_LOOKAHEAD_DAYS:
-        raise ValueError(
-            f"lookahead_days={lookahead_days} is not in ALLOWED_LOOKAHEAD_DAYS={ALLOWED_LOOKAHEAD_DAYS}"
-        )
 
     # Snapshot the previous schedule BEFORE GA evaluations overwrite current_schedule.csv.
     previous_schedule_df = None
@@ -1371,7 +1369,7 @@ def main(
         )
     horizon_print()
     
-    if lookahead_days == 1 and (not feasible):
+    if lookahead_days < max(ALLOWED_LOOKAHEAD_DAYS) and (not feasible):
         best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(max(ALLOWED_LOOKAHEAD_DAYS))
         print(f"had to expand our horizon - running max: {max(ALLOWED_LOOKAHEAD_DAYS)}")
         feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
