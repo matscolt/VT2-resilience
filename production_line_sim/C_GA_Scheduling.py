@@ -1355,7 +1355,7 @@ def main(
         f"feasible={feasible}"
     )
 
-    # If requested horizon is 1 day and it's NOT feasible, rerun with 5 days.
+    
     if lookahead_days == 1 and (not feasible):
         best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(max(ALLOWED_LOOKAHEAD_DAYS))
         print(f"had to expand our horizon - running max days: {max(ALLOWED_LOOKAHEAD_DAYS)}")
