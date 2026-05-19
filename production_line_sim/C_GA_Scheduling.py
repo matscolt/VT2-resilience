@@ -1291,8 +1291,10 @@ def main(
     need_full_horizon = False
 
     if not _schedule_exists_and_has_content(schedule_path):
+        print("\nschedule is missing\n")
         need_full_horizon = True
     elif _schedule_has_less_than_one_day(current_time_s, schedule_path, PRODUCTION_PLAN_PATH):
+        print("\nhorizon less than a day\n")
         need_full_horizon = True
 
     if need_full_horizon:
@@ -1355,13 +1357,13 @@ def main(
     best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(lookahead_days)
 
     feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
-    
-    print(
-        f"[GA] Horizon feasibility check: "
-        f"makespan={best_simulation_result.get('makespan') if best_simulation_result else None}, "
-        f"horizon_end_s={horizon_info.get('horizon_end_s') if horizon_info else None}, "
-        f"feasible={feasible}"
-    )
+    def horizon_print():    
+        print(
+            f"[GA] Horizon feasibility check: \n"
+            f"makespan={best_simulation_result.get('makespan') if best_simulation_result else None},\n "
+            f"horizon_end_s={horizon_info.get('horizon_end_s') if horizon_info else None},\n "
+            f"feasible={feasible}"
+        )
 
     
     if lookahead_days == 1 and (not feasible):
@@ -1369,12 +1371,7 @@ def main(
         print(f"had to expand our horizon - running max: {max(ALLOWED_LOOKAHEAD_DAYS)}")
         feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
         
-        print(
-            f"[GA] Horizon feasibility check: "
-            f"makespan={best_simulation_result.get('makespan') if best_simulation_result else None}, "
-            f"horizon_end_s={horizon_info.get('horizon_end_s') if horizon_info else None}, "
-            f"feasible={feasible}"
-        )
+        horizon_print()
 
     # --- Export logic ---
     if best_order_solution is None:
