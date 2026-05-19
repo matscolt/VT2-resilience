@@ -153,20 +153,20 @@ def get_completed_unit_ids_from_unit_summary(current_time_s: float) -> Set[str]:
 SECONDS_PER_PRODUCTION_DAY = 8 * 60 * 60
 
 # Set these values here while testing.
-DEFAULT_LOOKAHEAD_DAYS = 1
+DEFAULT_LOOKAHEAD_DAYS = 2
 
 # Rolling horizon options:
 # 1 day  -> schedule the rest of current day only
 # 3 days -> schedule rest of current day + 2 full days
 # 5 days -> schedule rest of current day + 4 full days
-ALLOWED_LOOKAHEAD_DAYS = {1,3}
-SWAPS = 3
-POPULATION_SIZE = 6
-GENERATIONS = 4
-ELITE_SIZE = 2
-TOURNAMENT_SIZE = 3
+ALLOWED_LOOKAHEAD_DAYS = {2,4}
+SWAPS = 2
+POPULATION_SIZE = 10
+GENERATIONS = 20
+ELITE_SIZE = 1
+TOURNAMENT_SIZE = 2
 CROSSOVER_RATE = 0.9
-MUTATION_RATE = 0.4
+MUTATION_RATE = 0.15
 
 # ============================================================
 # FITNESS WEIGHTS

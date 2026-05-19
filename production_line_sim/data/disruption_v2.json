@@ -50,7 +50,7 @@
       ],
       "efficiency loss": {
         "chance [%]": 0.00059,
-        "chance of sim time [%]": 0.285,
+        "chance of sim time [%]": 0.095,
         "range [%]": [
           10,
           90
@@ -98,7 +98,7 @@
       ],
       "efficiency loss": {
         "chance [%]": 0.000375,
-        "chance of sim time [%]": 0.1125,
+        "chance of sim time [%]": 0.0375,
         "range [%]": [
           10,
           90
@@ -190,7 +190,7 @@
       ],
       "efficiency loss": {
         "chance [%]": 0.00021,
-        "chance of sim time [%]": 0.1426,
+        "chance of sim time [%]": 0.0475,
         "range [%]": [
           10,
           90
@@ -240,12 +240,12 @@
         "name": "Inspection Failure",
         "effect": "cancel_and_redo_unit",
         "chance [%]": 0.001,
-        "chance of sim time [%]": 0.2,
+        "chance of sim time [%]": 0.05,
         "action": "The unit is cancelled and redone."
       },
       "efficiency loss": {
         "chance [%]": 0.00093,
-        "chance of sim time [%]": 0.32725,
+        "chance of sim time [%]": 0.109,
         "range [%]": [
           10,
           90
@@ -304,7 +304,7 @@
       ],
       "efficiency loss": {
         "chance [%]": 0.00085,
-        "chance of sim time [%]": 0.57906,
+        "chance of sim time [%]": 0.193,
         "range [%]": [
           10,
           90
@@ -332,12 +332,12 @@
         "name": "Inspection Failure",
         "effect": "cancel_and_redo_unit",
         "chance [%]": 0.0017,
-        "chance of sim time [%]": 0.67535,
+        "chance of sim time [%]": 0.05,
         "action": "The unit is cancelled and redone."
       },
       "efficiency loss": {
         "chance [%]": 0.00049,
-        "chance of sim time [%]": 0.095,
+        "chance of sim time [%]": 0.032,
         "range [%]": [
           10,
           90
