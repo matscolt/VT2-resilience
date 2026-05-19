@@ -293,7 +293,7 @@ def generate_orderlist(seed, plan_time, output_path: Path,num_orders, num_units)
         if order_id == num_orders:
             units = units_left
         units_left -= units
-        due_date = round_half_up(random.uniform(min(units * AVE_CYCLE_TIME_PER_UNIT, plan_time), plan_time))
+        due_date = round_half_up(random.uniform(min(units * AVE_CYCLE_TIME_PER_UNIT*1.2, plan_time), plan_time))
         priority = round_half_up(min(max(random.expovariate(1/1.5), PRIO_LOW), PRIO_HIGH))
         variant0 = "FUSE0"
         quantity0 = round_half_up(max(random.normalvariate(units * 0.33, unitstd), 0))
