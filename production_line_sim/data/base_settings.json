@@ -37,5 +37,6 @@
     },
     "carriers": {
         "number of carriers": 8
-    }
+    },
+    "lowest acceptable standard deviation [std below]": 3
 }
