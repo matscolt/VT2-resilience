@@ -46,7 +46,7 @@ except Exception:
     D_algo = None
 
 try:
-    import production_line_sim.E_production_line_sim as sim  # your deterministic simulator
+    import E_production_line_sim as sim  # your deterministic simulator
 except Exception:
     sim = None
 

@@ -1,9 +1,10 @@
-#####
 {
     "sim_time [s]": 1244000,
     "plan_time [s]": 576000,
     "seed": "",
-    
+    "random based disruptions": {
+        "enabled": 2
+    },
     "line_layout_file": "layout_1_1_1_1_1_1.json",
     "carriers": {
         "number of carriers": 8

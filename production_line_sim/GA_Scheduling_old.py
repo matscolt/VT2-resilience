@@ -9,7 +9,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Set, Tuple, Dict
 import pandas as pd
-import production_line_sim.E_production_line_sim as simulator
+import E_production_line_sim as simulator
 # OPTION A: if makespan > horizon_end_s for 1-day horizon, rerun GA with 5 days (no further fallback)
 ### PATCH: NO BEST-SUMMARY FOLDER / ON_GOING ONLY
 # This file is auto-patched to ensure the GA only overwrites current_schedule.csv in ON_GOING_RUN_DIR.

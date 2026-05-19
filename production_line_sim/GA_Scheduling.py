@@ -159,7 +159,7 @@ DEFAULT_LOOKAHEAD_DAYS = 1
 # 1 day  -> schedule the rest of current day only
 # 3 days -> schedule rest of current day + 2 full days
 # 5 days -> schedule rest of current day + 4 full days
-ALLOWED_LOOKAHEAD_DAYS = {1, 3}
+ALLOWED_LOOKAHEAD_DAYS = {1, 3, 5}
 SWAPS = 3
 POPULATION_SIZE = 6
 GENERATIONS = 4
@@ -469,7 +469,6 @@ def is_schedule_feasible_within_horizon(simulation_result: dict, horizon_info: d
     try:
         return float(makespan) <= float(horizon_end)
     except (TypeError, ValueError):
-        print("bruh the type is fucked")
         return False
 
 
@@ -807,7 +806,7 @@ def evaluate_schedule_with_simulator(
     units_lookup,
     chromosome_index,
     generation
-, current_time_s: float = 0.0, simulation_time_limit_s: float | None = None):
+, current_time_s: float = 0.0):
 
     filename = "current_schedule.csv"
 
@@ -818,13 +817,12 @@ def evaluate_schedule_with_simulator(
         filename=filename,
         verbose=False
     )
-    print("HELLO I AM PRINT IN THE EVALUATE SCHEDULE")
+
     with contextlib.redirect_stdout(io.StringIO()):
-        simulation_result = simulator.simulate_for_ga(str(MAIN_SETTINGS_PATH), current_time_s, simulation_time_limit_s=simulation_time_limit_s, return_route_map=False)
+        simulation_result = simulator.simulate_for_ga(str(MAIN_SETTINGS_PATH), current_time_s)
 
     # No summary folder is produced when using simulate_for_ga (in-memory evaluation).
     summary_folder = None
-    print(simulation_result)
     return simulation_result, summary_folder
 
 
@@ -1011,7 +1009,7 @@ def run_ga(
     orders,
     units,
     order_units
-, current_time_s: float = 0.0, simulation_time_limit_s: float | None = None):
+, current_time_s: float = 0.0):
 
     units_lookup = {
         u.unit_id: u
@@ -1103,7 +1101,7 @@ def run_ga(
                     simulation_result
                 )
 
-                best_summary_folder = summary_folder
+                # DISABLED: best_summary_folder = summary_folder
 
             best_marker = " <-- NEW BEST" if is_new_global_best else ""
 
@@ -1179,7 +1177,7 @@ def run_ga(
         best_unit_sequence,
         best_simulation_result,
         best_fitness,
-        best_summary_folder
+        # DISABLED: best_summary_folder
     )
 
 
@@ -1270,7 +1268,7 @@ def main(
     main_settings_path,
     current_time_s,
     lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
-    ):
+):
 
     # ===============================
     # NEW: schedule pre-check
@@ -1336,17 +1334,17 @@ def main(
         if not orders:
             return None, None, float('inf'), None, horizon_info, units, order_units
 
-        best_order_solution, best_unit_sequence, best_simulation_result, best_fitness, best_folder = run_ga(
+        best_order_solution, best_unit_sequence, best_simulation_result, best_fitness, *_ = run_ga(
             orders=orders,
             units=units,
             order_units=order_units,
             current_time_s=current_time_s,
         )
 
-        return best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, order_units, best_folder
+        return best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, order_units
 
     # --- Try 1 day first (or the requested lookahead) ---
-    best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou, best_folder = _run_once(lookahead_days)
+    best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(lookahead_days)
 
     feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
     
@@ -1371,15 +1369,8 @@ def main(
     # Build the new schedule dataframe
     units_lookup = {u.unit_id: u for u in units}
     best_route_map = {}
-    # Re-run the best schedule once (no time limit) to derive per-unit route IDs.
-    try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            route_run = simulator.simulate_for_ga(str(MAIN_SETTINGS_PATH), current_time_s, simulation_time_limit_s=None, return_route_map=True)
-        if isinstance(route_run, dict):
-            best_route_map = dict(route_run.get('route_id_by_unit_id', {}))
-    except Exception:
-        best_route_map = {}
-
+    if isinstance(best_simulation_result, dict):
+        best_route_map = dict(best_simulation_result.get("route_id_by_unit_id", {}))
 
     new_schedule_df = chromosome_to_unit_dataframe(
         chromosome=best_order_solution,

@@ -5,15 +5,6 @@
   "capacity_percentage": "90.0%",
   "layout_name": "layout_2_2_5_2_2_2",
   "carriers": 48,
-
-  "time_unit": "seconds",
-  "transport_times_between_consecutive_stations": {
-    "Station 1: Bottom cover -> Station 2: Drill station": 39.0,
-    "Station 2: Drill station -> Station 3: Robot cell": 39.0,
-    "Station 3: Robot cell -> Station 4: Inspection": 39.0,
-    "Station 4: Inspection -> Station 5: Top cover": 111.0,
-    "Station 5: Top cover -> Station 6: Packaging": 39.0
-    },
   "station_instances": [
     {
       "station_name": "Station 1: Bottom cover",
@@ -71,15 +62,15 @@
     },
     {
       "station_name": "Station 4: Inspection",
-      "time_scale_factor": 1.0,
+      "time_scale_factor": 4.0,
       "branch_transport_from_previous_s": 0.0,
-      "branch_transport_to_next_s": 40.0
+      "branch_transport_to_next_s": 20.0
     },
     {
       "station_name": "Station 4.1: Inspection",
       "time_scale_factor": 1.0,
       "branch_transport_from_previous_s": 20.0,
-      "branch_transport_to_next_s": 20.0 
+      "branch_transport_to_next_s": 0.0
     },
     {
       "station_name": "Station 5: Top cover",

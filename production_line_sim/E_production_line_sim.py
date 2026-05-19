@@ -109,7 +109,7 @@ EVENT_PRIORITY = {
     EVENT_RELEASE: 3,
 }
 
-MAX_UNITS_IN_SYSTEM = 1
+MAX_UNITS_IN_SYSTEM = 8
 RETURN_TO_STATION_1_TIME_S = 31.3
 
 INPUT_BATCH_NAME_RE = re.compile(r"^orders_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)$", re.IGNORECASE)
@@ -138,8 +138,6 @@ MATERIAL_STAGE_TO_MATERIAL = {
 INSPECTION_STAGE_NUMBER = 6
 BROKEN_MATERIAL_EXTRA_TIME_DEFAULT_S = 30.0
 
-BASE_DIR = Path(__file__).parent
-data_dir = BASE_DIR / "data"
 
 # -----------------------------
 # Data loading / order parsing
@@ -714,6 +712,113 @@ def find_newest_orders_csv(batch_dir: Path) -> Path:
         return max(fallback_csv_files, key=lambda path: path.stat().st_mtime)
 
     raise FileNotFoundError(f"No order CSV file was found in {batch_dir}")
+
+
+def load_latest_generated_input(
+    input_root: Path, valid_variants: set[str]
+) -> dict[str, Any]:
+    batch_dir = find_newest_input_batch_dir(input_root)
+    orders_csv_path = find_newest_orders_csv(batch_dir)
+    settings_path = batch_dir / "settings.json"
+
+    if not settings_path.exists():
+        raise FileNotFoundError(f"settings.json was not found in {batch_dir}")
+
+    settings_data = load_json(settings_path)
+    simulation_time_s = float(settings_data.get("sim_time [s]", settings_data.get("Sim_time [s]", 0.0)))
+    carriers = int(float(settings_data.get("carriers", {}).get("number of carriers", MAX_UNITS_IN_SYSTEM)))
+
+    expanded_units: list[str] = []
+    unit_release_times: list[float] = []
+    unit_priorities: list[int] = []
+    unit_order_ids: list[str] = []
+    order_rows: list[dict[str, Any]] = []
+
+    with orders_csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None:
+            raise ValueError(f"Order CSV is empty: {orders_csv_path}")
+
+        for row_index, row in enumerate(reader, start=1):
+            if not row or not any(str(cell).strip() for cell in row):
+                continue
+
+            order_id = str(row[0]).strip() if len(row) > 0 else str(row_index)
+            order_time_s = _read_float(row[1], 0.0) if len(row) > 1 else 0.0
+            priority = max(1, _read_int(row[2], 1)) if len(row) > 2 else 1
+
+            row_variants: list[dict[str, Any]] = []
+            for col_idx in range(3, len(row), 2):
+                variant_text = str(row[col_idx]).strip().upper() if col_idx < len(row) else ""
+                quantity = _read_int(row[col_idx + 1], 0) if col_idx + 1 < len(row) else 0
+
+                if variant_text == "":
+                    continue
+                if variant_text not in valid_variants:
+                    raise ValueError(
+                        f"Unknown variant '{variant_text}' in {orders_csv_path.name}. Valid options: {', '.join(sorted(valid_variants))}"
+                    )
+                if quantity < 0:
+                    raise ValueError(
+                        f"Negative quantity for variant '{variant_text}' in row {row_index} of {orders_csv_path.name}"
+                    )
+
+                row_variants.append(
+                    {
+                        "variant": variant_text,
+                        "quantity": quantity,
+                        "variant_slot_index": (col_idx - 3) // 2,
+                    }
+                )
+
+            order_rows.append(
+                {
+                    "order_id": order_id,
+                    "order_time_s": order_time_s,
+                    "priority": priority,
+                    "variants": row_variants,
+                    "row_index": row_index,
+                }
+            )
+
+    order_rows.sort(key=lambda row: (row["order_time_s"], -row["priority"], row["row_index"], str(row["order_id"])))
+
+    for row in order_rows:
+        if row["order_time_s"] > simulation_time_s:
+            continue
+
+        for variant_entry in row["variants"]:
+            variant = variant_entry["variant"]
+            quantity = int(variant_entry["quantity"])
+            for _ in range(quantity):
+                expanded_units.append(variant)
+                unit_release_times.append(float(row["order_time_s"]))
+                unit_priorities.append(int(row["priority"]))
+                unit_order_ids.append(str(row["order_id"]))
+
+    batch_name = batch_dir.name
+    order_text = batch_name
+    if expanded_units:
+        order_mix = Counter(expanded_units)
+        mix_text = ", ".join(f"{qty}x{variant}" for variant, qty in sorted(order_mix.items()))
+        order_text = f"{batch_name}__{mix_text}"
+
+    return {
+        "order_text": order_text,
+        "ordered_units": expanded_units,
+        "unit_release_times": unit_release_times,
+        "unit_priorities": unit_priorities,
+        "unit_order_ids": unit_order_ids,
+        "simulation_time_s": simulation_time_s,
+        "carriers": carriers,
+        "settings_data": settings_data,
+        "selected_line_layout_name": _resolve_line_layout_filename_from_settings(settings_data),
+        "input_root": input_root,
+        "batch_dir": batch_dir,
+        "orders_csv_path": orders_csv_path,
+        "settings_path": settings_path,
+    }
 
 
 def _normalize_probability(value: Any) -> float:
@@ -2451,6 +2556,7 @@ def run_simulation(
             if unit_chosen_route_by_root.get(root_index)
         },
     }
+
     return operations, transport_records, unit_summaries, station_summaries, station_available_time, simulation_details
 
 
@@ -3176,6 +3282,750 @@ def save_run_metadata(
         payload.update(extra_payload)
     save_json(payload, output_path)
 
+
+# -----------------------------
+# Main
+# -----------------------------
+def _legacy_cli_main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Simulate a 6-station phone production line with FIFO queues and transport times."
+    )
+    parser.add_argument(
+        "--order",
+        type=str,
+        help='Order string, for example: "3xFUSE2, 2xFUSE1, 4xFUSE0"',
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent / "data",
+        help="Folder containing process_times.json, transport_times.json, material_stock.json and bom.json",
+    )
+    parser.add_argument(
+        "--input-root",
+        type=Path,
+        default=Path(__file__).resolve().parent / "input",
+        help="Folder containing generated input batch folders such as orders_DD-MM_HH-MM_N",
+    )
+    parser.add_argument(
+        "--line-layout-file",
+        type=str,
+        help="Optional line layout file name or path. If omitted, settings.json is checked first and then line_layout.json defaults are used.",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=Path(__file__).resolve().parent / "output",
+        help="Root folder where a new subfolder will be created for every order run",
+    )
+    args = parser.parse_args()
+
+    data_dir: Path = args.data_dir
+    input_root: Path = args.input_root
+    output_root: Path = args.output_root
+
+    starttime = time.perf_counter()
+
+    process_time_data = load_json(data_dir / "process_times.json")
+    transport_time_data = load_json(data_dir / "transport_times.json")
+    material_stock_data = load_json(data_dir / "material_stock.json")
+    bom_data = load_json(data_dir / "bom.json")
+
+    valid_variants = set(process_time_data["process_times"].keys())
+
+    order_text: str
+    ordered_units: list[str]
+    unit_release_times: list[float]
+    unit_priorities: list[int]
+    unit_order_ids: list[str]
+    simulation_time_s: float | None = None
+    carriers = MAX_UNITS_IN_SYSTEM
+    run_metadata_extra: dict[str, Any] = {}
+    selected_line_layout_name: str | None = args.line_layout_file
+    batch_dir_for_layout: Path | None = None
+    settings_path: Path | None = None
+    settings_data: dict[str, Any] = {}
+
+    if args.order:
+        order_text = args.order
+        ordered_units = parse_order(order_text, valid_variants)
+        unit_release_times = [0.0] * len(ordered_units)
+        unit_priorities = [1] * len(ordered_units)
+        unit_order_ids = ["manual"] * len(ordered_units)
+    else:
+        generated_input = load_latest_generated_input(input_root, valid_variants)
+        order_text = generated_input["order_text"]
+        ordered_units = generated_input["ordered_units"]
+        unit_release_times = generated_input["unit_release_times"]
+        unit_priorities = generated_input.get("unit_priorities", [1] * len(ordered_units))
+        unit_order_ids = generated_input.get("unit_order_ids", ["1"] * len(ordered_units))
+        simulation_time_s = generated_input["simulation_time_s"]
+        carriers = max(1, int(generated_input.get("carriers", MAX_UNITS_IN_SYSTEM)))
+        settings_data = generated_input.get("settings_data", {})
+        settings_path = generated_input.get("settings_path")
+        batch_dir_for_layout = generated_input["batch_dir"]
+        if selected_line_layout_name is None:
+            selected_line_layout_name = generated_input.get("selected_line_layout_name")
+        run_metadata_extra = {
+            "input_root": str(generated_input["input_root"].resolve()),
+            "input_batch_directory": str(generated_input["batch_dir"].resolve()),
+            "input_orders_csv": str(generated_input["orders_csv_path"].resolve()),
+            "input_settings_json": str(generated_input["settings_path"].resolve()),
+            "simulation_time_seconds": simulation_time_s,
+            "carriers": carriers,
+            "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
+            "unit_priorities": list(unit_priorities),
+            "unit_order_ids": list(unit_order_ids),
+        }
+
+    line_layout_path_resolved = resolve_line_layout_path(
+        selected_layout_name=selected_line_layout_name,
+        input_root=input_root,
+        batch_dir=batch_dir_for_layout,
+        data_dir=data_dir,
+    )
+    line_layout_config, line_layout_path = load_line_layout_config(line_layout_path_resolved, process_time_data)
+    effective_line_layout = build_effective_line_layout(
+        process_time_data=process_time_data,
+        transport_time_data=transport_time_data,
+        line_layout_config=line_layout_config,
+    )
+
+    disruption_path = resolve_disruption_path(input_root=input_root, batch_dir=batch_dir_for_layout)
+    timed_disruption_csv_path = resolve_timed_disruption_csv_path(input_root=input_root, batch_dir=batch_dir_for_layout)
+    disruption_mode = _settings_disruption_mode(settings_data)
+    disruptions_enabled = disruption_mode != 0
+    chance_based_disruptions_enabled = disruption_mode == 1
+    timed_disruptions_enabled = disruption_mode == 2
+    disruption_seed = settings_data.get("seed")
+    disruption_config: dict[str, Any] | None = None
+    timed_disruption_records: list[dict[str, Any]] = []
+    timed_disruption_data: dict[str, Any] | None = None
+
+    if chance_based_disruptions_enabled:
+        if disruption_path is None or not disruption_path.exists():
+            raise FileNotFoundError(
+                "random based disruptions are enabled in settings.json, but disruption.json was not found in the input batch."
+            )
+        disruption_config = load_json(disruption_path)
+    elif timed_disruptions_enabled:
+        if timed_disruption_csv_path is None or not timed_disruption_csv_path.exists():
+            raise FileNotFoundError(
+                "time based disruptions are enabled in settings.json, but the timed disruption CSV was not found in the input batch."
+            )
+        timed_disruption_records = load_timed_disruption_csv(
+            timed_disruption_csv_path,
+            valid_variants=valid_variants,
+        )
+        timed_disruption_records = _assign_missing_emergency_order_ids(
+            timed_disruption_records=timed_disruption_records,
+            existing_order_ids=list(unit_order_ids),
+        )
+        timed_disruption_data = prepare_timed_disruption_data(
+            station_sequence=list(effective_line_layout["station_sequence"]),
+            timed_disruption_records=timed_disruption_records,
+        )
+
+    run_metadata_extra["line_layout_file"] = (
+        str(line_layout_path.resolve()) if line_layout_path is not None else "default_generated_layout"
+    )
+    if selected_line_layout_name:
+        run_metadata_extra["requested_line_layout_file"] = str(selected_line_layout_name)
+    run_metadata_extra["line_layout_name"] = str(effective_line_layout.get("layout_name", "default_single_path"))
+    run_metadata_extra["effective_station_sequence"] = list(effective_line_layout["station_sequence"])
+    run_metadata_extra["disruptions_enabled"] = bool(disruptions_enabled)
+    run_metadata_extra["disruption_mode"] = int(disruption_mode)
+    run_metadata_extra["disruption_seed"] = str(disruption_seed) if disruption_seed is not None else None
+    if disruption_path is not None:
+        run_metadata_extra["input_disruption_json"] = str(disruption_path.resolve())
+    if timed_disruption_csv_path is not None:
+        run_metadata_extra["input_timed_disruption_csv"] = str(timed_disruption_csv_path.resolve())
+
+    run_output_dir = create_run_output_dir(output_root, order_text)
+
+    copy_file_if_exists(settings_path, run_output_dir / "settings_used.json")
+    if int(disruption_mode) == 1:
+        copy_file_if_exists(disruption_path, run_output_dir / "disruption_used.json")
+    elif int(disruption_mode) == 2:
+        copy_file_if_exists(timed_disruption_csv_path, run_output_dir / "disruption_used.csv")
+
+    save_run_metadata(
+        order_text,
+        ordered_units,
+        run_output_dir / "run_metadata.json",
+        data_dir,
+        run_output_dir,
+        extra_payload=run_metadata_extra,
+    )
+
+    operations: list[OperationRecord] = []
+    transport_records: list[TransportRecord] = []
+    unit_summaries: list[UnitSummary] = []
+    station_summaries: list[StationSummary] = []
+
+    sim_with_dtimestart = time.perf_counter()
+    print(">> Running sim with disruptions")
+    operations, transport_records, unit_summaries, station_summaries, _, simulation_details = run_simulation(
+        ordered_units=ordered_units,
+        process_time_data=process_time_data,
+        transport_time_data=transport_time_data,
+        unit_release_times=unit_release_times,
+        unit_priorities=unit_priorities,
+        unit_order_ids=unit_order_ids,
+        max_units_in_system=carriers,
+        line_layout_config=line_layout_config,
+        bom_data=bom_data,
+        material_stock_data=material_stock_data,
+        disruptions_enabled=disruptions_enabled,
+        disruption_config=disruption_config if chance_based_disruptions_enabled else None,
+        disruption_seed=disruption_seed if chance_based_disruptions_enabled else None,
+        simulation_time_s=simulation_time_s,
+        timed_disruption_data=timed_disruption_data,
+    )
+    print(">> Done running sim with disruptions")
+    sim_with_dtimeend = time.perf_counter()
+    print(f"Simulation with disruptions time: {sim_with_dtimeend - sim_with_dtimestart:.6f} seconds")
+
+    completed_good_variants = list(simulation_details.get("completed_good_variants", []))
+    completed_root_positions = list(simulation_details.get("completed_root_positions", []))
+    completed_order_ids = [unit_order_ids[pos - 1] for pos in completed_root_positions if 1 <= int(pos) <= len(unit_order_ids)]
+
+    material_report = build_material_report(
+        requested_units=ordered_units,
+        consumed_units=completed_good_variants,
+        bom_data=bom_data,
+        material_stock_data=material_stock_data,
+        extra_material_consumed=simulation_details.get("extra_material_consumed", {}),
+        actual_material_consumed=simulation_details.get("actual_material_consumed", {}),
+    )
+
+    completed_root_position_set = set(int(pos) for pos in completed_root_positions)
+    unproduced_positions = [idx + 1 for idx in range(len(ordered_units)) if (idx + 1) not in completed_root_position_set]
+    unproduced_units = [ordered_units[idx - 1] for idx in unproduced_positions]
+
+    production_status: dict[str, Any] = {
+        "requested_unit_count": len(ordered_units),
+        "produced_unit_count": len(completed_good_variants),
+        "unproduced_unit_count": len(unproduced_units),
+        "produced_mix": dict(Counter(completed_good_variants)),
+        "unproduced_mix": dict(Counter(unproduced_units)),
+        "produced_unit_positions": completed_root_positions,
+        "unproduced_unit_positions": unproduced_positions,
+        "completed_order_ids": completed_order_ids,
+        "carriers": carriers,
+        "return_to_station_1_time_seconds": RETURN_TO_STATION_1_TIME_S,
+        "disruptions_enabled": bool(disruptions_enabled),
+        "disruption_seed": str(disruption_seed) if disruption_seed is not None else None,
+        "simulation_time_seconds": simulation_time_s,
+        "replacement_units_created": list(simulation_details.get("replacement_units_created", [])),
+        "replacement_units_created_count": int(simulation_details.get("replacement_units_created_count", 0)),
+        "extra_material_consumed_due_to_disruptions": dict(simulation_details.get("extra_material_consumed", {})),
+        "remaining_stock_after_run": dict(simulation_details.get("remaining_stock_after_run", {})),
+        "units_lost_due_to_disruptions_without_replacement": int(simulation_details.get("unrecoverable_root_count", 0)),
+        "root_failures_without_replacement": list(simulation_details.get("root_failed_without_replacement", [])),
+        "disruption_counts": dict(simulation_details.get("disruption_counts", {})),
+        "stop_reason": simulation_details.get("stop_reason"),
+        "stopped_due_to_sim_time_limit": bool(simulation_details.get("stopped_due_to_sim_time_limit", False)),
+        "stopped_due_to_material_shortage": bool(simulation_details.get("stopped_due_to_material_shortage", False)),
+        "status": "complete" if len(unproduced_units) == 0 else "partial_or_stopped",
+    }
+
+    write_material_report_csv(material_report, run_output_dir / "material_report.csv")
+    save_json(production_status, run_output_dir / "production_status.json")
+
+    kpis = calculate_kpis(
+        ordered_units=completed_good_variants,
+        operations=operations,
+        unit_summaries=unit_summaries,
+        station_summaries=station_summaries,
+        transport_records=transport_records,
+    )
+
+    completed_units_sorted = sorted(
+        unit_summaries,
+        key=lambda unit_summary: (
+            float(unit_summary.completion_time_s),
+            str(unit_summary.unit_id),
+        ),
+    )
+    fuse0_wall_clock_intervals: list[float] = []
+    fuse0_active_intervals: list[float] = []
+    fuse0_global_intervals: list[float] = []
+
+    line_active_intervals: list[tuple[float, float]] = []
+    for op in operations:
+        start_time_s = float(op.start_time_s)
+        finish_time_s = float(op.finish_time_s)
+        if finish_time_s > start_time_s:
+            line_active_intervals.append((start_time_s, finish_time_s))
+    for tr in transport_records:
+        start_time_s = float(tr.start_time_s)
+        finish_time_s = float(tr.finish_time_s)
+        if finish_time_s > start_time_s:
+            line_active_intervals.append((start_time_s, finish_time_s))
+    if line_active_intervals:
+        line_active_intervals.sort()
+        merged_line_active_intervals: list[tuple[float, float]] = []
+        current_start_s, current_finish_s = line_active_intervals[0]
+        for start_time_s, finish_time_s in line_active_intervals[1:]:
+            if start_time_s <= current_finish_s:
+                current_finish_s = max(current_finish_s, finish_time_s)
+            else:
+                merged_line_active_intervals.append((current_start_s, current_finish_s))
+                current_start_s, current_finish_s = start_time_s, finish_time_s
+        merged_line_active_intervals.append((current_start_s, current_finish_s))
+        line_active_intervals = merged_line_active_intervals
+
+    fuse0_variant_intervals: list[tuple[float, float]] = []
+    for op in operations:
+        if str(op.variant).upper() != "FUSE0":
+            continue
+        start_time_s = float(op.start_time_s)
+        finish_time_s = float(op.finish_time_s)
+        if finish_time_s > start_time_s:
+            fuse0_variant_intervals.append((start_time_s, finish_time_s))
+    for tr in transport_records:
+        if str(tr.variant).upper() != "FUSE0":
+            continue
+        start_time_s = float(tr.start_time_s)
+        finish_time_s = float(tr.finish_time_s)
+        if finish_time_s > start_time_s:
+            fuse0_variant_intervals.append((start_time_s, finish_time_s))
+    if fuse0_variant_intervals:
+        fuse0_variant_intervals.sort()
+        merged_fuse0_variant_intervals: list[tuple[float, float]] = []
+        current_start_s, current_finish_s = fuse0_variant_intervals[0]
+        for start_time_s, finish_time_s in fuse0_variant_intervals[1:]:
+            if start_time_s <= current_finish_s:
+                current_finish_s = max(current_finish_s, finish_time_s)
+            else:
+                merged_fuse0_variant_intervals.append((current_start_s, current_finish_s))
+                current_start_s, current_finish_s = start_time_s, finish_time_s
+        merged_fuse0_variant_intervals.append((current_start_s, current_finish_s))
+        fuse0_variant_intervals = merged_fuse0_variant_intervals
+
+    def _overlap_with_intervals(
+        interval_start_s: float,
+        interval_finish_s: float,
+        active_intervals: list[tuple[float, float]],
+    ) -> float:
+        if interval_finish_s <= interval_start_s or not active_intervals:
+            return 0.0
+        overlap_s = 0.0
+        for active_start_s, active_finish_s in active_intervals:
+            if active_finish_s <= interval_start_s:
+                continue
+            if active_start_s >= interval_finish_s:
+                break
+            overlap_s += max(
+                0.0,
+                min(interval_finish_s, active_finish_s) - max(interval_start_s, active_start_s),
+            )
+        return overlap_s
+
+    for previous_unit_summary, current_unit_summary in zip(
+        completed_units_sorted,
+        completed_units_sorted[1:],
+    ):
+        previous_variant = str(previous_unit_summary.variant).upper()
+        current_variant = str(current_unit_summary.variant).upper()
+        if previous_variant != "FUSE0" or current_variant != "FUSE0":
+            continue
+
+        interval_start_s = float(previous_unit_summary.completion_time_s)
+        interval_finish_s = float(current_unit_summary.completion_time_s)
+        interval_duration_s = max(0.0, interval_finish_s - interval_start_s)
+
+        fuse0_wall_clock_intervals.append(interval_duration_s)
+        fuse0_active_intervals.append(
+            _overlap_with_intervals(
+                interval_start_s,
+                interval_finish_s,
+                fuse0_variant_intervals,
+            )
+        )
+
+        active_any_variant_s = _overlap_with_intervals(
+            interval_start_s,
+            interval_finish_s,
+            line_active_intervals,
+        )
+        no_activity_s = max(0.0, interval_duration_s - active_any_variant_s)
+        fuse0_global_intervals.append(
+            fuse0_active_intervals[-1] + no_activity_s
+        )
+
+    fuse0_completion_times = [
+        float(unit_summary.completion_time_s)
+        for unit_summary in completed_units_sorted
+        if str(unit_summary.variant).upper() == "FUSE0"
+    ]
+    if len(fuse0_completion_times) == 1:
+        fuse0_average_cycle_time = float(fuse0_completion_times[0])
+        fuse0_active_cycle_time = _overlap_with_intervals(
+            0.0,
+            float(fuse0_completion_times[0]),
+            fuse0_variant_intervals,
+        )
+        fuse0_global_cycle_time = float(fuse0_completion_times[0])
+    else:
+        fuse0_average_cycle_time = (
+            float(mean(fuse0_wall_clock_intervals))
+            if fuse0_wall_clock_intervals
+            else 0.0
+        )
+        fuse0_active_cycle_time = (
+            float(mean(fuse0_active_intervals))
+            if fuse0_active_intervals
+            else 0.0
+        )
+        fuse0_global_cycle_time = (
+            float(mean(fuse0_global_intervals))
+            if fuse0_global_intervals
+            else 0.0
+        )
+
+    kpis["average_cycle_time_seconds_fuse0"] = round(
+        fuse0_average_cycle_time,
+        4,
+    )
+    kpis["Active_average_cycle_time_seconds_fuse0"] = round(
+        fuse0_active_cycle_time,
+        4,
+    )
+    kpis["global_average_cycle_time_seconds_fuse0"] = round(
+        fuse0_global_cycle_time,
+        4,
+    )
+
+    kpis["carriers"] = carriers
+    kpis["return_to_station_1_time_seconds"] = round(RETURN_TO_STATION_1_TIME_S, 4)
+    kpis["disruptions_enabled"] = int(disruptions_enabled)
+    kpis["disruption_mode"] = int(disruption_mode)
+    if disruption_seed is not None:
+        kpis["disruption_seed"] = str(disruption_seed)
+    if simulation_time_s is not None:
+        kpis["simulation_time_seconds"] = round(simulation_time_s, 4)
+    kpis["line_layout_name"] = str(effective_line_layout.get("layout_name", "default_single_path"))
+    kpis["effective_station_count"] = len(effective_line_layout["station_sequence"])
+    kpis["completed_good_units"] = len(completed_good_variants)
+    if simulation_details.get("stop_reason"):
+        kpis["stopped_due_to_sim_time_limit"] = int(bool(simulation_details.get("stopped_due_to_sim_time_limit", False)))
+        kpis["stopped_due_to_material_shortage"] = int(bool(simulation_details.get("stopped_due_to_material_shortage", False)))
+    for key, value in sorted(simulation_details.get("disruption_counts", {}).items()):
+        kpis[f"disruption_{key}"] = value
+
+    operations_no_disruptions: list[OperationRecord] = operations
+    transport_records_no_disruptions: list[TransportRecord] = transport_records
+    unit_summaries_no_disruptions: list[UnitSummary] = unit_summaries
+    station_summaries_no_disruptions: list[StationSummary] = station_summaries
+    completed_good_variants_no_disruptions: list[str] = completed_good_variants
+    simulation_details_no_disruptions: dict[str, Any] = simulation_details
+
+    if disruptions_enabled:
+        print(">> Running sim without disruptions")
+        sim_no_dtimestart = time.perf_counter()
+        (
+            operations_no_disruptions,
+            transport_records_no_disruptions,
+            unit_summaries_no_disruptions,
+            station_summaries_no_disruptions,
+            _,
+            simulation_details_no_disruptions,
+        ) = run_simulation(
+            ordered_units=ordered_units,
+            process_time_data=process_time_data,
+            transport_time_data=transport_time_data,
+            unit_release_times=unit_release_times,
+            unit_priorities=unit_priorities,
+            unit_order_ids=unit_order_ids,
+            max_units_in_system=carriers,
+            line_layout_config=line_layout_config,
+            bom_data=bom_data,
+            material_stock_data=material_stock_data,
+            disruptions_enabled=False,
+            disruption_config=None,
+            disruption_seed=None,
+            simulation_time_s=simulation_time_s,
+            timed_disruption_data=None,
+        )
+        print(">> Done running sim without disruptions")
+        sim_no_dtimeend = time.perf_counter()
+        print(f"Simulation without disruptions time: {sim_no_dtimeend - sim_no_dtimestart:.6f} seconds")
+        completed_good_variants_no_disruptions = list(
+            simulation_details_no_disruptions.get("completed_good_variants", [])
+        )
+
+    kpis_no_disruptions = calculate_kpis(
+        ordered_units=completed_good_variants_no_disruptions,
+        operations=operations_no_disruptions,
+        unit_summaries=unit_summaries_no_disruptions,
+        station_summaries=station_summaries_no_disruptions,
+        transport_records=transport_records_no_disruptions,
+    )
+
+    completed_units_sorted_no_disruptions = sorted(
+        unit_summaries_no_disruptions,
+        key=lambda unit_summary: (
+            float(unit_summary.completion_time_s),
+            str(unit_summary.unit_id),
+        ),
+    )
+    fuse0_wall_clock_intervals_no_disruptions: list[float] = []
+    fuse0_active_intervals_no_disruptions: list[float] = []
+    fuse0_global_intervals_no_disruptions: list[float] = []
+
+    line_active_intervals_no_disruptions: list[tuple[float, float]] = []
+    for op in operations_no_disruptions:
+        start_time_s = float(op.start_time_s)
+        finish_time_s = float(op.finish_time_s)
+        if finish_time_s > start_time_s:
+            line_active_intervals_no_disruptions.append((start_time_s, finish_time_s))
+    for tr in transport_records_no_disruptions:
+        start_time_s = float(tr.start_time_s)
+        finish_time_s = float(tr.finish_time_s)
+        if finish_time_s > start_time_s:
+            line_active_intervals_no_disruptions.append((start_time_s, finish_time_s))
+    if line_active_intervals_no_disruptions:
+        line_active_intervals_no_disruptions.sort()
+        merged_line_active_intervals_no_disruptions: list[tuple[float, float]] = []
+        current_start_s, current_finish_s = line_active_intervals_no_disruptions[0]
+        for start_time_s, finish_time_s in line_active_intervals_no_disruptions[1:]:
+            if start_time_s <= current_finish_s:
+                current_finish_s = max(current_finish_s, finish_time_s)
+            else:
+                merged_line_active_intervals_no_disruptions.append((current_start_s, current_finish_s))
+                current_start_s, current_finish_s = start_time_s, finish_time_s
+        merged_line_active_intervals_no_disruptions.append((current_start_s, current_finish_s))
+        line_active_intervals_no_disruptions = merged_line_active_intervals_no_disruptions
+
+    fuse0_variant_intervals_no_disruptions: list[tuple[float, float]] = []
+    for op in operations_no_disruptions:
+        if str(op.variant).upper() != "FUSE0":
+            continue
+        start_time_s = float(op.start_time_s)
+        finish_time_s = float(op.finish_time_s)
+        if finish_time_s > start_time_s:
+            fuse0_variant_intervals_no_disruptions.append((start_time_s, finish_time_s))
+    for tr in transport_records_no_disruptions:
+        if str(tr.variant).upper() != "FUSE0":
+            continue
+        start_time_s = float(tr.start_time_s)
+        finish_time_s = float(tr.finish_time_s)
+        if finish_time_s > start_time_s:
+            fuse0_variant_intervals_no_disruptions.append((start_time_s, finish_time_s))
+    if fuse0_variant_intervals_no_disruptions:
+        fuse0_variant_intervals_no_disruptions.sort()
+        merged_fuse0_variant_intervals_no_disruptions: list[tuple[float, float]] = []
+        current_start_s, current_finish_s = fuse0_variant_intervals_no_disruptions[0]
+        for start_time_s, finish_time_s in fuse0_variant_intervals_no_disruptions[1:]:
+            if start_time_s <= current_finish_s:
+                current_finish_s = max(current_finish_s, finish_time_s)
+            else:
+                merged_fuse0_variant_intervals_no_disruptions.append((current_start_s, current_finish_s))
+                current_start_s, current_finish_s = start_time_s, finish_time_s
+        merged_fuse0_variant_intervals_no_disruptions.append((current_start_s, current_finish_s))
+        fuse0_variant_intervals_no_disruptions = merged_fuse0_variant_intervals_no_disruptions
+
+    def _overlap_with_intervals_no_disruptions(
+        interval_start_s: float,
+        interval_finish_s: float,
+        active_intervals: list[tuple[float, float]],
+    ) -> float:
+        if interval_finish_s <= interval_start_s or not active_intervals:
+            return 0.0
+        overlap_s = 0.0
+        for active_start_s, active_finish_s in active_intervals:
+            if active_finish_s <= interval_start_s:
+                continue
+            if active_start_s >= interval_finish_s:
+                break
+            overlap_s += max(
+                0.0,
+                min(interval_finish_s, active_finish_s) - max(interval_start_s, active_start_s),
+            )
+        return overlap_s
+
+    for previous_unit_summary, current_unit_summary in zip(
+        completed_units_sorted_no_disruptions,
+        completed_units_sorted_no_disruptions[1:],
+    ):
+        previous_variant = str(previous_unit_summary.variant).upper()
+        current_variant = str(current_unit_summary.variant).upper()
+        if previous_variant != "FUSE0" or current_variant != "FUSE0":
+            continue
+
+        interval_start_s = float(previous_unit_summary.completion_time_s)
+        interval_finish_s = float(current_unit_summary.completion_time_s)
+        interval_duration_s = max(0.0, interval_finish_s - interval_start_s)
+
+        fuse0_wall_clock_intervals_no_disruptions.append(interval_duration_s)
+        fuse0_active_intervals_no_disruptions.append(
+            _overlap_with_intervals_no_disruptions(
+                interval_start_s,
+                interval_finish_s,
+                fuse0_variant_intervals_no_disruptions,
+            )
+        )
+
+        active_any_variant_s = _overlap_with_intervals_no_disruptions(
+            interval_start_s,
+            interval_finish_s,
+            line_active_intervals_no_disruptions,
+        )
+        no_activity_s = max(0.0, interval_duration_s - active_any_variant_s)
+        fuse0_global_intervals_no_disruptions.append(
+            fuse0_active_intervals_no_disruptions[-1] + no_activity_s
+        )
+
+    fuse0_completion_times_no_disruptions = [
+        float(unit_summary.completion_time_s)
+        for unit_summary in completed_units_sorted_no_disruptions
+        if str(unit_summary.variant).upper() == "FUSE0"
+    ]
+    if len(fuse0_completion_times_no_disruptions) == 1:
+        fuse0_average_cycle_time_no_disruptions = float(fuse0_completion_times_no_disruptions[0])
+        fuse0_active_cycle_time_no_disruptions = _overlap_with_intervals_no_disruptions(
+            0.0,
+            float(fuse0_completion_times_no_disruptions[0]),
+            fuse0_variant_intervals_no_disruptions,
+        )
+        fuse0_global_cycle_time_no_disruptions = float(fuse0_completion_times_no_disruptions[0])
+    else:
+        fuse0_average_cycle_time_no_disruptions = (
+            float(mean(fuse0_wall_clock_intervals_no_disruptions))
+            if fuse0_wall_clock_intervals_no_disruptions
+            else 0.0
+        )
+        fuse0_active_cycle_time_no_disruptions = (
+            float(mean(fuse0_active_intervals_no_disruptions))
+            if fuse0_active_intervals_no_disruptions
+            else 0.0
+        )
+        fuse0_global_cycle_time_no_disruptions = (
+            float(mean(fuse0_global_intervals_no_disruptions))
+            if fuse0_global_intervals_no_disruptions
+            else 0.0
+        )
+
+    kpis_no_disruptions["average_cycle_time_seconds_fuse0"] = round(
+        fuse0_average_cycle_time_no_disruptions,
+        4,
+    )
+    kpis_no_disruptions["Active_average_cycle_time_seconds_fuse0"] = round(
+        fuse0_active_cycle_time_no_disruptions,
+        4,
+    )
+    kpis_no_disruptions["global_average_cycle_time_seconds_fuse0"] = round(
+        fuse0_global_cycle_time_no_disruptions,
+        4,
+    )
+
+    kpis_no_disruptions["carriers"] = carriers
+    kpis_no_disruptions["return_to_station_1_time_seconds"] = round(RETURN_TO_STATION_1_TIME_S, 4)
+    kpis_no_disruptions["disruptions_enabled"] = 0
+    kpis_no_disruptions["disruption_mode"] = 0
+    if simulation_time_s is not None:
+        kpis_no_disruptions["simulation_time_seconds"] = round(simulation_time_s, 4)
+    kpis_no_disruptions["line_layout_name"] = str(effective_line_layout.get("layout_name", "default_single_path"))
+    kpis_no_disruptions["effective_station_count"] = len(effective_line_layout["station_sequence"])
+    kpis_no_disruptions["completed_good_units"] = len(completed_good_variants_no_disruptions)
+
+    station_utilization_active_window_without_disruptions = {
+        (int(summary.station_index), str(summary.station_name)): float(summary.utilization_active_window)
+        for summary in station_summaries_no_disruptions
+    }
+
+    active_production_line_time_s = _calculate_active_production_line_time_s(
+        operations,
+        simulation_details.get("disruption_event_log", []),
+        transport_records,
+    )
+    station_active_order_utilization = {}
+    for summary in station_summaries:
+        station_key = (int(summary.station_index), str(summary.station_name))
+        if active_production_line_time_s > 0:
+            station_active_order_utilization[station_key] = float(summary.busy_time_s) / float(active_production_line_time_s)
+        else:
+            station_active_order_utilization[station_key] = 0.0
+        safe_key = re.sub(r"[^A-Za-z0-9]+", "_", str(summary.station_name)).strip("_").lower()
+        kpis[f"active_order_utilization_{safe_key}"] = round(
+            float(station_active_order_utilization[station_key]),
+            6,
+        )
+
+    active_production_line_time_no_disruptions_s = _calculate_active_production_line_time_s(
+        operations_no_disruptions,
+        simulation_details_no_disruptions.get("disruption_event_log", []),
+        transport_records_no_disruptions,
+    )
+    station_active_order_utilization_no_disruptions = {}
+    for summary in station_summaries_no_disruptions:
+        station_key = (int(summary.station_index), str(summary.station_name))
+        if active_production_line_time_no_disruptions_s > 0:
+            station_active_order_utilization_no_disruptions[station_key] = float(summary.busy_time_s) / float(active_production_line_time_no_disruptions_s)
+        else:
+            station_active_order_utilization_no_disruptions[station_key] = 0.0
+        safe_key = re.sub(r"[^A-Za-z0-9]+", "_", str(summary.station_name)).strip("_").lower()
+        kpis_no_disruptions[f"active_order_utilization_{safe_key}"] = round(
+            float(station_active_order_utilization_no_disruptions[station_key]),
+            6,
+        )
+
+    write_kpis_csv(kpis, run_output_dir / "kpi_summary.csv")
+    write_kpis_csv(kpis_no_disruptions, run_output_dir / "kpi_summary_without_disruptions.csv")
+    write_operations_csv(operations, run_output_dir / "station_schedule.csv")
+    write_transport_csv(transport_records, run_output_dir / "transport_schedule.csv")
+    write_unit_summary_csv(unit_summaries, run_output_dir / "unit_summary.csv")
+    write_station_summary_csv(
+        station_summaries,
+        run_output_dir / "station_summary.csv",
+        utilization_active_window_without_disruptions_by_station=station_utilization_active_window_without_disruptions,
+        active_order_utilization_by_station=station_active_order_utilization,
+    )
+
+    if disruptions_enabled or simulation_details.get("disruption_event_log"):
+        save_json(
+            {
+                "disruptions_enabled": bool(disruptions_enabled),
+                "disruption_mode": int(disruption_mode),
+                "seed": str(disruption_seed) if disruption_seed is not None else None,
+                "broken_material_extra_time_seconds": _broken_material_extra_time_s(disruption_config),
+                "timed_disruption_records": list(timed_disruption_records),
+                "disruption_counts": dict(simulation_details.get("disruption_counts", {})),
+                "stop_reason": simulation_details.get("stop_reason"),
+                "events": list(simulation_details.get("disruption_event_log", [])),
+            },
+            run_output_dir / "disruption_summary.json",
+        )
+
+    print(f"Run folder: {run_output_dir.resolve()}")
+    if simulation_time_s is not None:
+        print(f"Simulation time: {simulation_time_s} s")
+    print(f"Carriers: {carriers}")
+    print(f"Return time to Station 1: {RETURN_TO_STATION_1_TIME_S} s")
+    print(f"Line layout: {effective_line_layout.get('layout_name', 'default_single_path')}")
+    if line_layout_path is not None:
+        print(f"Line layout file: {line_layout_path.resolve()}")
+    print(f"Disruptions enabled: {int(disruptions_enabled)}")
+    print(f"Disruption mode: {int(disruption_mode)}")
+    if chance_based_disruptions_enabled and disruption_path is not None:
+        print(f"Disruption file: {disruption_path.resolve()}")
+    if timed_disruptions_enabled and timed_disruption_csv_path is not None:
+        print(f"Timed disruption file: {timed_disruption_csv_path.resolve()}")
+    print(f"Effective station count: {len(effective_line_layout['station_sequence'])}")
+    print(f"Requested units: {len(ordered_units)}")
+    print(f"Completed good units: {len(completed_good_variants)}")
+    if simulation_details.get("stop_reason"):
+        print(f"Stop reason: {simulation_details['stop_reason']}")
+    if simulation_details.get("unrecoverable_root_count", 0):
+        print(f"Units lost due to disruptions without replacement: {simulation_details['unrecoverable_root_count']}")
+
+    endtime = time.perf_counter()
+    print(f"Total execution time: {endtime - starttime:.6f} seconds")
+
+
+
 # -----------------------------------------------------------------------------
 # Integrated GA/main-settings entry points
 # -----------------------------------------------------------------------------
@@ -3281,15 +4131,22 @@ def _load_run_context_from_main_settings(main_settings_path: Path, simulation_ti
         raise FileNotFoundError(f"current_schedule.csv was not found at {schedule_path}")
     schedule = _read_current_schedule(schedule_path, valid_variants)
 
-    layout_json = load_json(data_dir / "Layouts" / run_settings.get("Scenarios"))
-    carriers = layout_json.get("carriers")
+    default_settings_path = data_dir / "settings.json"
+    settings_data = load_json(default_settings_path) if default_settings_path.exists() else {}
+    settings_data.update(run_settings)
+    scenario_layout = run_settings.get("Scenarios")
+    if isinstance(scenario_layout, str) and scenario_layout.strip():
+        settings_data["line_layout_file"] = scenario_layout.strip()
 
+    sim_time = float(settings_data.get("sim_time [s]", settings_data.get("Sim_time [s]", 0.0)) or 0.0)
+    if simulation_time_limit_s is not None:
+        sim_time = float(simulation_time_limit_s)
+    carriers = int(float(settings_data.get("carriers", {}).get("number of carriers", MAX_UNITS_IN_SYSTEM))) if isinstance(settings_data.get("carriers", {}), dict) else MAX_UNITS_IN_SYSTEM
     label = str(main_settings.get("label", main_settings_path.stem))
-
     return {
         "main_settings_path": main_settings_path,
         "main_settings": main_settings,
-        "settings_data": run_settings,
+        "settings_data": settings_data,
         "pathlist": pathlist,
         "data_dir": data_dir,
         "process_time_data": process_time_data,
@@ -3303,8 +4160,9 @@ def _load_run_context_from_main_settings(main_settings_path: Path, simulation_ti
         "has_assigned_route": bool(schedule["has_assigned_route"]),
         "unit_release_times": [0.0] * len(schedule["ordered_units"]),
         "unit_priorities": [1] * len(schedule["ordered_units"]),
+        "simulation_time_s": sim_time,
         "carriers": carriers,
-        "selected_line_layout_name": _resolve_line_layout_filename_from_settings(run_settings),
+        "selected_line_layout_name": _resolve_line_layout_filename_from_settings(settings_data),
         "input_root": _pathlist_path(pathlist, "input"),
         "batch_dir": _pathlist_path(pathlist, "input_runs_run") or main_settings_path.parent,
         "output_results": _pathlist_path(pathlist, "output_run_results"),
@@ -3364,14 +4222,12 @@ def _simulation_result_from_summaries(unit_summaries: list[UnitSummary], details
     }
 
 
-def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0, simulation_time_limit_s: float | None = None, return_route_map: bool = False) -> dict[str, Any]:
-    print("SIMULATING FOR GA")
+def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0) -> dict[str, Any]:
     ctx = _load_run_context_from_main_settings(Path(main_settings_path), None)
     line_layout_path = resolve_line_layout_path(ctx["selected_line_layout_name"], ctx.get("input_root"), ctx.get("batch_dir"), ctx["data_dir"])
     line_layout_config, _ = load_line_layout_config(line_layout_path, ctx["process_time_data"])
     effective = build_effective_line_layout(ctx["process_time_data"], ctx["transport_time_data"], line_layout_config)
     valid_variants = set(ctx["process_time_data"]["process_times"].keys())
-    base_setting = load_json(data_dir / "base_setting.json")
     mode, enabled, chance_based, timed, seed, dis_cfg, timed_records, timed_data, _, _ = _prepare_disruption_inputs(ctx, effective, valid_variants)
     ops, trs, units, stations, _, details = run_simulation(
         ordered_units=list(ctx["ordered_units"]),
@@ -3388,7 +4244,7 @@ def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0,
         disruptions_enabled=enabled,
         disruption_config=dis_cfg if chance_based else None,
         disruption_seed=seed if chance_based else None,
-        simulation_time_s=base_setting.get("plan_time [s]"),
+        simulation_time_s=ctx["simulation_time_s"],
         timed_disruption_data=timed_data,
     )
     return _simulation_result_from_summaries(units, details)
@@ -3502,11 +4358,9 @@ def _write_outputs_for_integrated_run(ctx: dict[str, Any], operations, transport
         save_json({"disruptions_enabled": bool(disruptions_enabled), "disruption_mode": int(disruption_mode), "seed": str(disruption_seed) if disruption_seed is not None else None, "timed_disruption_records": list(timed_records), "disruption_counts": dict(simulation_details.get("disruption_counts", {})), "events": list(simulation_details.get("disruption_event_log", []))}, run_output_dir / "disruption_summary.json")
 
 
-def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: float | None = None, segment_start_s: float | None = None) -> None:
+def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: float | None = None) -> None:
     if main_settings_path is None:
         # Keep legacy CLI behavior available.
-        print("\nEy man dont run it from here bro\n")
-        exit()
         return _legacy_cli_main()
     starttime = time.perf_counter()
     ctx = _load_run_context_from_main_settings(Path(main_settings_path), simulation_time_limit_s)
@@ -3530,7 +4384,7 @@ def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: 
         disruptions_enabled=enabled,
         disruption_config=dis_cfg if chance_based else None,
         disruption_seed=seed if chance_based else None,
-        simulation_time_s=simulation_time_limit_s-segment_start_s,
+        simulation_time_s=ctx["simulation_time_s"],
         timed_disruption_data=timed_data,
     )
     completed_good_variants = list(details.get("completed_good_variants", []))

@@ -9,7 +9,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Set, Tuple, Dict
 import pandas as pd
-import production_line_sim.E_production_line_sim as simulator
+import E_production_line_sim as simulator
 ### PATCH: NO BEST-SUMMARY FOLDER / ON_GOING ONLY
 # This file is auto-patched to ensure the GA only overwrites current_schedule.csv in ON_GOING_RUN_DIR.
 # All best-schedule summary folder creation/moves/cleanup are disabled.
