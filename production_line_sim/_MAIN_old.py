@@ -14,7 +14,7 @@ Wants and wishes
 - display a capacity and actual units in queue 
 
 """
-import A_input, B_production_planning, C_IPPS, D_algo,GA_Scheduling , E_production_line_sim, F_graphgen, G_after_movie
+import A_input, B_production_planning, C_IPPS, D_algo,GA_Scheduling , production_line_sim.E_production_line_sim as E_production_line_sim, F_graphgen, G_after_movie
 from pathlib import Path
 from itertools import product
 from copy import deepcopy

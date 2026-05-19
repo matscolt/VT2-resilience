@@ -469,6 +469,7 @@ def is_schedule_feasible_within_horizon(simulation_result: dict, horizon_info: d
     try:
         return float(makespan) <= float(horizon_end)
     except (TypeError, ValueError):
+        print("bruh the type is fucked")
         return False
 
 
@@ -817,12 +818,13 @@ def evaluate_schedule_with_simulator(
         filename=filename,
         verbose=False
     )
-
+    print("HELLO I AM PRINT IN THE EVALUATE SCHEDULE")
     with contextlib.redirect_stdout(io.StringIO()):
         simulation_result = simulator.simulate_for_ga(str(MAIN_SETTINGS_PATH), current_time_s, simulation_time_limit_s=simulation_time_limit_s, return_route_map=False)
 
     # No summary folder is produced when using simulate_for_ga (in-memory evaluation).
     summary_folder = None
+    print(simulation_result)
     return simulation_result, summary_folder
 
 
@@ -1101,7 +1103,7 @@ def run_ga(
                     simulation_result
                 )
 
-                # DISABLED: best_summary_folder = summary_folder
+                best_summary_folder = summary_folder
 
             best_marker = " <-- NEW BEST" if is_new_global_best else ""
 
@@ -1177,7 +1179,7 @@ def run_ga(
         best_unit_sequence,
         best_simulation_result,
         best_fitness,
-        # DISABLED: best_summary_folder
+        best_summary_folder
     )
 
 
@@ -1334,17 +1336,17 @@ def main(
         if not orders:
             return None, None, float('inf'), None, horizon_info, units, order_units
 
-        best_order_solution, best_unit_sequence, best_simulation_result, best_fitness, *_ = run_ga(
+        best_order_solution, best_unit_sequence, best_simulation_result, best_fitness, best_folder = run_ga(
             orders=orders,
             units=units,
             order_units=order_units,
             current_time_s=current_time_s,
         )
 
-        return best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, order_units
+        return best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, order_units, best_folder
 
     # --- Try 1 day first (or the requested lookahead) ---
-    best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(lookahead_days)
+    best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou, best_folder = _run_once(lookahead_days)
 
     feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
     

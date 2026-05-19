@@ -9,7 +9,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Set, Tuple, Dict
 import pandas as pd
-import E_production_line_sim as simulator
+import production_line_sim.E_production_line_sim as simulator
 
 # ============================================================
 # PATHS
