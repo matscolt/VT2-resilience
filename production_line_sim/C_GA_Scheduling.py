@@ -1297,7 +1297,7 @@ def main(
         need_full_horizon = True
     elif _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[1]:
         lookahead_days = _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[2]
-        print(f"new lookahead_days: {lookahead_days}")
+        print(f"The segment is longer than the horizon!\nnew lookahead_days: {lookahead_days}")
     
     if need_full_horizon:
         print("!!!NEEDED A FULL HORIZON!!!")
