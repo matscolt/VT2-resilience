@@ -249,7 +249,6 @@ def _make_default_line_layout(process_time_data: dict[str, Any]) -> dict[str, An
         "station_instances": [
             {
                 "station_name": station_name,
-                "time_scale_factor": 1.0,
                 "branch_transport_from_previous_s": 0.0,
                 "branch_transport_to_next_s": 0.0,
             }
@@ -305,7 +304,6 @@ def _build_effective_line_layout_from_stage_definitions(
 
         branch_transport_from_previous_s = float(stage_entry.get("branch_transport_from_previous_s", 0.0))
         branch_transport_to_next_s = float(stage_entry.get("branch_transport_to_next_s", 0.0))
-        time_scale_factor = float(stage_entry.get("time_scale_factor", 1.0))
 
         configured_base_sequence.append(base_station_name)
         resolved_stages.append(
@@ -315,7 +313,6 @@ def _build_effective_line_layout_from_stage_definitions(
                 "copies": copies,
                 "branch_transport_from_previous_s": branch_transport_from_previous_s,
                 "branch_transport_to_next_s": branch_transport_to_next_s,
-                "time_scale_factor": time_scale_factor,
             }
         )
 
@@ -326,7 +323,6 @@ def _build_effective_line_layout_from_stage_definitions(
 
     station_instance_names: list[str] = []
     station_instance_base_names: list[str] = []
-    station_time_scale_factors: list[float] = []
     stage_instance_indices: list[list[int]] = []
     station_to_stage_index: list[int] = []
 
@@ -340,7 +336,6 @@ def _build_effective_line_layout_from_stage_definitions(
             )
             station_instance_names.append(instance_name)
             station_instance_base_names.append(stage_entry["base_station_name"])
-            station_time_scale_factors.append(float(stage_entry.get("time_scale_factor", 1.0)))
             station_to_stage_index.append(stage_index)
             instance_indices_for_stage.append(len(station_instance_names) - 1)
         stage_instance_indices.append(instance_indices_for_stage)
@@ -380,7 +375,6 @@ def _build_effective_line_layout_from_stage_definitions(
         "stages": resolved_stages,
         "station_sequence": station_instance_names,
         "station_instance_base_names": station_instance_base_names,
-        "station_time_scale_factors": station_time_scale_factors,
         "stage_instance_indices": stage_instance_indices,
         "station_to_stage_index": station_to_stage_index,
         "transport_lookup": effective_transport_lookup,
@@ -407,14 +401,12 @@ def _normalize_station_instance_entries(
             station_name = raw_entry.strip()
             branch_transport_from_previous_s = 0.0
             branch_transport_to_next_s = 0.0
-            time_scale_factor = 1.0
         elif isinstance(raw_entry, dict):
             station_name = str(
                 raw_entry.get("station_name", raw_entry.get("name", raw_entry.get("station", "")))
             ).strip()
             branch_transport_from_previous_s = float(raw_entry.get("branch_transport_from_previous_s", 0.0))
             branch_transport_to_next_s = float(raw_entry.get("branch_transport_to_next_s", 0.0))
-            time_scale_factor = float(raw_entry.get("time_scale_factor", 1.0))
         else:
             raise ValueError(
                 f"station_instances entry {entry_index} must be either a string or a JSON object."
@@ -451,7 +443,6 @@ def _normalize_station_instance_entries(
                 "copy_number": copy_number,
                 "branch_transport_from_previous_s": branch_transport_from_previous_s,
                 "branch_transport_to_next_s": branch_transport_to_next_s,
-                "time_scale_factor": time_scale_factor,
                 "declared_order": entry_index,
             }
         )
@@ -489,7 +480,6 @@ def _build_effective_line_layout_from_station_instances(
 
     station_instance_names: list[str] = []
     station_instance_base_names: list[str] = []
-    station_time_scale_factors: list[float] = []
     stage_instance_indices: list[list[int]] = []
     station_to_stage_index: list[int] = []
     stage_entries_resolved: list[dict[str, Any]] = []
@@ -512,7 +502,6 @@ def _build_effective_line_layout_from_station_instances(
         for entry in stage_entries:
             station_instance_names.append(str(entry["station_name"]))
             station_instance_base_names.append(str(entry["base_station_name"]))
-            station_time_scale_factors.append(float(entry.get("time_scale_factor", 1.0)))
             station_to_stage_index.append(stage_index)
             instance_indices_for_stage.append(len(station_instance_names) - 1)
             instance_entry_by_name[str(entry["station_name"])] = entry
@@ -556,7 +545,6 @@ def _build_effective_line_layout_from_station_instances(
         "stages": stage_entries_resolved,
         "station_sequence": station_instance_names,
         "station_instance_base_names": station_instance_base_names,
-        "station_time_scale_factors": station_time_scale_factors,
         "stage_instance_indices": stage_instance_indices,
         "station_to_stage_index": station_to_stage_index,
         "transport_lookup": effective_transport_lookup,
@@ -1761,9 +1749,6 @@ def run_simulation(
     )
     station_sequence = effective_line_layout["station_sequence"]
     station_instance_base_names = effective_line_layout["station_instance_base_names"]
-    station_time_scale_factors = list(effective_line_layout.get("station_time_scale_factors", [1.0] * len(station_sequence)))
-    if len(station_time_scale_factors) != len(station_sequence):
-        station_time_scale_factors = [1.0] * len(station_sequence)
     stage_instance_indices = effective_line_layout["stage_instance_indices"]
     station_to_stage_index = effective_line_layout["station_to_stage_index"]
     transport_lookup = effective_line_layout["transport_lookup"]
@@ -1954,10 +1939,7 @@ def run_simulation(
                 transport_time_s = float(transport_lookup[(from_station_name, candidate_station_name)])
 
             arrival_time_s = current_time_s + transport_time_s
-            process_time_s = (
-                float(process_times[variant][station_instance_base_names[candidate_station_index]])
-                * float(station_time_scale_factors[candidate_station_index])
-            )
+            process_time_s = float(process_times[variant][station_instance_base_names[candidate_station_index]])
             estimated_start_time_s = max(arrival_time_s, projected_station_available_time_s[candidate_station_index])
             estimated_finish_time_s = estimated_start_time_s + process_time_s
 
@@ -2124,10 +2106,7 @@ def run_simulation(
         if stage_number is None:
             stage_number = int(station_index + 1)
 
-        base_process_time_s = (
-            float(process_times[variant][base_station_name])
-            * float(station_time_scale_factors[station_index])
-        )
+        base_process_time_s = float(process_times[variant][base_station_name])
         if timed_disruption_data is not None:
             disruption_result = calculate_timed_operation_disruption_result(
                 station_index=station_index,
