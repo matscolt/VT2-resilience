@@ -4,12 +4,12 @@
         "medium": "layout_2_3_5_2_3_2.json"
     },
     "pressure_of_capacity": {
-        "light": 1.9,
+        "light": 0.9,
         "medium": 1,
         "heavy": 1.2
     },
     "order_units_ratio": {
-        "small": 75,
+        "small": 20,
         "medium": 50,
         "heavy": 100
     },

@@ -573,6 +573,20 @@ def load_line_layout_config(layout_path: Path | None, process_time_data: dict[st
     return _make_default_line_layout(process_time_data), None
 
 
+def _carriers_from_layout_config(
+    line_layout_config: dict[str, Any] | None,
+    fallback_carriers: int = MAX_UNITS_IN_SYSTEM,
+) -> int:
+    if isinstance(line_layout_config, dict) and "carriers" in line_layout_config:
+        try:
+            layout_carriers = int(float(line_layout_config.get("carriers")))
+            if layout_carriers > 0:
+                return layout_carriers
+        except (TypeError, ValueError):
+            pass
+    return int(fallback_carriers)
+
+
 def build_effective_line_layout(
     process_time_data: dict[str, Any],
     transport_time_data: dict[str, Any] | None,
@@ -3595,6 +3609,7 @@ def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0)
     ctx = _filter_context_to_segment_remaining_units(ctx)
     line_layout_path = resolve_line_layout_path(ctx["selected_line_layout_name"], ctx.get("input_root"), ctx.get("batch_dir"), ctx["data_dir"])
     line_layout_config, _ = load_line_layout_config(line_layout_path, ctx["process_time_data"])
+    ctx["carriers"] = _carriers_from_layout_config(line_layout_config, ctx.get("carriers", MAX_UNITS_IN_SYSTEM))
     effective = build_effective_line_layout(ctx["process_time_data"], ctx["transport_time_data"], line_layout_config)
     valid_variants = set(ctx["process_time_data"]["process_times"].keys())
     mode, enabled, chance_based, timed, seed, dis_cfg, timed_records, timed_data, _, _ = _prepare_disruption_inputs(ctx, effective, valid_variants)
@@ -3734,7 +3749,7 @@ def _write_disruption_history_from_timed_csv(
 
 
 
-def _write_outputs_for_integrated_run(ctx: dict[str, Any], operations, transport_records, unit_summaries, station_summaries, simulation_details, material_report, kpis, disruptions_enabled, disruption_mode, disruption_seed, disruption_config, timed_records, dis_json_path, timed_csv_path, settings_path, run_output_dir: Path) -> None:
+def _write_outputs_for_integrated_run(ctx: dict[str, Any], operations, transport_records, unit_summaries, station_summaries, simulation_details, material_report, kpis, kpis_without_disruptions, disruptions_enabled, disruption_mode, disruption_seed, disruption_config, timed_records, dis_json_path, timed_csv_path, settings_path, run_output_dir: Path) -> None:
     run_output_dir.mkdir(parents=True, exist_ok=True)
     copy_file_if_exists(settings_path, run_output_dir / "settings_used.json")
     if int(disruption_mode) == 1:
@@ -3746,6 +3761,7 @@ def _write_outputs_for_integrated_run(ctx: dict[str, Any], operations, transport
     write_material_report_csv(material_report, run_output_dir / "material_report.csv")
     save_json({"requested_unit_count": len(ctx["ordered_units"]), "produced_unit_count": len(simulation_details.get("completed_good_variants", [])), "completed_good_units": int(simulation_details.get("completed_good_unit_count", 0)), "disruptions_enabled": bool(disruptions_enabled), "disruption_mode": int(disruption_mode), "stop_reason": simulation_details.get("stop_reason")}, run_output_dir / "production_status.json")
     write_kpis_csv(kpis, run_output_dir / "kpi_summary.csv")
+    write_kpis_csv(kpis_without_disruptions, run_output_dir / "kpi_summary_without_disruptions.csv")
     write_operations_csv(operations, run_output_dir / "station_schedule.csv")
     write_transport_csv(transport_records, run_output_dir / "transport_schedule.csv")
     write_unit_summary_csv(unit_summaries, run_output_dir / "unit_summary.csv")
@@ -3760,6 +3776,7 @@ def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: 
     ctx = _filter_context_to_segment_remaining_units(ctx)
     line_layout_path = resolve_line_layout_path(ctx["selected_line_layout_name"], ctx.get("input_root"), ctx.get("batch_dir"), ctx["data_dir"])
     line_layout_config, line_layout_path_loaded = load_line_layout_config(line_layout_path, ctx["process_time_data"])
+    ctx["carriers"] = _carriers_from_layout_config(line_layout_config, ctx.get("carriers", MAX_UNITS_IN_SYSTEM))
     effective = build_effective_line_layout(ctx["process_time_data"], ctx["transport_time_data"], line_layout_config)
     valid_variants = set(ctx["process_time_data"]["process_times"].keys())
     mode, enabled, chance_based, timed, seed, dis_cfg, timed_records, timed_data, dis_json_path, timed_csv_path = _prepare_disruption_inputs(ctx, effective, valid_variants)
@@ -3797,6 +3814,55 @@ def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: 
     completed_good_variants = list(details.get("completed_good_variants", []))
     material_report = build_material_report(ctx["ordered_units"], completed_good_variants, ctx["bom_data"], ctx["material_stock_data"], extra_material_consumed=details.get("extra_material_consumed", {}), actual_material_consumed=details.get("actual_material_consumed", {}))
     kpis = calculate_kpis(completed_good_variants, operations, combined_unit_summaries, station_summaries, transport_records)
+
+    kpis_without_disruptions = dict(kpis)
+    if enabled and ctx.get("ordered_units"):
+        (
+            operations_no_disruptions,
+            transport_records_no_disruptions,
+            unit_summaries_no_disruptions,
+            station_summaries_no_disruptions,
+            _,
+            details_no_disruptions,
+        ) = run_simulation(
+            ordered_units=list(ctx["ordered_units"]),
+            process_time_data=ctx["process_time_data"],
+            transport_time_data=ctx["transport_time_data"],
+            unit_release_times=list(ctx["unit_release_times"]),
+            unit_priorities=list(ctx["unit_priorities"]),
+            unit_order_ids=list(ctx["unit_order_ids"]),
+            unit_ids=list(ctx.get("unit_ids", [f"U{idx + 1:03d}" for idx in range(len(ctx["ordered_units"]))])),
+            unit_route_ids=list(ctx["unit_route_ids"]),
+            max_units_in_system=ctx["carriers"],
+            line_layout_config=line_layout_config,
+            bom_data=ctx["bom_data"],
+            material_stock_data=ctx["material_stock_data"],
+            disruptions_enabled=False,
+            disruption_config=None,
+            disruption_seed=None,
+            simulation_time_s=ctx["simulation_time_s"],
+            timed_disruption_data=None,
+        )
+        _offset_simulation_times_to_absolute(
+            operations=operations_no_disruptions,
+            transport_records=transport_records_no_disruptions,
+            unit_summaries=unit_summaries_no_disruptions,
+            station_summaries=station_summaries_no_disruptions,
+            simulation_details=details_no_disruptions,
+            offset_s=float(ctx.get("segment_start_s", 0.0) or 0.0),
+        )
+        completed_good_variants_no_disruptions = list(
+            details_no_disruptions.get("completed_good_variants", [])
+        )
+        combined_unit_summaries_no_disruptions = previous_unit_summaries + unit_summaries_no_disruptions
+        kpis_without_disruptions = calculate_kpis(
+            completed_good_variants_no_disruptions,
+            operations_no_disruptions,
+            combined_unit_summaries_no_disruptions,
+            station_summaries_no_disruptions,
+            transport_records_no_disruptions,
+        )
+
     ongoing_unit_summary = ctx.get("ongoing_unit_summary")
     if ongoing_unit_summary is not None:
         write_unit_summary_csv(combined_unit_summaries, ongoing_unit_summary)
@@ -3808,7 +3874,7 @@ def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: 
     )
     if bool(ctx.get("has_assigned_route")):
         output_results = ctx.get("output_results") or (Path(__file__).resolve().parent / "output" / "results")
-        _write_outputs_for_integrated_run(ctx, operations, transport_records, combined_unit_summaries, station_summaries, details, material_report, kpis, enabled, mode, seed, dis_cfg, timed_records, dis_json_path, timed_csv_path, ctx["main_settings_path"], Path(output_results))
+        _write_outputs_for_integrated_run(ctx, operations, transport_records, combined_unit_summaries, station_summaries, details, material_report, kpis, kpis_without_disruptions, enabled, mode, seed, dis_cfg, timed_records, dis_json_path, timed_csv_path, ctx["main_settings_path"], Path(output_results))
     print(f"Run folder: {ctx.get('output_results') if ctx.get('has_assigned_route') else '(output skipped: no assigned routes)'}")
     print(f"Simulation time: {ctx['simulation_time_s']} s")
     print(f"Requested units: {len(ctx['ordered_units'])}")
