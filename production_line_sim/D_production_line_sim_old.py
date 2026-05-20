@@ -1193,31 +1193,57 @@ def _station_disruption_id_from_station_name(station_name: str) -> str:
     return f"{stage_number}.{copy_number}"
 
 
+def _is_emergency_unit_id(unit_id: Any) -> bool:
+    unit_id_text = str(unit_id).strip().upper()
+    return bool(re.fullmatch(r"E\d+", unit_id_text))
+
+
+def _next_emergency_unit_number(existing_unit_ids: list[str] | None) -> int:
+    highest_emergency_number = 0
+    for unit_id in existing_unit_ids or []:
+        unit_id_text = str(unit_id).strip().upper()
+        match = re.fullmatch(r"E(\d+)", unit_id_text)
+        if match:
+            highest_emergency_number = max(highest_emergency_number, int(match.group(1)))
+    return highest_emergency_number + 1
+
+
 def _assign_missing_emergency_order_ids(
     timed_disruption_records: list[dict[str, Any]],
     existing_order_ids: list[str],
+    existing_unit_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     numeric_order_ids: list[int] = []
-    for order_id in existing_order_ids:
+    existing_unit_ids = list(existing_unit_ids or [])
+
+    for index, order_id in enumerate(existing_order_ids):
         order_id_text = str(order_id).strip()
-        if order_id_text.isdigit():
-            numeric_order_ids.append(int(order_id_text))
+        if not order_id_text.isdigit():
+            continue
+
+        # Emergency units are named E001, E002, ... .  Those order IDs were
+        # generated from this same function in an earlier segment, so they must
+        # not push the next emergency order ID upward on later segments.
+        if index < len(existing_unit_ids) and _is_emergency_unit_id(existing_unit_ids[index]):
+            continue
+
+        numeric_order_ids.append(int(order_id_text))
 
     next_numeric_order_id = (max(numeric_order_ids) + 1) if numeric_order_ids else 1
-    generated_non_numeric_index = 1
+    used_generated_order_ids: set[int] = set()
 
-    for record in timed_disruption_records:
+    for record in sorted(timed_disruption_records, key=lambda item: (float(item.get("start_time_s", 0.0) or 0.0), int(item.get("row_index", 0) or 0))):
         if str(record.get("disruption_type", "")).strip().lower() != "emergency_order":
             continue
         if record.get("order_id") is not None:
             continue
 
-        if numeric_order_ids or next_numeric_order_id > 1:
-            record["order_id"] = str(next_numeric_order_id)
+        while next_numeric_order_id in used_generated_order_ids:
             next_numeric_order_id += 1
-        else:
-            record["order_id"] = f"EMERGENCY_{generated_non_numeric_index}"
-            generated_non_numeric_index += 1
+
+        record["order_id"] = str(next_numeric_order_id)
+        used_generated_order_ids.add(next_numeric_order_id)
+        next_numeric_order_id += 1
 
     return timed_disruption_records
 
@@ -1830,6 +1856,7 @@ def run_simulation(
             int(key): list(value)
             for key, value in timed_disruption_data.get("failed_inspection_times_by_station", {}).items()
         }
+        next_emergency_unit_number = _next_emergency_unit_number(unit_ids)
         for emergency_order in timed_disruption_data.get("emergency_orders", []):
             emergency_order_id = str(emergency_order["order_id"])
             emergency_order_time_s = float(emergency_order["order_time_s"])
@@ -1840,7 +1867,8 @@ def run_simulation(
                     unit_release_times.append(emergency_order_time_s)
                     unit_priorities.append(emergency_priority)
                     unit_order_ids.append(emergency_order_id)
-                    unit_ids.append(f"EMERGENCY_{emergency_order_id}_{len(unit_ids) + 1}")
+                    unit_ids.append(f"E{next_emergency_unit_number:03d}")
+                    next_emergency_unit_number += 1
                     unit_route_ids.append("0")
 
     initial_requested_unit_count = len(ordered_units)
@@ -2910,6 +2938,212 @@ def calculate_kpis(
 
     return kpis
 
+def _timed_record_is_disruption_penalty_record(record: dict[str, Any]) -> bool:
+    disruption_type = str(record.get("disruption_type", "")).strip().casefold()
+    if disruption_type in {"", "emergency_order", "failed_inspection", "inspection_failure", "inspection failure"}:
+        return False
+    return True
+
+
+def _timed_record_penalty_scale(record: dict[str, Any]) -> float:
+    disruption_type = str(record.get("disruption_type", "")).strip().casefold()
+    if disruption_type in {"efficiency_loss", "efficiency loss"}:
+        efficiency_percentage = record.get("efficiency_percentage")
+        if efficiency_percentage is None:
+            return 0.0
+        try:
+            efficiency_fraction = max(0.0, min(1.0, float(efficiency_percentage) / 100.0))
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, 1.0 - efficiency_fraction)
+    return 1.0
+
+
+def _build_timed_disruption_penalty_windows(
+    timed_records: list[dict[str, Any]],
+    cutoff_time_s: float | None,
+) -> list[tuple[float, float, float]]:
+    windows: list[tuple[float, float, float]] = []
+    cutoff = None if cutoff_time_s is None else float(cutoff_time_s)
+
+    for record in timed_records:
+        if not _timed_record_is_disruption_penalty_record(record):
+            continue
+
+        try:
+            start_s = float(record.get("start_time_s", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+
+        end_raw = record.get("end_time_s")
+        if end_raw is None:
+            continue
+        try:
+            end_s = float(end_raw)
+        except (TypeError, ValueError):
+            continue
+
+        if cutoff is not None:
+            if start_s >= cutoff:
+                continue
+            end_s = min(end_s, cutoff)
+
+        if end_s <= start_s:
+            continue
+
+        penalty_scale = _timed_record_penalty_scale(record)
+        if penalty_scale <= 0.0:
+            continue
+
+        windows.append((start_s, end_s, penalty_scale))
+
+    windows.sort(key=lambda item: (item[0], item[1], item[2]))
+    return windows
+
+
+def _penalty_seconds_before_time(time_s: float, penalty_windows: list[tuple[float, float, float]]) -> float:
+    value = float(time_s)
+    penalty_s = 0.0
+    for start_s, end_s, penalty_scale in penalty_windows:
+        if value <= start_s:
+            break
+        penalty_s += max(0.0, min(value, end_s) - start_s) * float(penalty_scale)
+    return penalty_s
+
+
+def _copy_operation_without_disruption_penalties(
+    operation: OperationRecord,
+    penalty_windows: list[tuple[float, float, float]],
+) -> OperationRecord:
+    adjusted_arrival_s = max(0.0, float(operation.arrival_time_s) - _penalty_seconds_before_time(float(operation.arrival_time_s), penalty_windows))
+    adjusted_start_s = max(adjusted_arrival_s, float(operation.start_time_s) - _penalty_seconds_before_time(float(operation.start_time_s), penalty_windows))
+    base_process_time_s = max(0.0, float(operation.base_process_time_s))
+    adjusted_finish_s = adjusted_start_s + base_process_time_s
+    adjusted_wait_s = max(0.0, adjusted_start_s - adjusted_arrival_s)
+
+    return OperationRecord(
+        unit_id=operation.unit_id,
+        order_id=operation.order_id,
+        variant=operation.variant,
+        station_index=operation.station_index,
+        station_name=operation.station_name,
+        arrival_time_s=adjusted_arrival_s,
+        start_time_s=adjusted_start_s,
+        finish_time_s=adjusted_finish_s,
+        process_time_s=base_process_time_s,
+        base_process_time_s=base_process_time_s,
+        wait_time_s=adjusted_wait_s,
+        queue_length_on_arrival=operation.queue_length_on_arrival,
+    )
+
+
+def _copy_transport_without_disruption_penalties(
+    transport: TransportRecord,
+    penalty_windows: list[tuple[float, float, float]],
+) -> TransportRecord:
+    adjusted_start_s = max(0.0, float(transport.start_time_s) - _penalty_seconds_before_time(float(transport.start_time_s), penalty_windows))
+    adjusted_finish_s = max(adjusted_start_s, float(transport.finish_time_s) - _penalty_seconds_before_time(float(transport.finish_time_s), penalty_windows))
+    return TransportRecord(
+        unit_id=transport.unit_id,
+        order_id=transport.order_id,
+        variant=transport.variant,
+        transport_index=transport.transport_index,
+        transport_name=transport.transport_name,
+        from_station=transport.from_station,
+        to_station=transport.to_station,
+        start_time_s=adjusted_start_s,
+        finish_time_s=adjusted_finish_s,
+        transport_time_s=max(0.0, adjusted_finish_s - adjusted_start_s),
+    )
+
+
+def _copy_unit_summary_without_disruption_penalties(
+    summary: UnitSummary,
+    penalty_windows: list[tuple[float, float, float]],
+    base_production_time_by_unit_id: dict[str, float],
+) -> UnitSummary:
+    first_arrival_penalty_s = _penalty_seconds_before_time(float(summary.first_arrival_time_s), penalty_windows)
+    start_penalty_s = _penalty_seconds_before_time(float(summary.start_time_s), penalty_windows)
+    completion_penalty_s = _penalty_seconds_before_time(float(summary.completion_time_s), penalty_windows)
+
+    adjusted_first_arrival_s = max(0.0, float(summary.first_arrival_time_s) - first_arrival_penalty_s)
+    adjusted_start_s = max(adjusted_first_arrival_s, float(summary.start_time_s) - start_penalty_s)
+    adjusted_completion_s = max(adjusted_start_s, float(summary.completion_time_s) - completion_penalty_s)
+
+    adjusted_flow_s = max(0.0, adjusted_completion_s - adjusted_first_arrival_s)
+    adjusted_active_flow_s = max(
+        0.0,
+        float(summary.active_flow_time_s) - max(0.0, completion_penalty_s - first_arrival_penalty_s),
+    )
+
+    base_production_time_s = base_production_time_by_unit_id.get(
+        str(summary.unit_id),
+        max(0.0, float(summary.time_spent_producing)),
+    )
+    throughput_efficiency = (
+        min(1.0, max(0.0, base_production_time_s / adjusted_flow_s))
+        if adjusted_flow_s > 0.0
+        else 0.0
+    )
+
+    return UnitSummary(
+        unit_id=summary.unit_id,
+        order_id=summary.order_id,
+        variant=summary.variant,
+        first_arrival_time_s=adjusted_first_arrival_s,
+        start_time_s=adjusted_start_s,
+        completion_time_s=adjusted_completion_s,
+        flow_time_s=adjusted_flow_s,
+        active_flow_time_s=adjusted_active_flow_s,
+        time_spent_producing=base_production_time_s,
+        throughput_efficiency=throughput_efficiency,
+        attempts=summary.attempts,
+        route_taken=getattr(summary, "route_taken", "0"),
+    )
+
+
+def calculate_kpis_without_disruption_penalties(
+    ordered_units: list[str],
+    operations: list[OperationRecord],
+    unit_summaries: list[UnitSummary],
+    station_summaries: list[StationSummary],
+    transport_records: list[TransportRecord] | None = None,
+    timed_records: list[dict[str, Any]] | None = None,
+    cutoff_time_s: float | None = None,
+) -> dict[str, float | int]:
+    penalty_windows = _build_timed_disruption_penalty_windows(list(timed_records or []), cutoff_time_s)
+
+    adjusted_operations = [
+        _copy_operation_without_disruption_penalties(operation, penalty_windows)
+        for operation in operations
+    ]
+    adjusted_transport_records = [
+        _copy_transport_without_disruption_penalties(transport, penalty_windows)
+        for transport in (transport_records or [])
+    ]
+
+    base_production_time_by_unit_id: defaultdict[str, float] = defaultdict(float)
+    for operation in adjusted_operations:
+        base_production_time_by_unit_id[str(operation.unit_id)] += float(operation.base_process_time_s)
+
+    adjusted_unit_summaries = [
+        _copy_unit_summary_without_disruption_penalties(
+            summary=summary,
+            penalty_windows=penalty_windows,
+            base_production_time_by_unit_id=dict(base_production_time_by_unit_id),
+        )
+        for summary in unit_summaries
+    ]
+
+    return calculate_kpis(
+        ordered_units=ordered_units,
+        operations=adjusted_operations,
+        unit_summaries=adjusted_unit_summaries,
+        station_summaries=station_summaries,
+        transport_records=adjusted_transport_records,
+    )
+
+
 
 # -----------------------------
 # Output writers
@@ -3575,7 +3809,11 @@ def _prepare_disruption_inputs(ctx: dict[str, Any], effective_line_layout: dict[
             raise FileNotFoundError("time based disruptions are enabled, but disruption_v2.json/disruption.json was not found")
         disruption_config = load_json(disruption_json_path)
         timed_records = load_timed_disruption_csv(timed_csv_path, valid_variants)
-        timed_records = _assign_missing_emergency_order_ids(timed_records, list(ctx["unit_order_ids"]))
+        timed_records = _assign_missing_emergency_order_ids(
+            timed_records,
+            list(ctx["unit_order_ids"]),
+            list(ctx.get("unit_ids", [])),
+        )
         timed_records_for_sim = _shift_timed_records_for_segment(
             timed_records=timed_records,
             segment_start_s=float(ctx.get("segment_start_s", 0.0) or 0.0),
@@ -3815,53 +4053,15 @@ def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: 
     material_report = build_material_report(ctx["ordered_units"], completed_good_variants, ctx["bom_data"], ctx["material_stock_data"], extra_material_consumed=details.get("extra_material_consumed", {}), actual_material_consumed=details.get("actual_material_consumed", {}))
     kpis = calculate_kpis(completed_good_variants, operations, combined_unit_summaries, station_summaries, transport_records)
 
-    kpis_without_disruptions = dict(kpis)
-    if enabled and ctx.get("ordered_units"):
-        (
-            operations_no_disruptions,
-            transport_records_no_disruptions,
-            unit_summaries_no_disruptions,
-            station_summaries_no_disruptions,
-            _,
-            details_no_disruptions,
-        ) = run_simulation(
-            ordered_units=list(ctx["ordered_units"]),
-            process_time_data=ctx["process_time_data"],
-            transport_time_data=ctx["transport_time_data"],
-            unit_release_times=list(ctx["unit_release_times"]),
-            unit_priorities=list(ctx["unit_priorities"]),
-            unit_order_ids=list(ctx["unit_order_ids"]),
-            unit_ids=list(ctx.get("unit_ids", [f"U{idx + 1:03d}" for idx in range(len(ctx["ordered_units"]))])),
-            unit_route_ids=list(ctx["unit_route_ids"]),
-            max_units_in_system=ctx["carriers"],
-            line_layout_config=line_layout_config,
-            bom_data=ctx["bom_data"],
-            material_stock_data=ctx["material_stock_data"],
-            disruptions_enabled=False,
-            disruption_config=None,
-            disruption_seed=None,
-            simulation_time_s=ctx["simulation_time_s"],
-            timed_disruption_data=None,
-        )
-        _offset_simulation_times_to_absolute(
-            operations=operations_no_disruptions,
-            transport_records=transport_records_no_disruptions,
-            unit_summaries=unit_summaries_no_disruptions,
-            station_summaries=station_summaries_no_disruptions,
-            simulation_details=details_no_disruptions,
-            offset_s=float(ctx.get("segment_start_s", 0.0) or 0.0),
-        )
-        completed_good_variants_no_disruptions = list(
-            details_no_disruptions.get("completed_good_variants", [])
-        )
-        combined_unit_summaries_no_disruptions = previous_unit_summaries + unit_summaries_no_disruptions
-        kpis_without_disruptions = calculate_kpis(
-            completed_good_variants_no_disruptions,
-            operations_no_disruptions,
-            combined_unit_summaries_no_disruptions,
-            station_summaries_no_disruptions,
-            transport_records_no_disruptions,
-        )
+    kpis_without_disruptions = calculate_kpis_without_disruption_penalties(
+        ordered_units=completed_good_variants,
+        operations=operations,
+        unit_summaries=combined_unit_summaries,
+        station_summaries=station_summaries,
+        transport_records=transport_records,
+        timed_records=timed_records if enabled else [],
+        cutoff_time_s=ctx.get("absolute_stop_time_s", ctx["simulation_time_s"]),
+    )
 
     ongoing_unit_summary = ctx.get("ongoing_unit_summary")
     if ongoing_unit_summary is not None:
