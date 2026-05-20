@@ -156,7 +156,7 @@ def main():
 
     dirs[0] = runs_dir
     
-    print("reading settings")
+    print("Reading settings")
     #read settings
     mainsettings = A_input.read_settings_json(data_dir / "base_settings.json")
     base_settings = A_input.read_settings_json(data_dir / "base_settings.json")
