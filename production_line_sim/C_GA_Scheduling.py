@@ -9,7 +9,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Set, Tuple, Dict
 import pandas as pd
-import D_production_line_sim as simulator
+import D_production_line_sim as simulator,A_input
 # OPTION A: if makespan > horizon_end_s for 1-day horizon, rerun GA with 5 days (no further fallback)
 ### PATCH: NO BEST-SUMMARY FOLDER / ON_GOING ONLY
 # This file is auto-patched to ensure the GA only overwrites current_schedule.csv in ON_GOING_RUN_DIR.
@@ -159,14 +159,16 @@ DEFAULT_LOOKAHEAD_DAYS = 2
 # 1 day  -> schedule the rest of current day only
 # 3 days -> schedule rest of current day + 2 full days
 # 5 days -> schedule rest of current day + 4 full days
-ALLOWED_LOOKAHEAD_DAYS = {2,4}
-SWAPS = 2
-POPULATION_SIZE = 6
-GENERATIONS = 4
-ELITE_SIZE = 1
-TOURNAMENT_SIZE = 2
-CROSSOVER_RATE = 0.9
-MUTATION_RATE = 0.15
+BASE_SETTINGS = A_input.read_settings_json(ROOT / "data" / "base_settings.json")
+allowed_map = BASE_SETTINGS["ALLOWED_LOOKAHEAD_DAYS"]
+ALLOWED_LOOKAHEAD_DAYS = sorted(int(v) for v in allowed_map.values())
+SWAPS = BASE_SETTINGS["SWAPS"]
+POPULATION_SIZE = BASE_SETTINGS["POPULATION_SIZE"]
+GENERATIONS = BASE_SETTINGS["GENERATIONS"]
+ELITE_SIZE = BASE_SETTINGS["ELITE_SIZE"]
+TOURNAMENT_SIZE = BASE_SETTINGS["TOURNAMENT_SIZE"]
+CROSSOVER_RATE = BASE_SETTINGS["CROSSOVER_RATE"]
+MUTATION_RATE = BASE_SETTINGS["MUTATION_RATE"]
 
 # ============================================================
 # FITNESS WEIGHTS

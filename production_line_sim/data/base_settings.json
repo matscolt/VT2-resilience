@@ -38,5 +38,16 @@
     "carriers": {
         "number of carriers": 8
     },
-    "lowest acceptable standard deviation [std below]": 3
+    "lowest acceptable standard deviation [std below]": 3,
+    "ALLOWED_LOOKAHEAD_DAYS": {
+        "1":2,
+        "2":4
+    },
+    "SWAPS" : 2,
+    "POPULATION_SIZE" : 10,
+    "GENERATIONS" : 20,
+    "ELITE_SIZE" : 1,
+    "TOURNAMENT_SIZE" : 2,
+    "CROSSOVER_RATE" : 0.9,
+    "MUTATION_RATE" : 0.15
 }
