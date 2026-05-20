@@ -2049,7 +2049,7 @@ def run_simulation(
                 continue
             if requested_release_time_s > current_time_s:
                 continue
-            score = (-int(priority_value), -int(bool(prioritize_front)), float(requested_release_time_s), int(queue_seq))
+            score = (-int(bool(prioritize_front)), -int(priority_value), float(requested_release_time_s), int(queue_seq))
             if best_score is None or score < best_score:
                 best_score = score
                 best_index = idx
@@ -2146,6 +2146,8 @@ def run_simulation(
         root_to_attempt_indices[root_index].append(new_unit_index)
         replacement_variants_created.append(variant)
         _enqueue_waiting_unit(new_unit_index, current_time_s, prioritize_front=prioritize_next_queue)
+        if prioritize_next_queue:
+            release_waiting_units_into_system(current_time_s)
         return new_unit_index, []
 
     def try_start_next(station_index: int, current_time_s: float) -> None:
@@ -3494,6 +3496,118 @@ def _read_current_schedule(schedule_path: Path, valid_variants: set[str]) -> dic
     }
 
 
+
+def _emergency_order_ids_already_in_schedule(schedule_rows: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(row.get("order_id", "")).strip()
+        for row in schedule_rows
+        if _is_emergency_unit_id(row.get("unit_id", "")) and str(row.get("order_id", "")).strip() != ""
+    }
+
+
+def _sync_visible_emergency_orders_to_current_schedule(
+    schedule_path: Path,
+    valid_variants: set[str],
+    timed_records: list[dict[str, Any]],
+    cutoff_time_s: float,
+) -> bool:
+    """Add emergency-order units that have become visible to current_schedule.csv.
+
+    This makes the emergency order a real scheduled order for the GA in later
+    generations/segments instead of only being appended inside the simulator.
+    Future emergency orders are not exposed because only records with
+    start/order time <= cutoff_time_s are written.
+    """
+    schedule_path = Path(schedule_path)
+    if not schedule_path.exists() or not schedule_path.is_file():
+        return False
+
+    with schedule_path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None:
+            return False
+        rows = [list(row) for row in reader]
+
+    normalized = [re.sub(r"[^a-z0-9]", "", str(value).strip().lower()) for value in header]
+    required = ["unitseq", "orderid", "unitid", "variant"]
+    if normalized[:4] != required:
+        return False
+
+    route_idx = normalized.index("routeid") if "routeid" in normalized else None
+    if route_idx is None:
+        header = list(header) + ["route_id"]
+        normalized = normalized + ["routeid"]
+        route_idx = len(header) - 1
+        rows = [list(row) + [""] * max(0, len(header) - len(row)) for row in rows]
+
+    min_len = max(4, route_idx + 1)
+    padded_rows = [list(row) + [""] * max(0, min_len - len(row)) for row in rows]
+
+    existing_unit_ids = [str(row[2]).strip() for row in padded_rows if len(row) > 2]
+    next_emergency_unit_number = _next_emergency_unit_number(existing_unit_ids)
+
+    max_unit_seq = 0
+    for row in padded_rows:
+        try:
+            max_unit_seq = max(max_unit_seq, _read_int(row[0], 0))
+        except Exception:
+            pass
+
+    existing_emergency_counts: Counter[tuple[str, str]] = Counter()
+    for row in padded_rows:
+        order_id = str(row[1]).strip() if len(row) > 1 else ""
+        unit_id = str(row[2]).strip() if len(row) > 2 else ""
+        variant = str(row[3]).strip().upper() if len(row) > 3 else ""
+        if order_id and variant and _is_emergency_unit_id(unit_id):
+            existing_emergency_counts[(order_id, variant)] += 1
+
+    appended_any = False
+    cutoff = float(cutoff_time_s or 0.0)
+    for record in sorted(timed_records, key=lambda r: (float(r.get("start_time_s", 0.0) or 0.0), int(r.get("row_index", 0) or 0))):
+        if str(record.get("disruption_type", "")).strip().casefold() != "emergency_order":
+            continue
+
+        start_time = float(record.get("start_time_s", 0.0) or 0.0)
+        order_time_raw = record.get("order_time_s")
+        order_time = float(order_time_raw) if order_time_raw is not None else start_time
+        if start_time > cutoff + 1e-9 or order_time > cutoff + 1e-9:
+            continue
+
+        order_id = str(record.get("order_id", "")).strip()
+        if order_id == "":
+            continue
+
+        for variant_value, quantity_value in record.get("emergency_variants", []):
+            variant = str(variant_value).strip().upper()
+            if variant not in valid_variants:
+                continue
+            required_quantity = max(0, int(quantity_value))
+            existing_quantity = int(existing_emergency_counts.get((order_id, variant), 0))
+            missing_quantity = max(0, required_quantity - existing_quantity)
+            for _ in range(missing_quantity):
+                max_unit_seq += 1
+                unit_id = f"E{next_emergency_unit_number:03d}"
+                next_emergency_unit_number += 1
+                new_row = [""] * len(header)
+                new_row[0] = str(max_unit_seq)
+                new_row[1] = order_id
+                new_row[2] = unit_id
+                new_row[3] = variant
+                new_row[route_idx] = "0"
+                padded_rows.append(new_row)
+                existing_emergency_counts[(order_id, variant)] += 1
+                appended_any = True
+
+    if appended_any:
+        with schedule_path.open("w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(header)
+            for row in padded_rows:
+                writer.writerow((list(row) + [""] * max(0, len(header) - len(row)))[:len(header)])
+
+    return appended_any
+
 def _load_run_context_from_main_settings(main_settings_path: Path, simulation_time_limit_s: float | None = None, segment_start_s: float = 0.0) -> dict[str, Any]:
     main_settings_path = Path(main_settings_path).expanduser().resolve()
     main_settings, run_settings, pathlist = _read_main_settings(main_settings_path)
@@ -3506,7 +3620,24 @@ def _load_run_context_from_main_settings(main_settings_path: Path, simulation_ti
         schedule_path = (_pathlist_path(pathlist, "on_going_run") or main_settings_path.parent) / CURRENT_SCHEDULE_FILENAME
     if not schedule_path.exists():
         raise FileNotFoundError(f"current_schedule.csv was not found at {schedule_path}")
+    segment_start_s = max(0.0, float(segment_start_s or 0.0))
     schedule = _read_current_schedule(schedule_path, valid_variants)
+
+    timed_csv_for_schedule_sync = _resolve_pathlist_disruption_csv(pathlist)
+    if timed_csv_for_schedule_sync is not None and timed_csv_for_schedule_sync.exists():
+        timed_records_for_schedule_sync = load_timed_disruption_csv(timed_csv_for_schedule_sync, valid_variants)
+        timed_records_for_schedule_sync = _assign_missing_emergency_order_ids(
+            timed_records_for_schedule_sync,
+            list(schedule["unit_order_ids"]),
+            list(schedule.get("unit_ids", [])),
+        )
+        if _sync_visible_emergency_orders_to_current_schedule(
+            schedule_path=schedule_path,
+            valid_variants=valid_variants,
+            timed_records=timed_records_for_schedule_sync,
+            cutoff_time_s=segment_start_s,
+        ):
+            schedule = _read_current_schedule(schedule_path, valid_variants)
 
     default_settings_path = data_dir / "base_settings.json"
     settings_data = load_json(default_settings_path) if default_settings_path.exists() else {}
@@ -3518,7 +3649,6 @@ def _load_run_context_from_main_settings(main_settings_path: Path, simulation_ti
     absolute_stop_time_s = float(settings_data.get("sim_time [s]", settings_data.get("Sim_time [s]", 0.0)) or 0.0)
     if simulation_time_limit_s is not None:
         absolute_stop_time_s = float(simulation_time_limit_s)
-    segment_start_s = max(0.0, float(segment_start_s or 0.0))
     sim_time = max(0.0, float(absolute_stop_time_s) - segment_start_s)
     carriers = int(float(settings_data.get("carriers", {}).get("number of carriers", MAX_UNITS_IN_SYSTEM))) if isinstance(settings_data.get("carriers", {}), dict) else MAX_UNITS_IN_SYSTEM
     label = str(main_settings.get("label", main_settings_path.stem))
@@ -3820,6 +3950,15 @@ def _prepare_disruption_inputs(ctx: dict[str, Any], effective_line_layout: dict[
             segment_stop_s=float(ctx.get("absolute_stop_time_s", ctx.get("simulation_time_s", 0.0)) or 0.0),
             visibility_cutoff_s=float(ctx.get("segment_start_s", 0.0) or 0.0),
         )
+        scheduled_emergency_order_ids = _emergency_order_ids_already_in_schedule(list(ctx.get("schedule_rows", [])))
+        if scheduled_emergency_order_ids:
+            timed_records_for_sim = [
+                record for record in timed_records_for_sim
+                if not (
+                    str(record.get("disruption_type", "")).strip().casefold() == "emergency_order"
+                    and str(record.get("order_id", "")).strip() in scheduled_emergency_order_ids
+                )
+            ]
         timed_data = prepare_timed_disruption_data(
             list(effective_line_layout["station_sequence"]),
             timed_records_for_sim,
