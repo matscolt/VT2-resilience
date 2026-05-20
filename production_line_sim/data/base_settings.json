@@ -44,8 +44,8 @@
         "2":3
     },
     "SWAPS" : 2,
-    "POPULATION_SIZE" : 4,
-    "GENERATIONS" : 3,
+    "POPULATION_SIZE" : 10,
+    "GENERATION_LIMIT" : 5,
     "ELITE_SIZE" : 1,
     "TOURNAMENT_SIZE" : 2,
     "CROSSOVER_RATE" : 0.9,

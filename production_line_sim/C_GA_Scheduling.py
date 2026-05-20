@@ -164,7 +164,7 @@ allowed_map = BASE_SETTINGS["ALLOWED_LOOKAHEAD_DAYS"]
 ALLOWED_LOOKAHEAD_DAYS = sorted(int(v) for v in allowed_map.values())
 SWAPS = BASE_SETTINGS["SWAPS"]
 POPULATION_SIZE = BASE_SETTINGS["POPULATION_SIZE"]
-GENERATIONS = BASE_SETTINGS["GENERATIONS"]
+GENERATION_LIMIT = BASE_SETTINGS["GENERATION_LIMIT"]
 ELITE_SIZE = BASE_SETTINGS["ELITE_SIZE"]
 TOURNAMENT_SIZE = BASE_SETTINGS["TOURNAMENT_SIZE"]
 CROSSOVER_RATE = BASE_SETTINGS["CROSSOVER_RATE"]
@@ -1026,12 +1026,15 @@ def run_ga(
 
     best_fitness = float("inf")
 
-    for generation in range(GENERATIONS):
+    generation_number = 0
+    best_generation = 0
 
-        generation_number = generation + 1
+    while best_generation + GENERATION_LIMIT > generation_number:
+
+        generation_number = generation_number + 1
 
         print("\n================================================")
-        print(f"GENERATION {generation_number}/{GENERATIONS}")
+        print(f"GENERATION {generation_number}")
         print("================================================")
 
         fitnesses = []
@@ -1095,7 +1098,7 @@ def run_ga(
                 best_simulation_result = copy.deepcopy(
                     simulation_result
                 )
-
+                best_generation = generation_number
                 # DISABLED: best_summary_folder = summary_folder
 
             best_marker = " <-- NEW BEST" if is_new_global_best else ""
@@ -1118,9 +1121,10 @@ def run_ga(
         )
 
         print(
-            f"Best order sequence in generation {generation_number}: "
+            f">>>Best order sequence in generation {generation_number}: "
             f"{generation_best_order_sequence}"
         )
+        print(f"Generations since last best {generation_number-best_generation}. Stopping after {GENERATION_LIMIT} without new best.")
 
         ranked = sorted(
             zip(population, fitnesses),
@@ -1164,7 +1168,7 @@ def run_ga(
             new_population.append(child)
 
         population = new_population
-
+    print("STOPPED DUE TO GENERATION LIMIT")
     return (
         best_order_solution,
         best_unit_sequence,
