@@ -153,7 +153,7 @@ def get_completed_unit_ids_from_unit_summary(current_time_s: float) -> Set[str]:
 SECONDS_PER_PRODUCTION_DAY = 8 * 60 * 60
 
 # Set these values here while testing.
-DEFAULT_LOOKAHEAD_DAYS = 2
+DEFAULT_LOOKAHEAD_DAYS = 1
 
 # Rolling horizon options:
 # 1 day  -> schedule the rest of current day only
@@ -183,9 +183,10 @@ MUTATION_RATE = BASE_SETTINGS["MUTATION_RATE"]
 # Times from the simulator are in seconds, so tardiness/earliness are
 # converted to days before being used in the fitness function.
 
-ALPHA = 1.2 # priority weight
-BETA = 1.5 # tardiness weight
-GAMMA = 0.001 # Earliness weight
+ALPHA = 1.0
+BETA = 0.001
+GAMMA = 1.2  # exponent for priority weighting (w_i = priority^gamma)
+
 
 TIME_SCALE = 60 * 60  # 1 hours in seconds
 
@@ -834,6 +835,7 @@ def evaluate_schedule_with_simulator(
 # FITNESS
 # ============================================================
 
+
 def calculate_fitness(
     simulation_result,
     orders
@@ -842,99 +844,94 @@ def calculate_fitness(
 
     Lower fitness is better.
 
-    Fitness consists of:
-    - Weighted sum of exponential tardiness penalty for all delayed orders.
-    - Weighted extra exponential penalty for the worst delayed order.
-    - Small linear earliness reward as a tie-breaker.
+    Implements the hybrid objective that prioritizes avoiding tardiness while giving
+    only a very small reward for earliness (tie-breaker):
 
-    The simulator returns completion times in seconds. Due dates are assumed
-    to use the same unit. Tardiness and earliness are converted to days before
-    being used in the fitness function.
+        F = sum_i w_i * (exp(k * T_i) - 1)  -  ε * sum_i E_i
+
+    Where:
+      - T_i = tardiness in days (max(0, completion - due) / TIME_SCALE)
+      - E_i = earliness in days (max(0, due - completion) / TIME_SCALE)
+      - w_i = priority_i ** PRIORITY_GAMMA
+      - k   = ALPHA_TARDINESS
+      - ε   = GAMMA_EARLINESS
+
+    The simulator returns completion times in seconds, and due dates are assumed to
+    use the same unit.
     """
+
+    if not simulation_result or "order_completion_times" not in simulation_result:
+        return {
+            "fitness": float("inf"),
+            "weighted_exp_tardiness": float("inf"),
+            "weighted_earliness_reward": 0.0,
+            "raw_exp_tardiness": float("inf"),
+            "raw_weighted_exp_tardiness": float("inf"),
+            "max_tardiness_days": None,
+            "raw_earliness_days": 0.0,
+            "late_orders": 0,
+        }
 
     order_info = {
         str(o.order_id): {
-            "due_date": o.due_date
+            "due_date": float(o.due_date),
+            "priority": int(getattr(o, 'priority', 1) or 1),
         }
         for o in orders
     }
 
+    k = float(ALPHA)
+    eps = float(BETA)
+
     raw_exp_tardiness = 0.0
-    max_tardiness_days = 0.0
+    raw_weighted_exp_tardiness = 0.0
     raw_earliness_days = 0.0
     late_orders = 0
 
-    for order_id, completion in (
-        simulation_result["order_completion_times"].items()
-    ):
+    for order_id, completion in simulation_result["order_completion_times"].items():
 
         order_id_key = str(order_id)
-
         if order_id_key not in order_info:
             continue
 
-        due = order_info[order_id_key]["due_date"]
+        due = float(order_info[order_id_key]["due_date"])
+        priority = max(1, int(order_info[order_id_key].get("priority", 1)))
+        w = float(priority) ** float(GAMMA)
 
-        lateness = completion - due
+        completion = float(completion)
+        lateness_s = completion - due
 
-        tardiness = max(
-            0.0,
-            lateness
-        )
+        tardiness_s = max(0.0, lateness_s)
+        earliness_s = max(0.0, -lateness_s)
 
-        earliness = max(
-            0.0,
-            -lateness
-        )
+        # Convert to days (or whatever TIME_SCALE represents)
+        T_hours = tardiness_s / float(TIME_SCALE)
+        E_hours = earliness_s / float(TIME_SCALE)
 
-        tardiness_hours = (
-            tardiness / TIME_SCALE
-        )
-
-        earliness_hours = (
-            earliness / TIME_SCALE
-        )
-
-        if tardiness > 0:
+        if tardiness_s > 0.0:
             late_orders += 1
 
-        tardiness_term += (
-            math.exp(ALPHA*tardiness_hours) - 1
-        )
+        exp_term = math.exp(k * T_hours) - 1.0
+        raw_weighted_exp_tardiness += w * exp_term
 
-        max_tardiness_days = max(
-            max_tardiness_days,
-            tardiness_hours
-        )
+        raw_earliness_days += w * E_hours
 
-        raw_earliness_days += earliness_hours
+    weighted_exp_tardiness = raw_weighted_exp_tardiness
+    weighted_earliness_reward = eps * raw_earliness_days
 
-    raw_max_exp_tardiness = (
-        math.exp(max_tardiness_days) - 1
-    )
-
-    weighted_exp_tardiness = (
-        ALPHA_TARDINESS * raw_exp_tardiness
-    )
-
-    weighted_earliness_reward = (
-        GAMMA_EARLINESS * raw_earliness_days
-    )
-
-    fitness = (
-        weighted_exp_tardiness
-        - weighted_earliness_reward
-    )
+    fitness = weighted_exp_tardiness - weighted_earliness_reward
 
     return {
         "fitness": fitness,
         "weighted_exp_tardiness": weighted_exp_tardiness,
         "weighted_earliness_reward": weighted_earliness_reward,
         "raw_exp_tardiness": raw_exp_tardiness,
-        "raw_max_exp_tardiness": raw_max_exp_tardiness,
-        "max_tardiness_days": max_tardiness_days,
+        "raw_weighted_exp_tardiness": raw_weighted_exp_tardiness,
         "raw_earliness_days": raw_earliness_days,
-        "late_orders": late_orders
+        "late_orders": late_orders,
+        "k_tardiness": k,
+        "priority_weight": float(GAMMA),
+        "epsilon_earliness": eps,
     }
 
 
@@ -1108,10 +1105,8 @@ def run_ga(
                 f"Chrom {chromosome_index:02d} | "
                 f"Fitness {fitness:12.4f} | "
                 f"Late {fitness_result['late_orders']:2d} | "
-                f"A*Exp {fitness_result['weighted_exp_tardiness']:8.4f} | "
-                f"B*Max {fitness_result['weighted_max_exp_tardiness']:8.4f} | "
-                f"-G*Early {-fitness_result['weighted_earliness_reward']:8.4f} | "
-                f"MaxDay {fitness_result['max_tardiness_days']:6.2f} | "
+                f"Tardiness {fitness_result['weighted_exp_tardiness']:8.4f} | "
+                f"-Earliness {-fitness_result['weighted_earliness_reward']:8.4f} | "
                 f"{best_marker}"
             )
 
@@ -1258,7 +1253,7 @@ def _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_
         current_abs_day = int(float(current_time_s) // SECONDS_PER_PRODUCTION_DAY) + 1
     except Exception:
         current_abs_day = 1
-    
+
     # If the schedule does not extend into at least the next day, treat as < 1 day left.
     return (max_abs_day - current_abs_day) < 1, max_abs_day < segment_end_day, segment_end_day - current_abs_day+1
 
