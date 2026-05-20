@@ -211,6 +211,7 @@ def main():
         scenarios, pressures, ratios, algos, seeds
     ):
         run_idx += 1
+        run_time_start = ti.perf_counter()
         #creating the run dirs
         for dir in dirs[0:3]:
             subfolder = dir / f"run_{run_idx}"
@@ -287,8 +288,9 @@ def main():
             end = ti.perf_counter()
             print(f"[MAIN] segment wall time: {end - start}\n\n\n - - - - - \n")
             #input("Press [ENTER] to continue the loop")
-
+        run_time_end = ti.perf_counter()
         print(f"\n\n--- RUN {run_idx} ---")
+        print(f"Run time {run_time_end-run_time_start}")
         print(f"Number of units: {num_units}")
         print(f"Number of orders: {num_orders}")
         print(f"Scenario = {sc_name} layout = {layout_file}, seed = {seed}")
