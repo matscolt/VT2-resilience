@@ -345,7 +345,6 @@ def get_planned_day_window(
     """
 
     first_day = get_current_planned_day(current_time_s)
-    print(f"lookahead_days: {lookahead_days}")
     last_day = first_day + lookahead_days - 1
 
     return first_day, last_day
