@@ -183,9 +183,9 @@ MUTATION_RATE = BASE_SETTINGS["MUTATION_RATE"]
 # Times from the simulator are in seconds, so tardiness/earliness are
 # converted to days before being used in the fitness function.
 
-ALPHA = 1.0
-BETA = 0.001
-GAMMA = 1.2  # exponent for priority weighting (w_i = priority^gamma)
+ALPHA = BASE_SETTINGS["ALPHA"]
+BETA = BASE_SETTINGS["BETA"]
+GAMMA = BASE_SETTINGS["GAMMA"] # exponent for priority weighting (w_i = priority^gamma)
 
 
 TIME_SCALE = 60 * 60  # 1 hours in seconds
