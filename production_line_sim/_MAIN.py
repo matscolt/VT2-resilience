@@ -286,7 +286,7 @@ def main():
             D_production_line_sim.main(main_settings_dir, t_stop, t_start)
             end = ti.perf_counter()
             print(f"[MAIN] segment wall time: {end - start}\n\n\n - - - - - \n")
-            input("Press [ENTER] to continue the loop")
+            #input("Press [ENTER] to continue the loop")
 
         print(f"\n\n--- RUN {run_idx} ---")
         print(f"Number of units: {num_units}")

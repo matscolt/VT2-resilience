@@ -573,20 +573,6 @@ def load_line_layout_config(layout_path: Path | None, process_time_data: dict[st
     return _make_default_line_layout(process_time_data), None
 
 
-def _carriers_from_layout_config(
-    line_layout_config: dict[str, Any] | None,
-    fallback_carriers: int = MAX_UNITS_IN_SYSTEM,
-) -> int:
-    if isinstance(line_layout_config, dict) and "carriers" in line_layout_config:
-        try:
-            layout_carriers = int(float(line_layout_config.get("carriers")))
-            if layout_carriers > 0:
-                return layout_carriers
-        except (TypeError, ValueError):
-            pass
-    return int(fallback_carriers)
-
-
 def build_effective_line_layout(
     process_time_data: dict[str, Any],
     transport_time_data: dict[str, Any] | None,
@@ -3609,7 +3595,6 @@ def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0)
     ctx = _filter_context_to_segment_remaining_units(ctx)
     line_layout_path = resolve_line_layout_path(ctx["selected_line_layout_name"], ctx.get("input_root"), ctx.get("batch_dir"), ctx["data_dir"])
     line_layout_config, _ = load_line_layout_config(line_layout_path, ctx["process_time_data"])
-    ctx["carriers"] = _carriers_from_layout_config(line_layout_config, ctx.get("carriers", MAX_UNITS_IN_SYSTEM))
     effective = build_effective_line_layout(ctx["process_time_data"], ctx["transport_time_data"], line_layout_config)
     valid_variants = set(ctx["process_time_data"]["process_times"].keys())
     mode, enabled, chance_based, timed, seed, dis_cfg, timed_records, timed_data, _, _ = _prepare_disruption_inputs(ctx, effective, valid_variants)
@@ -3776,7 +3761,6 @@ def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: 
     ctx = _filter_context_to_segment_remaining_units(ctx)
     line_layout_path = resolve_line_layout_path(ctx["selected_line_layout_name"], ctx.get("input_root"), ctx.get("batch_dir"), ctx["data_dir"])
     line_layout_config, line_layout_path_loaded = load_line_layout_config(line_layout_path, ctx["process_time_data"])
-    ctx["carriers"] = _carriers_from_layout_config(line_layout_config, ctx.get("carriers", MAX_UNITS_IN_SYSTEM))
     effective = build_effective_line_layout(ctx["process_time_data"], ctx["transport_time_data"], line_layout_config)
     valid_variants = set(ctx["process_time_data"]["process_times"].keys())
     mode, enabled, chance_based, timed, seed, dis_cfg, timed_records, timed_data, dis_json_path, timed_csv_path = _prepare_disruption_inputs(ctx, effective, valid_variants)
