@@ -183,11 +183,11 @@ MUTATION_RATE = BASE_SETTINGS["MUTATION_RATE"]
 # Times from the simulator are in seconds, so tardiness/earliness are
 # converted to days before being used in the fitness function.
 
-ALPHA_TARDINESS = 1.0
-BETA_MAX_TARDINESS = 1.5
-GAMMA_EARLINESS = 0.001
+ALPHA = 1.2 # priority weight
+BETA = 1.5 # tardiness weight
+GAMMA = 0.001 # Earliness weight
 
-TIME_SCALE = 24 * 60 * 60  # 1 calendar day in seconds
+TIME_SCALE = 60 * 60  # 1 hours in seconds
 
 # ============================================================
 # DATA CLASSES
@@ -887,27 +887,27 @@ def calculate_fitness(
             -lateness
         )
 
-        tardiness_days = (
+        tardiness_hours = (
             tardiness / TIME_SCALE
         )
 
-        earliness_days = (
+        earliness_hours = (
             earliness / TIME_SCALE
         )
 
         if tardiness > 0:
             late_orders += 1
 
-        raw_exp_tardiness += (
-            math.exp(tardiness_days) - 1
+        tardiness_term += (
+            math.exp(ALPHA*tardiness_hours) - 1
         )
 
         max_tardiness_days = max(
             max_tardiness_days,
-            tardiness_days
+            tardiness_hours
         )
 
-        raw_earliness_days += earliness_days
+        raw_earliness_days += earliness_hours
 
     raw_max_exp_tardiness = (
         math.exp(max_tardiness_days) - 1
@@ -917,24 +917,18 @@ def calculate_fitness(
         ALPHA_TARDINESS * raw_exp_tardiness
     )
 
-    weighted_max_exp_tardiness = (
-        BETA_MAX_TARDINESS * raw_max_exp_tardiness
-    )
-
     weighted_earliness_reward = (
         GAMMA_EARLINESS * raw_earliness_days
     )
 
     fitness = (
         weighted_exp_tardiness
-        + weighted_max_exp_tardiness
         - weighted_earliness_reward
     )
 
     return {
         "fitness": fitness,
         "weighted_exp_tardiness": weighted_exp_tardiness,
-        "weighted_max_exp_tardiness": weighted_max_exp_tardiness,
         "weighted_earliness_reward": weighted_earliness_reward,
         "raw_exp_tardiness": raw_exp_tardiness,
         "raw_max_exp_tardiness": raw_max_exp_tardiness,
@@ -1297,7 +1291,7 @@ def main(
         need_full_horizon = True
     elif _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[1]:
         lookahead_days = _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[2]
-        print(f"new lookahead_days: {lookahead_days}")
+        print(f"The segment is longer than the horizon!\nnew lookahead_days: {lookahead_days}")
     
     if need_full_horizon:
         print("!!!NEEDED A FULL HORIZON!!!")
