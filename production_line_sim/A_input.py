@@ -273,7 +273,6 @@ def generate_orderlist(seed, plan_time, output_path: Path,num_orders, num_units)
         if order_id == num_orders:
             units = units_left
         units_left -= units
-        print(f"units: {units} \nminimum due date: {units*AVE_CYCLE_TIME_PER_UNIT}")
         due_date = round_half_up(random.uniform(min(units * AVE_CYCLE_TIME_PER_UNIT, plan_time), plan_time))
         priority = round_half_up(min(max(random.expovariate(1/1.5), PRIO_LOW), PRIO_HIGH))
         variant0 = "FUSE0"
@@ -526,7 +525,6 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
             eunits_per_order = eunits_left
         eunits_left -= eunits_per_order
         start_time = round_half_up(random.uniform(0, max(plan_time-eunits_per_order*AVE_CYCLE_TIME_PER_UNIT, 0)))
-        due_date = round_half_up(random.uniform(min(start_time+eunits_per_order*AVE_CYCLE_TIME_PER_UNIT, plan_time), plan_time))
         
         x50 = 0.5 # 50th percentile of the distribution (median)
         x90 = 2.0 # 90th percentile of the distribution (chosen to create a long tail for emergency orders)
