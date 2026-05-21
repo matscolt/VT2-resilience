@@ -42,9 +42,9 @@
     "CROSSOVER_RATE" : 0.9,
     "MUTATION_RATE" : 0.15,
 
-    "ALPHA":1,
+    "ALPHA":0.05,
     "BETA":0.001,
-    "GAMMA":1.2,
+    "GAMMA":1.5,
     "DELTA":100,
 
     "swaps_scale":0.15,
