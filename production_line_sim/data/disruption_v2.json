@@ -6,7 +6,7 @@
         {
           "name": "PLC Failure",
           "chance [%]": 0.000156,
-          "chance of sim time [%]": 0.225,
+          "chance of sim time [%]": 0.12,
           "range [s]": [
             60,
             120
@@ -17,23 +17,23 @@
         {
           "name": "Bottom Cover Misaligned",
           "chance [%]": 0.000078,
-          "chance of sim time [%]": 0.1375,
+          "chance of sim time [%]": 0.21,
           "range [s]": [
             60,
             160
           ],
-          "mean [s]": 1760,
+          "mean [s]": 880,
           "std [% of mean]": 10
         },
         {
           "name": "Bottom Cover Stuck",
           "chance [%]": 0.000078,
-          "chance of sim time [%]": 0.1625,
+          "chance of sim time [%]": 0.188,
           "range [s]": [
             80,
             180
           ],
-          "mean [s]": 2080,
+          "mean [s]": 1040,
           "std [% of mean]": 5
         },
         {
@@ -65,7 +65,7 @@
         {
           "name": "PLC Failure",
           "chance [%]": 0.000156,
-          "chance of sim time [%]": 0.225,
+          "chance of sim time [%]": 0.12,
           "range [s]": [
             60,
             120
@@ -76,12 +76,12 @@
         {
           "name": "Drill To Dull",
           "chance [%]": 0.000039,
-          "chance of sim time [%]": 0.275,
+          "chance of sim time [%]": 0.4,
           "range [s]": [
             240,
             640
           ],
-          "mean [s]": 7040,
+          "mean [s]": 3520,
           "std [% of mean]": 10
         },
         {
@@ -113,7 +113,7 @@
         {
           "name": "PLC Failure",
           "chance [%]": 0.000156,
-          "chance of sim time [%]": 0.225,
+          "chance of sim time [%]": 0.11,
           "range [s]": [
             60,
             120
@@ -124,12 +124,12 @@
         {
           "name": "Cover Wrong Orientation",
           "chance [%]": 0.000078,
-          "chance of sim time [%]": 0.525,
+          "chance of sim time [%]": 0.2825,
           "range [s]": [
             240,
             600
           ],
-          "mean [s]": 6720,
+          "mean [s]": 3360,
           "std [% of mean]": 10
         },
         {
@@ -146,23 +146,23 @@
         {
           "name": "Cart Relised To Early",
           "chance [%]": 0.000039,
-          "chance of sim time [%]": 0.5625,
+          "chance of sim time [%]": 0.28,
           "range [s]": [
             600,
             1200
           ],
-          "mean [s]": 14400,
+          "mean [s]": 4800,
           "std [% of mean]": 10
         },
         {
           "name": "Misaligned Material",
           "chance [%]": 0.000039,
-          "chance of sim time [%]": 0.425,
+          "chance of sim time [%]": 0.325,
           "range [s]": [
             400,
             960
           ],
-          "mean [s]": 10880,
+          "mean [s]": 3600,
           "std [% of mean]": 15
         },
         {
@@ -205,7 +205,7 @@
         {
           "name": "PLC Failure",
           "chance [%]": 0.000156,
-          "chance of sim time [%]": 0.225,
+          "chance of sim time [%]": 0.12,
           "range [s]": [
             60,
             120
@@ -232,7 +232,7 @@
             120,
             240
           ],
-          "mean [s]": 2880,
+          "mean [s]": 960,
           "std [% of mean]": 10
         }
       ],
@@ -260,7 +260,7 @@
         {
           "name": "PLC Failure",
           "chance [%]": 0.000156,
-          "chance of sim time [%]": 0.225,
+          "chance of sim time [%]": 0.12,
           "range [s]": [
             60,
             120
@@ -276,18 +276,18 @@
             60,
             160
           ],
-          "mean [s]": 1760,
+          "mean [s]": 880,
           "std [% of mean]": 10
         },
         {
           "name": "Top Cover Stuck",
           "chance [%]": 0.000078,
-          "chance of sim time [%]": 0.1625,
+          "chance of sim time [%]": 0.25,
           "range [s]": [
             80,
             180
           ],
-          "mean [s]": 2080,
+          "mean [s]": 1040,
           "std [% of mean]": 5
         },
         {
@@ -319,7 +319,7 @@
         {
           "name": "PLC Failure",
           "chance [%]": 0.000156,
-          "chance of sim time [%]": 0.225,
+          "chance of sim time [%]": 0.12,
           "range [s]": [
             60,
             120

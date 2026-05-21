@@ -1106,7 +1106,7 @@ def run_ga(
             print(
                 f"Gen {generation_number:02d} | "
                 f"Chrom {chromosome_index:02d} | "
-                f"Fitness {fitness:12.4f} | "
+                f"Fitness {fitness:12.6f} | "
                 f"Late {fitness_result['late_orders']:2d} | "
                 f"Tardiness {fitness_result['weighted_exp_tardiness']:8.4f} | "
                 f"-Earliness {-fitness_result['weighted_earliness_reward']:8.4f} | "
