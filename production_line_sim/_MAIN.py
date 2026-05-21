@@ -274,7 +274,7 @@ def main():
                 continue
 
             start = ti.perf_counter()
-            print(f"[MAIN] Segment {i+1}/{len(event_times)-1}: t={t_start} -> {t_stop}")
+            print(f"[MAIN] Segment {i+1}/{len(event_times)-1}: t={t_start} -> {t_stop}\n day {t_start/(3600*8):.4f} to {t_stop/(3600*8):.4f}")
 
             if i == 0 or rolling_ga_enabled:
                 print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
@@ -282,7 +282,7 @@ def main():
             else:
                 print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
 
-            print(f"----MAIN.py: running main sim from {t_start} until {t_stop}")
+            print(f"----MAIN.py: running main sim from {t_start} until {t_stop}\n day {t_start/(3600*8):.4f} to {t_stop/(3600*8):.4f}")
             D_production_line_sim.main(main_settings_dir, t_stop, t_start)
             end = ti.perf_counter()
             print(f"[MAIN] segment wall time: {end - start}\n\n\n - - - - - \n")
@@ -302,4 +302,3 @@ def main():
 
 if __name__ == "__main__":
    main()
-   
