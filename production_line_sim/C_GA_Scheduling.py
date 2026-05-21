@@ -1014,15 +1014,13 @@ def run_ga(
     order_units
 , current_time_s: float = 0.0):
 
-    print(f"orders: {len(orders)}")
-    input()
     swaps =int(max(len(orders)*SWAPS_SCALE+SWAPS_CONSTANT,SWAPS_MIN))
     population_size = int(max(len(orders)*POPULATION_SCALE+POPULATION_CONSTANT,POPULATION_MIN))
     elite_size = int(max(population_size*ELITE_SCALE+ELITE_CONSTANT,ELITE_MIN))
     tournament_size = int(max(population_size*TOURNAMENT_SCALE+TOURNAMENT_CONSTANT,TOURNAMENT_MIN))
 
     print(f"swaps: {swaps}\npopulation: {population_size}\nelite: {elite_size}\ntournament: {tournament_size}")
-    input()
+    
 
 
 
