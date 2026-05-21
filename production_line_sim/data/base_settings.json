@@ -4,14 +4,10 @@
         "medium": "layout_2_3_5_2_3_2.json"
     },
     "pressure_of_capacity": {
-        "light": 0.9,
-        "medium": 1,
-        "heavy": 1.2
+        "medium": 1
     },
     "order_units_ratio": {
-        "small": 20,
-        "medium": 50,
-        "heavy": 100
+        "medium": 25
     },
     "algorithms": {
         "1": "genetic algortihm",
@@ -31,7 +27,6 @@
     },
     "sim_time [s]": 800000,
     "plan_time [s]": 576000,
-    "seed": "",
     "random based disruptions": {
         "enabled": 2
     },
@@ -43,15 +38,25 @@
         "1":1,
         "2":3
     },
-    "SWAPS" : 2,
-    "POPULATION_SIZE" : 10,
     "GENERATION_LIMIT" : 5,
-    "ELITE_SIZE" : 1,
-    "TOURNAMENT_SIZE" : 2,
     "CROSSOVER_RATE" : 0.9,
     "MUTATION_RATE" : 0.15,
 
-    "ALPHA":0.5,
+    "ALPHA":0.05,
     "BETA":0.001,
-    "GAMMA":1.2
+    "GAMMA":1.5,
+    "DELTA":1000,
+
+    "swaps_scale":0.15,
+    "swaps_constant":0,
+    "swaps_min":2,
+    "population_scale":0.4,
+    "population_constant":6,
+    "population_min":6,
+    "elite_scale":0.1,
+    "elite_constant":0.6,
+    "elite_min":1,
+    "tournament_scale":0.1,
+    "tournament_constant":0.6,
+    "tournament_min":2
 }

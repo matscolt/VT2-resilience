@@ -31,7 +31,6 @@ OUTPUT_RUN_DIR = None
 PRODUCTION_PLAN_PATH = None
 DISRUPTION_HISTORY_PATH = None
 UNIT_SUMMARY_PATH = None
-
 CLEAN_TEMP_OUTPUTS = True
 # DISABLED: KEEP_ONLY_BEST_SUMMARY = True
 
@@ -162,13 +161,21 @@ DEFAULT_LOOKAHEAD_DAYS = 1
 BASE_SETTINGS = A_input.read_settings_json(ROOT / "data" / "base_settings.json")
 allowed_map = BASE_SETTINGS["ALLOWED_LOOKAHEAD_DAYS"]
 ALLOWED_LOOKAHEAD_DAYS = sorted(int(v) for v in allowed_map.values())
-SWAPS = BASE_SETTINGS["SWAPS"]
-POPULATION_SIZE = BASE_SETTINGS["POPULATION_SIZE"]
 GENERATION_LIMIT = BASE_SETTINGS["GENERATION_LIMIT"]
-ELITE_SIZE = BASE_SETTINGS["ELITE_SIZE"]
-TOURNAMENT_SIZE = BASE_SETTINGS["TOURNAMENT_SIZE"]
 CROSSOVER_RATE = BASE_SETTINGS["CROSSOVER_RATE"]
 MUTATION_RATE = BASE_SETTINGS["MUTATION_RATE"]
+SWAPS_SCALE = BASE_SETTINGS["swaps_scale"]
+SWAPS_CONSTANT = BASE_SETTINGS["swaps_constant"]
+SWAPS_MIN = BASE_SETTINGS["swaps_min"]
+POPULATION_SCALE = BASE_SETTINGS["population_scale"]
+POPULATION_CONSTANT = BASE_SETTINGS["population_constant"]
+POPULATION_MIN = BASE_SETTINGS["population_min"]
+ELITE_SCALE = BASE_SETTINGS["elite_scale"]
+ELITE_CONSTANT = BASE_SETTINGS["elite_constant"]
+ELITE_MIN = BASE_SETTINGS["elite_min"]
+TOURNAMENT_SCALE = BASE_SETTINGS["tournament_scale"]
+TOURNAMENT_CONSTANT = BASE_SETTINGS["tournament_constant"]
+TOURNAMENT_MIN = BASE_SETTINGS["tournament_min"]
 
 # ============================================================
 # FITNESS WEIGHTS
@@ -186,6 +193,7 @@ MUTATION_RATE = BASE_SETTINGS["MUTATION_RATE"]
 ALPHA = BASE_SETTINGS["ALPHA"]
 BETA = BASE_SETTINGS["BETA"]
 GAMMA = BASE_SETTINGS["GAMMA"] # exponent for priority weighting (w_i = priority^gamma)
+DELTA = BASE_SETTINGS["DELTA"] 
 
 
 TIME_SCALE = 60 * 60  # 1 hours in seconds
@@ -370,7 +378,7 @@ def filter_orders_and_units_for_rolling_horizon(
     units: List[Unit],
     order_units: dict,
     current_time_s: float = 0.0,
-    lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+    lookahead_days: int = ALLOWED_LOOKAHEAD_DAYS[0],
     completed_unit_ids=None
 ) -> Tuple[List[Order], List[Unit], dict, Dict[str, float]]:
     """
@@ -540,7 +548,7 @@ def merge_schedule_with_previous_tail(
 # INITIAL SEED - PURE EDD
 # ============================================================
 
-def create_order_seed(orders: List[Order]):
+def create_initial_order(orders: List[Order]):
 
     order_scores = []
 
@@ -557,13 +565,13 @@ def create_order_seed(orders: List[Order]):
         key=lambda x: x["due_date"]
     )
 
-    seed = [
+    initial = [
         row["order_id"]
         for row in order_scores
     ]
 
     print("\n================================================")
-    print("ORDER SEED USING PURE EDD")
+    print("INITIAL ORDER USING PURE EDD")
     print("================================================")
 
     for row in order_scores:
@@ -577,34 +585,34 @@ def create_order_seed(orders: List[Order]):
 
     print("================================================\n")
 
-    return seed
+    return initial
 
 
 # ============================================================
 # POPULATION
 # ============================================================
 
-def create_order_population(orders: List[Order]):
+def create_order_population(orders: List[Order],swaps,population_size):
 
     if not orders:
         return []
 
-    seed = create_order_seed(orders)
+    initial = create_initial_order(orders)
 
-    population = [seed]
+    population = [initial]
 
     print("\n================================================")
     print("CREATING INITIAL POPULATION")
     print("================================================")
 
-    print("\nChromosome 1 (Seed):")
-    print(seed)
+    print("\nChromosome 1 (initial):")
+    print(initial)
 
-    while len(population) < POPULATION_SIZE:
+    while len(population) < population_size:
 
-        chrom = copy.deepcopy(seed)
+        chrom = copy.deepcopy(initial)
 
-        for _ in range(SWAPS):
+        for _ in range(swaps):
 
             i = random.randint(0, len(chrom) - 1)
             j = random.randint(0, len(chrom) - 1)
@@ -896,7 +904,7 @@ def calculate_fitness(
 
         due = float(order_info[order_id_key]["due_date"])
         priority = max(1, int(order_info[order_id_key].get("priority", 1)))
-        w = float(priority) ** float(GAMMA)
+        w = float(DELTA)*float(priority) ** float(GAMMA)
 
         completion = float(completion)
         lateness_s = completion - due
@@ -941,12 +949,12 @@ def calculate_fitness(
 
 def tournament_selection(
     population,
-    fitnesses
+    fitnesses,
+    tournament_size
 ):
-
     sampled = random.sample(
         list(zip(population, fitnesses)),
-        min(TOURNAMENT_SIZE, len(population))
+        min(tournament_size, len(population))
     )
 
     sampled.sort(key=lambda x: x[1])
@@ -1006,13 +1014,25 @@ def run_ga(
     order_units
 , current_time_s: float = 0.0):
 
+    swaps =int(max(len(orders)*SWAPS_SCALE+SWAPS_CONSTANT,SWAPS_MIN))
+    population_size = int(max(len(orders)*POPULATION_SCALE+POPULATION_CONSTANT,POPULATION_MIN))
+    elite_size = int(max(population_size*ELITE_SCALE+ELITE_CONSTANT,ELITE_MIN))
+    tournament_size = int(max(population_size*TOURNAMENT_SCALE+TOURNAMENT_CONSTANT,TOURNAMENT_MIN))
+
+    print(f"swaps: {swaps}\npopulation: {population_size}\nelite: {elite_size}\ntournament: {tournament_size}")
+    
+
+
+
     units_lookup = {
         u.unit_id: u
         for u in units
     }
 
     population = create_order_population(
-        orders
+        orders,
+        swaps,
+        population_size
     )
 
     if not population:
@@ -1133,19 +1153,21 @@ def run_ga(
 
         new_population = [
             copy.deepcopy(ranked[i][0])
-            for i in range(min(ELITE_SIZE, len(ranked)))
+            for i in range(min(elite_size, len(ranked)))
         ]
 
-        while len(new_population) < POPULATION_SIZE:
+        while len(new_population) < population_size:
 
             p1 = tournament_selection(
                 population,
-                fitnesses
+                fitnesses,
+                tournament_size
             )
 
             p2 = tournament_selection(
                 population,
-                fitnesses
+                fitnesses,
+                tournament_size
             )
 
             if random.random() < CROSSOVER_RATE:
@@ -1269,9 +1291,10 @@ def main(
     main_settings_path,
     current_time_s,
     segment_end_time_s,
-    lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
-):
-
+    seed,
+    lookahead_days: int = ALLOWED_LOOKAHEAD_DAYS[0],
+    ):
+    random.seed(seed)
     # Configure paths before the schedule pre-check, otherwise ON_GOING_RUN_DIR is still None.
     configure_paths_from_main_settings(main_settings_path)
 

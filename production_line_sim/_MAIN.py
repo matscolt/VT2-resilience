@@ -278,7 +278,7 @@ def main():
 
             if i == 0 or rolling_ga_enabled:
                 print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
-                C_GA_Scheduling.main(main_settings_dir, t_start,t_stop)
+                C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed)
             else:
                 print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
 
@@ -299,8 +299,6 @@ def main():
         print("----------------------------------------------------------------------------------------------------")
         next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct,action=action)
         return #stop the loop
-
-
 
 if __name__ == "__main__":
    main()
