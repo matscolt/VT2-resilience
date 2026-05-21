@@ -1003,6 +1003,9 @@ def insert_mutation(chrom):
 
     return chrom
 
+def best_generation_percentage(generation_number,best_fitness,counted_best_fitness):
+    percentage_needed = 0.002*generation_number**2+0.01*generation_number
+    return counted_best_fitness*(1-percentage_needed)>best_fitness
 
 # ============================================================
 # GA LOOP
@@ -1045,6 +1048,7 @@ def run_ga(
     # DISABLED: best_summary_folder = None
 
     best_fitness = float("inf")
+    counted_best_fitness = None
 
     generation_number = 0
     best_generation = 0
@@ -1118,7 +1122,15 @@ def run_ga(
                 best_simulation_result = copy.deepcopy(
                     simulation_result
                 )
-                best_generation = generation_number
+                if counted_best_fitness is None:
+                    counted_best_fitness = best_fitness
+                    best_generation = generation_number
+                    print("COUNTED BEST FITNESS IS NONE!!! FACK!!")
+                elif best_generation_percentage(generation_number, best_fitness,counted_best_fitness):
+                    best_generation = generation_number
+                    counted_best_fitness = best_fitness
+                else:
+                    print(f"Gen {generation_number:02d} | "f"Chrom {chromosome_index:02d}""\nThis chromosome was better but not good enough for our limit!")
                 # DISABLED: best_summary_folder = summary_folder
 
             best_marker = " <-- NEW BEST" if is_new_global_best else ""
