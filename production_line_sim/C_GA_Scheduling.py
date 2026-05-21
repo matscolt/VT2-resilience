@@ -161,7 +161,7 @@ DEFAULT_LOOKAHEAD_DAYS = 1
 BASE_SETTINGS = A_input.read_settings_json(ROOT / "data" / "base_settings.json")
 allowed_map = BASE_SETTINGS["ALLOWED_LOOKAHEAD_DAYS"]
 ALLOWED_LOOKAHEAD_DAYS = sorted(int(v) for v in allowed_map.values())
-GENERATION_LIMIT = 2#BASE_SETTINGS["GENERATION_LIMIT"]
+GENERATION_LIMIT = BASE_SETTINGS["GENERATION_LIMIT"]
 CROSSOVER_RATE = BASE_SETTINGS["CROSSOVER_RATE"]
 MUTATION_RATE = BASE_SETTINGS["MUTATION_RATE"]
 SWAPS_SCALE = BASE_SETTINGS["swaps_scale"]
@@ -1004,8 +1004,12 @@ def insert_mutation(chrom):
     return chrom
 
 def best_generation_percentage(generation_number,best_fitness,counted_best_fitness):
-    percentage_needed = 0.002*generation_number**2+0.01*generation_number
-    return counted_best_fitness*(1-percentage_needed)>best_fitness
+    percentage_needed = (0.002*generation_number**2+0.01*generation_number)/100
+    if counted_best_fitness >= 0:
+        return counted_best_fitness*(1-percentage_needed)>best_fitness
+    if counted_best_fitness < 0:
+        return counted_best_fitness*(1+percentage_needed)>best_fitness
+
 
 # ============================================================
 # GA LOOP
@@ -1125,15 +1129,21 @@ def run_ga(
                 if counted_best_fitness is None:
                     counted_best_fitness = best_fitness
                     best_generation = generation_number
-                    print("COUNTED BEST FITNESS IS NONE!!! FACK!!")
+                    #print("COUNTED BEST FITNESS IS NONE!!! FACK!!")
                 elif best_generation_percentage(generation_number, best_fitness,counted_best_fitness):
+                    #print(f"BEST FITNESS: {best_fitness} COUNTED BEST FITNESS: {counted_best_fitness}")
                     best_generation = generation_number
                     counted_best_fitness = best_fitness
-                else:
-                    print(f"Gen {generation_number:02d} | "f"Chrom {chromosome_index:02d}""\nThis chromosome was better but not good enough for our limit!")
+                
                 # DISABLED: best_summary_folder = summary_folder
 
-            best_marker = " <-- NEW BEST" if is_new_global_best else ""
+            if is_new_global_best:
+                best_marker = " <-- NEW BEST"
+                if generation_number == best_generation:
+                    best_marker = " <-- NEW BEST COUNTED"
+            else:
+                best_marker = ""
+
 
             print(
                 f"Gen {generation_number:02d} | "
@@ -1156,7 +1166,7 @@ def run_ga(
             f">>>Best order sequence in generation {generation_number}: "
             f"{generation_best_order_sequence}"
         )
-        print(f"Generations since last best {generation_number-best_generation}. Stopping after {GENERATION_LIMIT} without new best.")
+        print(f"Generations since last best counted {generation_number-best_generation}. Stopping after {GENERATION_LIMIT} without new best.")
 
         ranked = sorted(
             zip(population, fitnesses),
