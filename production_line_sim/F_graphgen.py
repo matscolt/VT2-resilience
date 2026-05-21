@@ -5,85 +5,69 @@ import json
 import os
 import shutil
 import time
+import re
 from datetime import datetime
 from pathlib import Path
-#  +-----------------------------+
-#  | Creates plots from the data |
-#  +-----------------------------+
+from typing import List, Optional, Tuple
 
 ROOTDIR = Path(__file__).parent
 
-#find the correct order
 
-import os
-from datetime import datetime
-from pathlib import Path
 
-def find_output_folder(output_path=None, target_timestamp=None, prompt=True):
-    if output_path is None:
-        output_path = ROOTDIR / "output"
-    else:
-        output_path = Path(output_path)
+def _parse_main_folder_name(name: str, assumed_year: int) -> Optional[Tuple[datetime, int]]:
+    """Parse main folder name: main_DD-MM_HH-MM_n
 
-    folders = []
-    current_year = datetime.now().year
+    Returns (timestamp_dt, counter_n) or None if not parseable.
+    """
+    parts = name.split("_")
+    if len(parts) < 4 or parts[0] != "main":
+        return None
 
-    for name in os.listdir(output_path):
-        full_path = output_path / name
+    # parts: ["main", "DD-MM", "HH-MM", "n"]
+    try:
+        timestamp_str = parts[1] + "_" + parts[2]  # "DD-MM_HH-MM"
+        ts = datetime.strptime(timestamp_str, "%d-%m_%H-%M").replace(year=assumed_year)
+        n = int(parts[3])
+        return ts, n
+    except Exception:
+        return None
 
+
+def list_output_runs(output_dir: Path) -> List[Path]:
+    """List main output folders (main_DD-MM_HH-MM_n) sorted newest first."""
+    output_dir = Path(output_dir)
+    assumed_year = datetime.now().year
+
+    folders: List[Tuple[datetime, int, Path]] = []
+
+    for name in os.listdir(output_dir):
+        full_path = output_dir / name
         if not full_path.is_dir():
             continue
 
-        try:
-            # Expect: main_DD-MM_HH-MM_n  -> ["main", "DD-MM", "HH-MM", "n"]
-            parts = name.split("_")
-            if len(parts) < 4 or parts[0] != "main":
-                continue
-
-            timestamp_str = parts[1] + "_" + parts[2]      # "DD-MM_HH-MM"
-            ts = datetime.strptime(timestamp_str, "%d-%m_%H-%M").replace(year=current_year)
-
-            # Counter (n) can be used as a tie-breaker if same timestamp
-            n = int(parts[3])
-
-            folders.append((ts, n, full_path))
-
-        except Exception:
+        parsed = _parse_main_folder_name(name, assumed_year)
+        if not parsed:
             continue
 
-    if not folders:
-        raise FileNotFoundError(f"No valid output folders found in {output_path}")
+        ts, n = parsed
+        folders.append((ts, n, full_path))
 
-    # Newest first: sort by timestamp then counter
     folders.sort(key=lambda x: (x[0], x[1]), reverse=True)
-
-    # If target timestamp is given, pick closest
-    if target_timestamp:
-        # Expect "DD-MM_HH-MM" (same as folder naming, no year)
-        target_dt = datetime.strptime(target_timestamp, "%d-%m_%H-%M").replace(year=current_year)
-        closest = min(folders, key=lambda x: abs(x[0] - target_dt))
-        return closest[2]
-
-    # If user wants to choose interactively
-    if prompt:
-        outputs = [p for (_, _, p) in folders]
-        return prompt_for_data_folder(output_path, outputs)
-
-    # Default: newest
-    return folders[0][2]
+    return [p for (_, _, p) in folders]
 
 
-def prompt_for_data_folder(output_dir: Path, outputs: list[Path]) -> Path:
+def prompt_for_data_folder(output_dir: Path, outputs: List[Path]) -> Path:
+    """Interactive selection of a main output folder."""
     if not outputs:
         raise FileNotFoundError(f"No output folders found in: {output_dir}")
 
-    print("\nAvailable run folders in ./output (newest first):")
+    print("Available main folders in ./output (newest first):")
     for i, p in enumerate(outputs, start=1):
         print(f"  {i:2d}) {p.name}")
 
     default = 1
     while True:
-        s = input(f"Choose output folder number (Enter = {default}): ").strip()
+        s = input(f"Choose main folder number (Enter = {default}): ").strip()
         if s == "":
             return outputs[default - 1]
         if s.isdigit() and 1 <= int(s) <= len(outputs):
@@ -93,25 +77,101 @@ def prompt_for_data_folder(output_dir: Path, outputs: list[Path]) -> Path:
             return candidate
         print("Invalid selection. Enter a number from the list or paste the folder name.")
 
-def prompt_for_run_folder(main_dir: Path, runs: list[Path]) -> Path:
-    if not runs:
-        raise FileNotFoundError(f"No output folders found in: {main_dir}")
 
-    print("\nAvailable run folders in ./output (newest first):")
+def list_run_folders(main_dir: Path) -> List[Path]:
+    """Return run folders inside a main folder, sorted by run number."""
+    main_dir = Path(main_dir)
+    runs = [p for p in main_dir.iterdir() if p.is_dir() and p.name.startswith("run_")]
+
+    def run_num(path: Path) -> int:
+        m = re.match(r"run_(\d+)$", path.name)
+        return int(m.group(1)) if m else 10**9
+
+    runs.sort(key=run_num)
+    return runs
+
+
+def prompt_for_run_folder(main_dir: Path, runs: List[Path]) -> Path:
+    """Interactive selection of a run_* folder inside a main folder."""
+    if not runs:
+        raise FileNotFoundError(f"No run folders found in: {main_dir}")
+
+    print(f"Available run folders in {Path(main_dir).name} (lowest run number first):")
     for i, p in enumerate(runs, start=1):
         print(f"  {i:2d}) {p.name}")
 
     default = 1
     while True:
-        s = input(f"Choose output folder number (Enter = {default}): ").strip()
+        s = input(f"Choose run folder number (Enter = {default}): ").strip()
         if s == "":
             return runs[default - 1]
         if s.isdigit() and 1 <= int(s) <= len(runs):
             return runs[int(s) - 1]
-        candidate = main_dir / s
+        candidate = Path(main_dir) / s
         if candidate.exists() and candidate.is_dir():
             return candidate
         print("Invalid selection. Enter a number from the list or paste the folder name.")
+
+
+def find_results_folder(
+    output_dir: Path,
+    target_timestamp: Optional[str] = None,
+    prompt: bool = True,
+) -> Path:
+    """Pick a main folder (optionally closest to target_timestamp), then pick run_*, then return run/results.
+
+    Parameters
+    ----------
+    output_dir:
+        Path to ./output
+    target_timestamp:
+        Optional string "DD-MM_HH-MM" used to select closest main folder.
+    prompt:
+        If True, prompts user to pick the main folder (unless target_timestamp provided) and always prompts for run.
+
+    Returns
+    -------
+    Path:
+        <main_folder>/<run_folder>/results
+    """
+    output_dir = Path(output_dir)
+    assumed_year = datetime.now().year
+
+    # Gather candidates
+    candidates: List[Tuple[datetime, int, Path]] = []
+    for name in os.listdir(output_dir):
+        full_path = output_dir / name
+        if not full_path.is_dir():
+            continue
+
+        parsed = _parse_main_folder_name(name, assumed_year)
+        if not parsed:
+            continue
+        ts, n = parsed
+        candidates.append((ts, n, full_path))
+
+    if not candidates:
+        raise FileNotFoundError(f"No valid output folders found in {output_dir}")
+
+    # Newest first
+    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+    # Select main folder
+    if target_timestamp:
+        target_dt = datetime.strptime(target_timestamp, "%d-%m_%H-%M").replace(year=assumed_year)
+        chosen_main = min(candidates, key=lambda x: abs(x[0] - target_dt))[2]
+    else:
+        if prompt:
+            outputs = [p for (_, _, p) in candidates]
+            chosen_main = prompt_for_data_folder(output_dir, outputs)
+        else:
+            chosen_main = candidates[0][2]
+
+    # Select run folder
+    runs = list_run_folders(chosen_main)
+    chosen_run = prompt_for_run_folder(chosen_main, runs)
+
+    return chosen_main,chosen_run / "results"
 
 
 def clear_folder(folder):
@@ -427,36 +487,20 @@ def plot_station_utilization(station_data, graphfolder):
 
 #main
 def main(starttime = time.perf_counter()):
-    specific_folder = "20260420_131845"#enter the wanted foldername(only the first timestamp) in the output folder
-    
-    specific_folder_choice = 0 #yes = 1, no = 0
-    
-    if specific_folder_choice == 1:
-        try:
-            datafolder = find_output_folder(target_timestamp=specific_folder)
-            print(f">> Using selected folder: {datafolder}")
-        except Exception as e:
-            print(f">> Warning: Could not find requested folder ({e})")
-            print(">> Falling back to newest folder instead.")
-            datafolder = find_output_folder()
-    else:
-        datafolder = find_output_folder()
-    mainfoldername = str(datafolder).split("\\")[-1]
-    runfolder = datafolder / prompt_for_run_folder() / "results"
-
-    print(f"using datafolder: {mainfoldername} run folder: {runfolder}")
-
+    output_dir = ROOTDIR / "output"
+    mainfolder,resultfolder = find_results_folder(output_dir)
     post_processing_folder = ROOTDIR / "post_processing"
-    ppfolder = post_processing_folder / mainfoldername
+    ppfolder = post_processing_folder / mainfolder
+    mainfoldername = str(mainfolder).split("\\")[-1]
     print(f"placing graphs and so on inside {mainfoldername}")
     clear_folder(ppfolder)
-    station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(runfolder)
+    station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(resultfolder)
 
     graph_folder = ppfolder / "graphs"
     graph_folder.mkdir(exist_ok=True)
 
     #plot_gantt(station_schedule,transport_data,graph_folder)
-    print("Time spent: "+str(time.perf_counter()-starttime))
+    #print("Time spent: "+str(time.perf_counter()-starttime))
     plot_flow_times(unit_data,graph_folder)
     print("Time spent: "+str(time.perf_counter()-starttime))
     plot_station_utilization(station_summary,graph_folder)
