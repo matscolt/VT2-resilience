@@ -369,7 +369,7 @@ def filter_orders_and_units_for_rolling_horizon(
     units: List[Unit],
     order_units: dict,
     current_time_s: float = 0.0,
-    lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+    lookahead_days: int = ALLOWED_LOOKAHEAD_DAYS[0],
     completed_unit_ids=None
 ) -> Tuple[List[Order], List[Unit], dict, Dict[str, float]]:
     """
@@ -1269,7 +1269,7 @@ def main(
     current_time_s,
     segment_end_time_s,
     seed,
-    lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
+    lookahead_days: int = ALLOWED_LOOKAHEAD_DAYS[0],
     ):
     random.seed(seed)
     # Configure paths before the schedule pre-check, otherwise ON_GOING_RUN_DIR is still None.
