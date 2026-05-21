@@ -31,7 +31,6 @@ OUTPUT_RUN_DIR = None
 PRODUCTION_PLAN_PATH = None
 DISRUPTION_HISTORY_PATH = None
 UNIT_SUMMARY_PATH = None
-
 CLEAN_TEMP_OUTPUTS = True
 # DISABLED: KEEP_ONLY_BEST_SUMMARY = True
 
@@ -1269,9 +1268,10 @@ def main(
     main_settings_path,
     current_time_s,
     segment_end_time_s,
+    seed,
     lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
-):
-
+    ):
+    random.seed(seed)
     # Configure paths before the schedule pre-check, otherwise ON_GOING_RUN_DIR is still None.
     configure_paths_from_main_settings(main_settings_path)
 
