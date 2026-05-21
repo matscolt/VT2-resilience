@@ -3346,6 +3346,9 @@ def calculate_kpis(
     if not unit_summaries:
         return {
             "total_units_ordered": 0,
+            "produced_units_fuse0": 0,
+            "produced_units_fuse1": 0,
+            "produced_units_fuse2": 0,
             "makespan_seconds": 0.0,
             "average_cycle_time_seconds": 0.0,
             "cycle_time_from_1_over_throughput_rate_seconds": math.inf,
@@ -3372,8 +3375,13 @@ def calculate_kpis(
     average_throughput_efficiency = mean(float(u.throughput_efficiency) for u in unit_summaries)
     total_wait_time_s = sum(float(op.wait_time_s) for op in operations)
 
+    produced_mix = Counter(str(unit_summary.variant).upper() for unit_summary in unit_summaries)
+
     kpis: dict[str, float | int] = {
         "total_units_ordered": total_units,
+        "produced_units_fuse0": int(produced_mix.get("FUSE0", 0)),
+        "produced_units_fuse1": int(produced_mix.get("FUSE1", 0)),
+        "produced_units_fuse2": int(produced_mix.get("FUSE2", 0)),
         "makespan_seconds": round(makespan_s, 4),
         "average_cycle_time_seconds": round(average_cycle_time_s, 4),
         "cycle_time_from_1_over_throughput_rate_seconds": round(
@@ -3893,11 +3901,13 @@ def write_station_summary_csv(
     output_path: Path,
     utilization_active_window_without_disruptions_by_station: dict[tuple[int, str], float] | None = None,
     active_order_utilization_by_station: dict[tuple[int, str], float] | None = None,
+    units_processed_by_station: dict[tuple[int, str], int] | None = None,
 ) -> None:
     utilization_active_window_without_disruptions_by_station = (
         utilization_active_window_without_disruptions_by_station or {}
     )
     active_order_utilization_by_station = active_order_utilization_by_station or {}
+    units_processed_by_station = units_processed_by_station or {}
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(
@@ -3911,6 +3921,7 @@ def write_station_summary_csv(
                 "average_queue_length",
                 "average_wait_time_s",
                 "total_wait_time_s",
+                "units_processed",
                 "utilization_overall",
                 "utilization_active_window",
                 "utilization_active_window_without_disruptions",
@@ -3925,6 +3936,7 @@ def write_station_summary_csv(
             active_order_utilization_value = active_order_utilization_by_station.get(
                 station_key
             )
+            units_processed_value = int(units_processed_by_station.get(station_key, 0))
             writer.writerow(
                 [
                     summary.station_index,
@@ -3940,6 +3952,7 @@ def write_station_summary_csv(
                     round(summary.average_queue_length, 6),
                     round(summary.average_wait_time_s, 4),
                     round(summary.total_wait_time_s, 4),
+                    units_processed_value,
                     round(summary.utilization_overall, 6),
                     round(summary.utilization_active_window, 6),
                     round(float(no_disruptions_value), 6)
@@ -5309,7 +5322,15 @@ def _write_outputs_for_integrated_run(ctx: dict[str, Any], operations, transport
     write_operations_csv(operations, run_output_dir / "station_schedule.csv")
     write_transport_csv(transport_records, run_output_dir / "transport_schedule.csv")
     write_unit_summary_csv(unit_summaries, run_output_dir / "unit_summary.csv")
-    write_station_summary_csv(station_summaries, run_output_dir / "station_summary.csv")
+    units_processed_by_station = Counter(
+        (int(operation.station_index), str(operation.station_name))
+        for operation in operations
+    )
+    write_station_summary_csv(
+        station_summaries,
+        run_output_dir / "station_summary.csv",
+        units_processed_by_station=dict(units_processed_by_station),
+    )
     if disruptions_enabled or simulation_details.get("disruption_event_log"):
         save_json({"disruptions_enabled": bool(disruptions_enabled), "disruption_mode": int(disruption_mode), "seed": str(disruption_seed) if disruption_seed is not None else None, "timed_disruption_records": list(timed_records), "disruption_counts": dict(simulation_details.get("disruption_counts", {})), "events": list(simulation_details.get("disruption_event_log", []))}, run_output_dir / "disruption_summary.json")
 
@@ -5412,12 +5433,37 @@ def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: 
         combined_transport_records,
     )
 
+    non_emergency_unit_summaries = [
+        summary
+        for summary in combined_unit_summaries
+        if not _is_emergency_unit_id(getattr(summary, "unit_id", ""))
+    ]
+    non_emergency_unit_ids = {str(summary.unit_id) for summary in non_emergency_unit_summaries}
+    non_emergency_operations = [
+        operation
+        for operation in combined_operations
+        if str(operation.unit_id) in non_emergency_unit_ids
+    ]
+    non_emergency_transport_records = [
+        transport
+        for transport in combined_transport_records
+        if str(transport.unit_id) in non_emergency_unit_ids
+    ]
+    station_summaries_without_emergency = _build_station_summaries_from_operations(
+        non_emergency_operations,
+        list(effective.get("station_sequence", [])),
+    )
+    non_emergency_completed_good_variants = [
+        str(summary.variant)
+        for summary in non_emergency_unit_summaries
+    ]
+
     kpis_without_disruptions = calculate_kpis_without_disruption_penalties(
-        ordered_units=combined_completed_good_variants,
-        operations=combined_operations,
-        unit_summaries=combined_unit_summaries,
-        station_summaries=station_summaries_for_output,
-        transport_records=combined_transport_records,
+        ordered_units=non_emergency_completed_good_variants,
+        operations=non_emergency_operations,
+        unit_summaries=non_emergency_unit_summaries,
+        station_summaries=station_summaries_without_emergency,
+        transport_records=non_emergency_transport_records,
         timed_records=timed_records if enabled else [],
         cutoff_time_s=ctx.get("absolute_stop_time_s", ctx["simulation_time_s"]),
     )
