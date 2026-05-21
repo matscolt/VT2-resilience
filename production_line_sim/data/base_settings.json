@@ -50,6 +50,7 @@
     "TOURNAMENT_SIZE" : 2,
     "CROSSOVER_RATE" : 0.9,
     "MUTATION_RATE" : 0.15,
+
     "ALPHA":0.5,
     "BETA":0.001,
     "GAMMA":1.2
