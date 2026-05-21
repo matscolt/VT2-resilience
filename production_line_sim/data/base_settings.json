@@ -45,7 +45,7 @@
     "ALPHA":0.05,
     "BETA":0.001,
     "GAMMA":1.5,
-    "DELTA":100,
+    "DELTA":1000,
 
     "swaps_scale":0.15,
     "swaps_constant":0,
