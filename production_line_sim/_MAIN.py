@@ -295,7 +295,7 @@ def main():
         print(f"Scenario = {sc_name} layout = {layout_file}, seed = {seed}")
         print(f"Pressure = {p_name} ({p_val})  Ratio = {r_name} ({r_val})  Algo = {a_name}")
 
-        pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
+        #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
         print("----------------------------------------------------------------------------------------------------")
         next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct,action=action)
         return #stop the loop
