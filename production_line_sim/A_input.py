@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).parent
 data_dir = BASE_DIR / "data"
 PRIO_LOW = 1
 PRIO_HIGH = 5
-AVE_CYCLE_TIME_PER_UNIT = 76.4  # seconds per unit, used for due date generation
+AVE_CYCLE_TIME_PER_UNIT = 76.4*4  # seconds per unit, used for due date generation
 
 # ============================================================
 # CSV writers
@@ -273,7 +273,7 @@ def generate_orderlist(seed, plan_time, output_path: Path,num_orders, num_units)
         if order_id == num_orders:
             units = units_left
         units_left -= units
-        due_date = round_half_up(random.uniform(min(units * AVE_CYCLE_TIME_PER_UNIT*1.2, plan_time), plan_time))
+        due_date = round_half_up(random.uniform(min(units * AVE_CYCLE_TIME_PER_UNIT, plan_time), plan_time))
         priority = round_half_up(min(max(random.expovariate(1/1.5), PRIO_LOW), PRIO_HIGH))
         variant0 = "FUSE0"
         quantity0 = round_half_up(max(random.normalvariate(units * 0.33, unitstd), 0))
@@ -525,7 +525,6 @@ def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders
             eunits_per_order = eunits_left
         eunits_left -= eunits_per_order
         start_time = round_half_up(random.uniform(0, max(plan_time-eunits_per_order*AVE_CYCLE_TIME_PER_UNIT, 0)))
-        due_date = round_half_up(random.uniform(min(start_time+eunits_per_order*AVE_CYCLE_TIME_PER_UNIT, plan_time), plan_time))
         
         x50 = 0.5 # 50th percentile of the distribution (median)
         x90 = 2.0 # 90th percentile of the distribution (chosen to create a long tail for emergency orders)
