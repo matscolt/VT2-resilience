@@ -2177,15 +2177,10 @@ def run_simulation(
             station_queue_sequence,
         )
         station_queue_sequence += 1
+        # Keep station queues FIFO. Emergency orders receive priority only when
+        # a carrier becomes available; they must not jump ahead of units that
+        # were already waiting inside station queues.
         station_state.queue.append(entry)
-        if 0 <= int(unit_index) < len(unit_ids) and _is_emergency_unit_id(unit_ids[int(unit_index)]):
-            station_state.queue.sort(
-                key=lambda item: (
-                    0 if (0 <= int(item[0]) < len(unit_ids) and _is_emergency_unit_id(unit_ids[int(item[0])])) else 1,
-                    float(item[1]),
-                    int(item[4]),
-                )
-            )
 
     def release_waiting_units_into_system(current_time_s: float) -> None:
         nonlocal available_system_slots
@@ -3701,12 +3696,16 @@ def write_transport_csv(transport_records: list[TransportRecord], output_path: P
 
 
 def write_unit_summary_csv(unit_summaries: list[UnitSummary], output_path: Path) -> None:
-    def _unit_summary_sort_key(summary: UnitSummary) -> tuple[float, str]:
+    def _unit_summary_sort_key(summary: UnitSummary) -> tuple[float, float]:
         try:
             first_arrival_time_s = float(summary.first_arrival_time_s)
         except (TypeError, ValueError):
             first_arrival_time_s = math.inf
-        return (first_arrival_time_s, str(summary.unit_id))
+        try:
+            start_time_s = float(summary.start_time_s)
+        except (TypeError, ValueError):
+            start_time_s = math.inf
+        return (first_arrival_time_s, start_time_s)
 
     unit_summaries = sorted(unit_summaries, key=_unit_summary_sort_key)
 
