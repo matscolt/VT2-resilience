@@ -904,7 +904,7 @@ def calculate_fitness(
 
         due = float(order_info[order_id_key]["due_date"])
         priority = max(1, int(order_info[order_id_key].get("priority", 1)))
-        w = float(DELTA)*float(priority) ** float(GAMMA)
+        w = float(priority) ** float(GAMMA)
 
         completion = float(completion)
         lateness_s = completion - due
@@ -920,7 +920,7 @@ def calculate_fitness(
             late_orders += 1
 
         exp_term = math.exp(k * T_hours) - 1.0
-        raw_weighted_exp_tardiness += w * exp_term
+        raw_weighted_exp_tardiness += float(DELTA)*w * exp_term
 
         raw_earliness_days += w * E_hours
 
