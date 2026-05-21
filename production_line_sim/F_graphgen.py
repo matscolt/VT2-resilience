@@ -19,7 +19,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-def find_output_folder(output_path=None, target_timestamp=None, prompt=False):
+def find_output_folder(output_path=None, target_timestamp=None, prompt=True):
     if output_path is None:
         output_path = ROOTDIR / "output"
     else:
@@ -66,16 +66,36 @@ def find_output_folder(output_path=None, target_timestamp=None, prompt=False):
 
     # If user wants to choose interactively
     if prompt:
-        runs = [p for (_, _, p) in folders]
-        return prompt_for_run_folder(output_path, runs)
+        outputs = [p for (_, _, p) in folders]
+        return prompt_for_data_folder(output_path, outputs)
 
     # Default: newest
     return folders[0][2]
 
 
-def prompt_for_run_folder(output_dir: Path, runs: list[Path]) -> Path:
+def prompt_for_data_folder(output_dir: Path, outputs: list[Path]) -> Path:
+    if not outputs:
+        raise FileNotFoundError(f"No output folders found in: {output_dir}")
+
+    print("\nAvailable run folders in ./output (newest first):")
+    for i, p in enumerate(outputs, start=1):
+        print(f"  {i:2d}) {p.name}")
+
+    default = 1
+    while True:
+        s = input(f"Choose output folder number (Enter = {default}): ").strip()
+        if s == "":
+            return outputs[default - 1]
+        if s.isdigit() and 1 <= int(s) <= len(outputs):
+            return outputs[int(s) - 1]
+        candidate = output_dir / s
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+        print("Invalid selection. Enter a number from the list or paste the folder name.")
+
+def prompt_for_run_folder(main_dir: Path, runs: list[Path]) -> Path:
     if not runs:
-        raise FileNotFoundError(f"No run folders found in: {output_dir}")
+        raise FileNotFoundError(f"No output folders found in: {main_dir}")
 
     print("\nAvailable run folders in ./output (newest first):")
     for i, p in enumerate(runs, start=1):
@@ -83,16 +103,15 @@ def prompt_for_run_folder(output_dir: Path, runs: list[Path]) -> Path:
 
     default = 1
     while True:
-        s = input(f"Choose run folder number (Enter = {default}): ").strip()
+        s = input(f"Choose output folder number (Enter = {default}): ").strip()
         if s == "":
             return runs[default - 1]
         if s.isdigit() and 1 <= int(s) <= len(runs):
             return runs[int(s) - 1]
-        candidate = output_dir / s
+        candidate = main_dir / s
         if candidate.exists() and candidate.is_dir():
             return candidate
         print("Invalid selection. Enter a number from the list or paste the folder name.")
-
 
 
 def clear_folder(folder):
@@ -423,14 +442,15 @@ def main(starttime = time.perf_counter()):
     else:
         datafolder = find_output_folder()
     mainfoldername = str(datafolder).split("\\")[-1]
-    datafolder = datafolder / "run_1" / "results"
-    print(f"using datafolder: {mainfoldername}")
+    runfolder = datafolder / prompt_for_run_folder() / "results"
+
+    print(f"using datafolder: {mainfoldername} run folder: {runfolder}")
+
     post_processing_folder = ROOTDIR / "post_processing"
-    ppfoldername = mainfoldername
-    ppfolder = post_processing_folder / ppfoldername
-    print(f"placing graphs and so on inside {ppfoldername}")
+    ppfolder = post_processing_folder / mainfoldername
+    print(f"placing graphs and so on inside {mainfoldername}")
     clear_folder(ppfolder)
-    station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(datafolder)
+    station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(runfolder)
 
     graph_folder = ppfolder / "graphs"
     graph_folder.mkdir(exist_ok=True)
