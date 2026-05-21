@@ -15,9 +15,15 @@ ROOTDIR = Path(__file__).parent
 
 #find the correct order
 
-def find_output_folder(output_path=None, target_timestamp=None):
+import os
+from datetime import datetime
+from pathlib import Path
+
+def find_output_folder(output_path=None, target_timestamp=None, prompt=False):
     if output_path is None:
         output_path = ROOTDIR / "output"
+    else:
+        output_path = Path(output_path)
 
     folders = []
     current_year = datetime.now().year
@@ -29,18 +35,18 @@ def find_output_folder(output_path=None, target_timestamp=None):
             continue
 
         try:
-            # name: main_DD-MM_HH-MM_n  -> parts: ["main", "DD-MM", "HH-MM", "n"]
+            # Expect: main_DD-MM_HH-MM_n  -> ["main", "DD-MM", "HH-MM", "n"]
             parts = name.split("_")
-            if len(parts) < 4:
+            if len(parts) < 4 or parts[0] != "main":
                 continue
 
-            timestamp_str = parts[1] + "_" + parts[2]     # "DD-MM_HH-MM"
-            ts = datetime.strptime(timestamp_str, "%d-%m_%H-%M")
+            timestamp_str = parts[1] + "_" + parts[2]      # "DD-MM_HH-MM"
+            ts = datetime.strptime(timestamp_str, "%d-%m_%H-%M").replace(year=current_year)
 
-            # folder names have no year -> assume current year
-            timestamp = ts.replace(year=current_year)
+            # Counter (n) can be used as a tie-breaker if same timestamp
+            n = int(parts[3])
 
-            folders.append((timestamp, full_path))
+            folders.append((ts, n, full_path))
 
         except Exception:
             continue
@@ -48,15 +54,44 @@ def find_output_folder(output_path=None, target_timestamp=None):
     if not folders:
         raise FileNotFoundError(f"No valid output folders found in {output_path}")
 
-    folders.sort(key=lambda x: x[0])
+    # Newest first: sort by timestamp then counter
+    folders.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
+    # If target timestamp is given, pick closest
     if target_timestamp:
-        # Expect target timestamp in the SAME format: "DD-MM_HH-MM"
+        # Expect "DD-MM_HH-MM" (same as folder naming, no year)
         target_dt = datetime.strptime(target_timestamp, "%d-%m_%H-%M").replace(year=current_year)
         closest = min(folders, key=lambda x: abs(x[0] - target_dt))
-        return closest[1]
+        return closest[2]
 
-    return folders[-1][1]
+    # If user wants to choose interactively
+    if prompt:
+        runs = [p for (_, _, p) in folders]
+        return prompt_for_run_folder(output_path, runs)
+
+    # Default: newest
+    return folders[0][2]
+
+
+def prompt_for_run_folder(output_dir: Path, runs: list[Path]) -> Path:
+    if not runs:
+        raise FileNotFoundError(f"No run folders found in: {output_dir}")
+
+    print("\nAvailable run folders in ./output (newest first):")
+    for i, p in enumerate(runs, start=1):
+        print(f"  {i:2d}) {p.name}")
+
+    default = 1
+    while True:
+        s = input(f"Choose run folder number (Enter = {default}): ").strip()
+        if s == "":
+            return runs[default - 1]
+        if s.isdigit() and 1 <= int(s) <= len(runs):
+            return runs[int(s) - 1]
+        candidate = output_dir / s
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+        print("Invalid selection. Enter a number from the list or paste the folder name.")
 
 
 
@@ -118,10 +153,8 @@ def load_all_data(data_folder):
     station_summary = to_float(station_summary, [
         "busy_time_s","first_start_time_s","last_finish_time_s",
         "max_queue_length","average_queue_length","average_wait_time_s",
-        "total_wait_time_s","utilization_overall","utilization_active_window",
-        "active_order_utilization"
-    ])
-
+        "total_wait_time_s","utilization_overall","utilization_active_window"
+    ]) 
     transport_data = to_float(transport_data, [
         "start_time_s", "finish_time_s", "transport_time_s"
     ])
@@ -323,7 +356,7 @@ def plot_station_utilization(station_data, graphfolder):
 
     # 1) Data (én række per station i din CSV)
     stations = [row["station_name"] for row in station_data]
-    times = [float(row["active_order_utilization"]) * 100 for row in station_data]
+    times = [float(row["utilization_active_window"]) * 100 for row in station_data]
 
     # 2) Farvelogik (justér thresholds efter behov)
     lower = 40
@@ -381,24 +414,28 @@ def main(starttime = time.perf_counter()):
     
     if specific_folder_choice == 1:
         try:
-            folder = find_output_folder(target_timestamp=specific_folder)
-            print(f">> Using selected folder: {folder}")
+            datafolder = find_output_folder(target_timestamp=specific_folder)
+            print(f">> Using selected folder: {datafolder}")
         except Exception as e:
             print(f">> Warning: Could not find requested folder ({e})")
             print(">> Falling back to newest folder instead.")
-            folder = find_output_folder()
+            datafolder = find_output_folder()
     else:
-        folder = find_output_folder()
-    foldername = str(folder).split("\\")[-1].split("__")[0]
-    print(f"using folder: {foldername}")
+        datafolder = find_output_folder()
+    mainfoldername = str(datafolder).split("\\")[-1]
+    datafolder = datafolder / "run_1" / "results"
+    print(f"using datafolder: {mainfoldername}")
+    post_processing_folder = ROOTDIR / "post_processing"
+    ppfoldername = mainfoldername
+    ppfolder = post_processing_folder / ppfoldername
+    print(f"placing graphs and so on inside {ppfoldername}")
+    clear_folder(ppfolder)
+    station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(datafolder)
 
-    clear_folder(folder)
-    station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(folder)
-
-    graph_folder = folder / "graphs"
+    graph_folder = ppfolder / "graphs"
     graph_folder.mkdir(exist_ok=True)
 
-    plot_gantt(station_schedule,transport_data,graph_folder)
+    #plot_gantt(station_schedule,transport_data,graph_folder)
     print("Time spent: "+str(time.perf_counter()-starttime))
     plot_flow_times(unit_data,graph_folder)
     print("Time spent: "+str(time.perf_counter()-starttime))
