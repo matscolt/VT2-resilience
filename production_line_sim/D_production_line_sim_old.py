@@ -1286,8 +1286,7 @@ def load_timed_disruption_csv(csv_path: Path, valid_variants: set[str]) -> list[
                     "end_time_s": None if _is_nan_like(padded_row[3]) else _read_float(padded_row[3], 0.0),
                     "efficiency_percentage": None if _is_nan_like(padded_row[4]) else _read_float(padded_row[4], 100.0),
                     "order_id": None if _is_nan_like(padded_row[5]) else str(padded_row[5]).strip(),
-                    "due_date": None if _is_nan_like(padded_row[6]) else _read_float(padded_row[6], _read_float(padded_row[2], 0.0)),
-                    "order_time_s": _read_float(padded_row[2], 0.0),
+                    "order_time_s": None if _is_nan_like(padded_row[6]) else _read_float(padded_row[6], _read_float(padded_row[2], 0.0)),
                     "priority": None if _is_nan_like(padded_row[7]) else max(1, _read_int(padded_row[7], 1)),
                     "emergency_variants": emergency_variants,
                     "row_index": int(row_index),
@@ -3962,15 +3961,12 @@ def _sync_visible_emergency_orders_to_current_schedule(
     timed_records: list[dict[str, Any]],
     cutoff_time_s: float,
 ) -> bool:
-    """Add visible emergency orders to current_schedule.csv and put them first.
+    """Add emergency-order units that have become visible to current_schedule.csv.
 
-    When an emergency order has reached its start/order time, the next free
-    carriers must be used for that order before normal scheduled units.  To make
-    that true for both GA evaluations and the real segment run, visible
-    emergency units are inserted at the front of current_schedule.csv and all
-    unit_seq values are renumbered.  Existing emergency rows are moved to the
-    front as well, so an earlier append-only schedule is corrected without
-    duplicating emergency units.
+    This makes the emergency order a real scheduled order for the GA in later
+    generations/segments instead of only being appended inside the simulator.
+    Future emergency orders are not exposed because only records with
+    start/order time <= cutoff_time_s are written.
     """
     schedule_path = Path(schedule_path)
     if not schedule_path.exists() or not schedule_path.is_file():
@@ -3995,15 +3991,29 @@ def _sync_visible_emergency_orders_to_current_schedule(
         route_idx = len(header) - 1
         rows = [list(row) + [""] * max(0, len(header) - len(row)) for row in rows]
 
-    min_len = max(4, route_idx + 1, len(header))
-    padded_rows = [
-        (list(row) + [""] * max(0, min_len - len(row)))[:min_len]
-        for row in rows
-    ]
+    min_len = max(4, route_idx + 1)
+    padded_rows = [list(row) + [""] * max(0, min_len - len(row)) for row in rows]
 
+    existing_unit_ids = [str(row[2]).strip() for row in padded_rows if len(row) > 2]
+    next_emergency_unit_number = _next_emergency_unit_number(existing_unit_ids)
+
+    max_unit_seq = 0
+    for row in padded_rows:
+        try:
+            max_unit_seq = max(max_unit_seq, _read_int(row[0], 0))
+        except Exception:
+            pass
+
+    existing_emergency_counts: Counter[tuple[str, str]] = Counter()
+    for row in padded_rows:
+        order_id = str(row[1]).strip() if len(row) > 1 else ""
+        unit_id = str(row[2]).strip() if len(row) > 2 else ""
+        variant = str(row[3]).strip().upper() if len(row) > 3 else ""
+        if order_id and variant and _is_emergency_unit_id(unit_id):
+            existing_emergency_counts[(order_id, variant)] += 1
+
+    appended_any = False
     cutoff = float(cutoff_time_s or 0.0)
-
-    visible_emergency_records: list[dict[str, Any]] = []
     for record in sorted(timed_records, key=lambda r: (float(r.get("start_time_s", 0.0) or 0.0), int(r.get("row_index", 0) or 0))):
         if str(record.get("disruption_type", "")).strip().casefold() != "emergency_order":
             continue
@@ -4018,35 +4028,6 @@ def _sync_visible_emergency_orders_to_current_schedule(
         if order_id == "":
             continue
 
-        visible_emergency_records.append(record)
-
-    if not visible_emergency_records:
-        return False
-
-    visible_order_rank: dict[str, int] = {}
-    for rank, record in enumerate(visible_emergency_records):
-        order_id = str(record.get("order_id", "")).strip()
-        visible_order_rank.setdefault(order_id, rank)
-
-    visible_order_ids = set(visible_order_rank.keys())
-
-    existing_unit_ids = [str(row[2]).strip() for row in padded_rows if len(row) > 2]
-    next_emergency_unit_number = _next_emergency_unit_number(existing_unit_ids)
-
-    existing_emergency_counts: Counter[tuple[str, str]] = Counter()
-    for row in padded_rows:
-        order_id = str(row[1]).strip() if len(row) > 1 else ""
-        unit_id = str(row[2]).strip() if len(row) > 2 else ""
-        variant = str(row[3]).strip().upper() if len(row) > 3 else ""
-        if order_id and variant and _is_emergency_unit_id(unit_id):
-            existing_emergency_counts[(order_id, variant)] += 1
-
-    new_emergency_rows: list[list[str]] = []
-    for record in visible_emergency_records:
-        order_id = str(record.get("order_id", "")).strip()
-        if order_id == "":
-            continue
-
         for variant_value, quantity_value in record.get("emergency_variants", []):
             variant = str(variant_value).strip().upper()
             if variant not in valid_variants:
@@ -4055,59 +4036,27 @@ def _sync_visible_emergency_orders_to_current_schedule(
             existing_quantity = int(existing_emergency_counts.get((order_id, variant), 0))
             missing_quantity = max(0, required_quantity - existing_quantity)
             for _ in range(missing_quantity):
+                max_unit_seq += 1
                 unit_id = f"E{next_emergency_unit_number:03d}"
                 next_emergency_unit_number += 1
                 new_row = [""] * len(header)
-                new_row[0] = "0"  # renumbered below
+                new_row[0] = str(max_unit_seq)
                 new_row[1] = order_id
                 new_row[2] = unit_id
                 new_row[3] = variant
                 new_row[route_idx] = "0"
-                new_emergency_rows.append(new_row)
+                padded_rows.append(new_row)
                 existing_emergency_counts[(order_id, variant)] += 1
+                appended_any = True
 
-    existing_visible_emergency_rows: list[list[str]] = []
-    normal_rows: list[list[str]] = []
-    for row in padded_rows:
-        row = (list(row) + [""] * max(0, len(header) - len(row)))[:len(header)]
-        order_id = str(row[1]).strip() if len(row) > 1 else ""
-        unit_id = str(row[2]).strip() if len(row) > 2 else ""
-        if order_id in visible_order_ids and _is_emergency_unit_id(unit_id):
-            existing_visible_emergency_rows.append(row)
-        else:
-            normal_rows.append(row)
-
-    def _emergency_sort_key(row: list[str]) -> tuple[int, int, str]:
-        order_id = str(row[1]).strip() if len(row) > 1 else ""
-        unit_id = str(row[2]).strip() if len(row) > 2 else ""
-        match = re.fullmatch(r"[Ee](\d+)", unit_id)
-        unit_number = int(match.group(1)) if match else 10**12
-        return (int(visible_order_rank.get(order_id, 10**12)), unit_number, unit_id)
-
-    emergency_rows = sorted(existing_visible_emergency_rows + new_emergency_rows, key=_emergency_sort_key)
-    reordered_rows = emergency_rows + normal_rows
-
-    for seq, row in enumerate(reordered_rows, start=1):
-        row[0] = str(seq)
-
-    old_unit_order = [
-        str(row[2]).strip() if len(row) > 2 else ""
-        for row in padded_rows
-    ]
-    new_unit_order = [
-        str(row[2]).strip() if len(row) > 2 else ""
-        for row in reordered_rows
-    ]
-
-    changed = bool(new_emergency_rows) or old_unit_order != new_unit_order
-    if changed:
+    if appended_any:
         with schedule_path.open("w", encoding="utf-8-sig", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(header)
-            for row in reordered_rows:
+            for row in padded_rows:
                 writer.writerow((list(row) + [""] * max(0, len(header) - len(row)))[:len(header)])
 
-    return changed
+    return appended_any
 
 
 def _resolve_carrier_snapshot_path(pathlist: dict[str, Any], main_settings_path: Path) -> Path:
