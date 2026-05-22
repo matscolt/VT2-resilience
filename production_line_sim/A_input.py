@@ -322,6 +322,39 @@ def generate_orderlist(seed, plan_time, output_path: Path,num_orders, num_units)
 # -----------------------------
 # Disruption generation
 # ============================================================
+def generate_empty_disruption_list(output_path: Path) -> None:
+    """
+    Create an empty disruptions.csv with the correct column headers only.
+    This lets you fill in the disruption events manually afterward.
+    """
+
+    columns = [
+        "disruption_type",
+        "station_id",
+        "start_time",
+        "end_time",
+        "efficiency_percentage",
+        "order_id",
+        "due_date",
+        "priority",
+        "variant0",
+        "quantity0",
+        "variant1",
+        "quantity1",
+        "variant2",
+        "quantity2",
+    ]
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+
+    print(f"Empty disruption CSV created in the input folder")
+
+
 
 def generate_disruption_list(seed, plan_time: int, output_path: Path, num_orders: int,num_units: int,layout_path = None) -> None:
     """Generate disruptions.csv based on settings.json and disruption.json.

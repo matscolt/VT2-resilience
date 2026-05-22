@@ -1332,6 +1332,10 @@ def main(
     if not _schedule_exists_and_has_content(schedule_path):
         print("\nschedule is missing\n")
         need_full_horizon = True
+        if segment_end_time_s/SECONDS_PER_PRODUCTION_DAY > max(ALLOWED_LOOKAHEAD_DAYS):
+            print(f"{segment_end_time_s/SECONDS_PER_PRODUCTION_DAY} days > {max(ALLOWED_LOOKAHEAD_DAYS)} days")
+            need_full_horizon = False
+            lookahead_days = int(segment_end_time_s/SECONDS_PER_PRODUCTION_DAY)+1
     elif _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[0]:
         print("\nhorizon less than a day\n")
         need_full_horizon = True
@@ -1342,7 +1346,6 @@ def main(
     if need_full_horizon:
         print("!!!NEEDED A FULL HORIZON!!!")
         lookahead_days = max(ALLOWED_LOOKAHEAD_DAYS)
-
     # Snapshot the previous schedule BEFORE GA evaluations overwrite current_schedule.csv.
     previous_schedule_df = None
     prev_schedule_path = Path(ON_GOING_RUN_DIR) / 'current_schedule.csv'

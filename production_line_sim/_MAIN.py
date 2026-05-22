@@ -157,13 +157,12 @@ def main():
     dirs[0] = runs_dir
     
     #read settings
-    mainsettings = A_input.read_settings_json(data_dir / "base_settings.json")
     base_settings = A_input.read_settings_json(data_dir / "base_settings.json")
-    scenarios = list(mainsettings["Scenarios"].items())
-    pressures = list(mainsettings["pressure_of_capacity"].items())
-    ratios = list(mainsettings["order_units_ratio"].items())
-    algos = list(mainsettings["algorithms"].items())
-    seeds = list(mainsettings["seeds"].items())
+    scenarios = list(base_settings["Scenarios"].items())
+    pressures = list(base_settings["pressure_of_capacity"].items())
+    ratios = list(base_settings["order_units_ratio"].items())
+    algos = list(base_settings["algorithms"].items())
+    seeds = list(base_settings["seeds"].items())
     
     # build index maps for the keys
     sc_idx = {k: i+1 for i, (k, _) in enumerate(scenarios)}
@@ -195,7 +194,14 @@ def main():
         disruptionpath = disruption_dir/f"disruptions_{label}.csv"
         print(f"units: {num_units} and orders: {num_orders}")
         A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
-        A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
+        if base_settings["random based disruptions"]["enabled"] == 2:
+            A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
+        elif base_settings["random based disruptions"]["enabled"] == 0:
+            A_input.generate_empty_disruption_list(disruptionpath)
+        else:
+            print("something is wrong in the base_settings \n--> the \"random based disruptions\" needs to be either 2 or 0 for enabled or disabled")
+            return
+
         # takes wayyy too long to generate a gantt chart for each one
         #A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
         #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)

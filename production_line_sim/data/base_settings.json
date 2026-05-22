@@ -10,8 +10,7 @@
         "medium": 25
     },
     "algorithms": {
-        "1": "genetic algortihm",
-        "2": "simulated annealing"
+        "1": "genetic algortihm"
     },
     "weightage": {
         "tardines": "?",
@@ -28,7 +27,7 @@
     "sim_time [s]": 800000,
     "plan_time [s]": 576000,
     "random based disruptions": {
-        "enabled": 2
+        "enabled": 0
     },
     "carriers": {
         "number of carriers": 8
