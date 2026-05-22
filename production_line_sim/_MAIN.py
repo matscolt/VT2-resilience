@@ -202,8 +202,8 @@ def main():
 
         # takes wayyy too long to generate a gantt chart for each one
         #A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
-        #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
-        break
+        next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
+        #break
     #input("change the disruptions file")
     run_idx = 0
     next_pct = 0
@@ -318,7 +318,7 @@ def main():
         #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
         print("----------------------------------------------------------------------------------------------------")
         next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct,action=action)
-        return #stop the loop
+        #stop the loop
 
 if __name__ == "__main__":
    main()
