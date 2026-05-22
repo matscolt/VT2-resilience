@@ -285,7 +285,10 @@ def main():
         # algorithm name contains GA, it is also called again at every disruption
         # start/end timestamp so it can react only to already-known events.
         # Run GA at every segment boundary so it can reschedule from the current snapshot.
-        rolling_ga_enabled = True
+        rescheduling_enabled = base_settings["rescheduling_enabled"]
+        reaction_enabled = base_settings["reaction_enabled"]
+
+                
         for i in range(max(0, len(event_times) - 1)):
             t_start = event_times[i]
             t_stop = event_times[i + 1]
@@ -295,9 +298,9 @@ def main():
             start = ti.perf_counter()
             print(f"[MAIN] Segment {i+1}/{len(event_times)-1}: t={t_start} -> {t_stop}\n day {t_start/(3600*8):.4f} to {t_stop/(3600*8):.4f}")
 
-            if i == 0 or rolling_ga_enabled:
+            if i == 0 or reaction_enabled:
                 print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
-                C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed)
+                C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
             else:
                 print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
 

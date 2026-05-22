@@ -1256,7 +1256,6 @@ def _schedule_exists_and_has_content(schedule_path):
     try:
         import pandas as pd
         df = pd.read_csv(schedule_path)
-        print(df)
         return len(df) > 0
     except Exception:
         return False
@@ -1346,12 +1345,30 @@ def main(
     current_time_s,
     segment_end_time_s,
     seed,
+    rescheduling_enabled,
     lookahead_days: int = ALLOWED_LOOKAHEAD_DAYS[0],
     ):
     random.seed(seed)
     # Configure paths before the schedule pre-check, otherwise ON_GOING_RUN_DIR is still None.
     configure_paths_from_main_settings(main_settings_path)
 
+    if rescheduling_enabled == 0:
+        global GENERATION_LIMIT, SWAPS_SCALE,SWAPS_CONSTANT,SWAPS_MIN,POPULATION_SCALE,POPULATION_CONSTANT,POPULATION_MIN,ELITE_SCALE,ELITE_CONSTANT,ELITE_MIN,TOURNAMENT_SCALE,TOURNAMENT_CONSTANT,TOURNAMENT_MIN
+        GENERATION_LIMIT = 1
+        SWAPS_SCALE = 0
+        SWAPS_CONSTANT = 0
+        SWAPS_MIN = 0
+        POPULATION_SCALE = 0
+        POPULATION_CONSTANT = 0
+        POPULATION_MIN = 1
+        ELITE_SCALE = 0
+        ELITE_CONSTANT = 0
+        ELITE_MIN = 1
+        TOURNAMENT_SCALE = 0
+        TOURNAMENT_CONSTANT = 0
+        TOURNAMENT_MIN = 1
+        ALLOWED_LOOKAHEAD_DAYS.append(25)
+        print("rescheduling is disabled")
     # ===============================
     # NEW: schedule pre-check
     # ===============================
@@ -1378,7 +1395,6 @@ def main(
     if BASE_SETTINGS["segment_time"] ==1:
         lookahead_days = max(lookahead_days,max(ALLOWED_LOOKAHEAD_DAYS))
         print(f"lookahead days: {lookahead_days}")
-
 
     if need_full_horizon:
         print("!!!NEEDED A FULL HORIZON!!!")

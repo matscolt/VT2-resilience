@@ -445,7 +445,7 @@ def plot_flow_times(unit_data,graphfolder):
     print(">> Generating throughput time plots!")
     units = [row["unit_id"] for row in unit_data]
     flow = [float(row["active_flow_time_s"]) for row in unit_data]
-    graphname = "Flow_times.png"
+    graphname = "throughput_times.png"
     avg_flow = sum(flow) / len(flow)
 
     plt.figure()
@@ -471,7 +471,7 @@ def plot_flow_times(unit_data,graphfolder):
         rotation=90
     )
     plt.ylabel("Flow time [s]")
-    plt.title("Flow time per unit")
+    plt.title("throughput time per unit")
 
     plt.tight_layout()
     plt.savefig(graphfolder/graphname, dpi=200, bbox_inches="tight")
