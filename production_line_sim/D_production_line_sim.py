@@ -5050,12 +5050,18 @@ def _shift_timed_records_for_segment(
         ):
             estimated_duration_s = _estimated_duration_for_visible_timed_disruption(record, disruption_config)
             if estimated_duration_s > 0.0:
-                # Planning must answer: "what is the makespan if the disruption
-                # that just became visible lasts its estimated duration?"
-                # Therefore the future actual end_time in the timed CSV must not
-                # shorten or hide the disruption during the forward calculation.
-                end_abs = float(start_abs) + float(estimated_duration_s)
-                end_is_known_for_shift = True
+                actual_end_is_visible = (
+                    end_raw is not None
+                    and float(end_abs) <= visibility_cutoff_s + eps
+                )
+                if not actual_end_is_visible:
+                    # Before the real end_time event has been reached, planning
+                    # should estimate the active disruption as start + estimated
+                    # duration. Once the real end_time event is reached, the
+                    # disruption must be treated as ended and must not continue
+                    # into later forward makespan recalculations.
+                    end_abs = float(start_abs) + float(estimated_duration_s)
+                    end_is_known_for_shift = True
 
         new_record = dict(record)
 
@@ -5094,7 +5100,7 @@ def _shift_timed_records_for_segment(
         # Breakdown/efficiency-loss subtype: include only if it is already known
         # and intersects this segment window. If a positive estimate was supplied
         # for planning, the intersection test uses the estimated end time.
-        if end_is_known_for_shift and end_abs < segment_start_s - eps:
+        if end_is_known_for_shift and end_abs <= segment_start_s + eps:
             continue
         if segment_stop_s is not None and start_abs > segment_stop_s + eps:
             continue
