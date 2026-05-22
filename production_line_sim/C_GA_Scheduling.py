@@ -1344,7 +1344,9 @@ def main(
         print(f"The segment is longer than the horizon!\nnew lookahead_days: {lookahead_days}")
     
     if BASE_SETTINGS["segment_time"] ==1:
-        need_full_horizon = True
+        lookahead_days = max(lookahead_days,max(ALLOWED_LOOKAHEAD_DAYS))
+        print(f"lookahead days: {lookahead_days}")
+
 
     if need_full_horizon:
         print("!!!NEEDED A FULL HORIZON!!!")
