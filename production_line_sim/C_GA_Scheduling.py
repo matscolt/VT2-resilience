@@ -176,6 +176,21 @@ ELITE_MIN = BASE_SETTINGS["elite_min"]
 TOURNAMENT_SCALE = BASE_SETTINGS["tournament_scale"]
 TOURNAMENT_CONSTANT = BASE_SETTINGS["tournament_constant"]
 TOURNAMENT_MIN = BASE_SETTINGS["tournament_min"]
+overwrite_GA = True
+if overwrite_GA:
+    GENERATION_LIMIT = 2 
+    SWAPS_SCALE = 0
+    SWAPS_CONSTANT = 0
+    SWAPS_MIN = 2
+    POPULATION_SCALE = 0
+    POPULATION_CONSTANT = 0
+    POPULATION_MIN = 4
+    ELITE_SCALE = 0
+    ELITE_CONSTANT = 0
+    ELITE_MIN = 1
+    TOURNAMENT_SCALE = 0
+    TOURNAMENT_CONSTANT = 0
+    TOURNAMENT_MIN = 1
 
 # ============================================================
 # FITNESS WEIGHTS
@@ -1232,6 +1247,7 @@ def _schedule_exists_and_has_content(schedule_path):
     try:
         import pandas as pd
         df = pd.read_csv(schedule_path)
+        print(df)
         return len(df) > 0
     except Exception:
         return False

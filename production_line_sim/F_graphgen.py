@@ -538,8 +538,8 @@ def main(starttime = time.perf_counter()):
     output_dir = ROOTDIR / "output"
     mainfolder,resultfolder = find_results_folder(output_dir)
     post_processing_folder = ROOTDIR / "post_processing"
-    ppfolder = post_processing_folder / mainfolder
     mainfoldername = str(mainfolder).split("\\")[-1]
+    ppfolder = post_processing_folder / mainfoldername
     print(f"placing graphs and so on inside {mainfoldername}")
     clear_folder(ppfolder)
     station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(resultfolder)
