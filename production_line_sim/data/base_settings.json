@@ -26,6 +26,7 @@
     },
     "sim_time [s]": 800000,
     "plan_time [s]": 576000,
+    "fast_GA":0,
     "segment_time":0,
     "segment_interval":2.5,
     "random based disruptions": {

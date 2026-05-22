@@ -176,8 +176,8 @@ ELITE_MIN = BASE_SETTINGS["elite_min"]
 TOURNAMENT_SCALE = BASE_SETTINGS["tournament_scale"]
 TOURNAMENT_CONSTANT = BASE_SETTINGS["tournament_constant"]
 TOURNAMENT_MIN = BASE_SETTINGS["tournament_min"]
-fast_GA = False 
-if fast_GA:
+fast_GA = BASE_SETTINGS["fast_GA"]
+if fast_GA == 1:
     GENERATION_LIMIT = 2 
     SWAPS_SCALE = 0
     SWAPS_CONSTANT = 0
