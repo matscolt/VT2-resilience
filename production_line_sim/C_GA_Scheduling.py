@@ -176,8 +176,8 @@ ELITE_MIN = BASE_SETTINGS["elite_min"]
 TOURNAMENT_SCALE = BASE_SETTINGS["tournament_scale"]
 TOURNAMENT_CONSTANT = BASE_SETTINGS["tournament_constant"]
 TOURNAMENT_MIN = BASE_SETTINGS["tournament_min"]
-overwrite_GA = True
-if overwrite_GA:
+fast_GA = False 
+if fast_GA:
     GENERATION_LIMIT = 2 
     SWAPS_SCALE = 0
     SWAPS_CONSTANT = 0
@@ -414,7 +414,7 @@ def filter_orders_and_units_for_rolling_horizon(
     horizon_units = []
     while len(horizon_units) < segment_capacity:
         horizon_loop +=1
-        
+        print(f"horizon_loop = {horizon_loop}")
         if horizon_loop == 10:
             print("cannot find more units to fit within this segment")
             break
