@@ -414,7 +414,7 @@ def filter_orders_and_units_for_rolling_horizon(
     horizon_units = []
     while len(horizon_units) < segment_capacity:
         horizon_loop +=1
-        print(f"horizon_loop={horizon_loop}")
+        
         if horizon_loop == 10:
             print("cannot find more units to fit within this segment")
             break
@@ -472,8 +472,6 @@ def filter_orders_and_units_for_rolling_horizon(
                 for unit_id in remaining_unit_ids
             )
         lookahead_days +=1
-        print(f"segment capacity {segment_capacity}")
-        print(f"horizon_units {len(horizon_units)}")
 
     # Important:
     # Horizon start is the actual current simulation time,
