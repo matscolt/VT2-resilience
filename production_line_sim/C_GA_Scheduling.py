@@ -1343,6 +1343,9 @@ def main(
         lookahead_days = _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[2]
         print(f"The segment is longer than the horizon!\nnew lookahead_days: {lookahead_days}")
     
+    if BASE_SETTINGS["segment_time"] ==1:
+        need_full_horizon = True
+
     if need_full_horizon:
         print("!!!NEEDED A FULL HORIZON!!!")
         lookahead_days = max(ALLOWED_LOOKAHEAD_DAYS)

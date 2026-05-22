@@ -250,7 +250,7 @@ def load_all_data(data_folder):
 
 
 
-def plot_gantt(station_data, transport_data, graphfolder_dir):
+def plot_gantt(station_data, transport_data, graphfolder_dir,starttime_gantt,endtime_gantt):
     print(">> Generating Gantt charts!")
     # ---------------------------
     # Build ordered y-axis
@@ -499,8 +499,13 @@ def main(starttime = time.perf_counter()):
     graph_folder = ppfolder / "graphs"
     graph_folder.mkdir(exist_ok=True)
 
-    #plot_gantt(station_schedule,transport_data,graph_folder)
-    #print("Time spent: "+str(time.perf_counter()-starttime))
+    starttime_gantt = input("where do you want your gantt chart to start from? >>")
+    endtime_gantt = input("where do you want your gantt chart to end from? >>")
+    if endtime_gantt-starttime_gantt<=0:
+        print("time invalid therefore skipping")
+    else:
+        plot_gantt(station_schedule,transport_data,graph_folder,starttime_gantt,endtime_gantt)
+        print("Time spent: "+str(time.perf_counter()-starttime))
     plot_flow_times(unit_data,graph_folder)
     print("Time spent: "+str(time.perf_counter()-starttime))
     plot_station_utilization(station_summary,graph_folder)
