@@ -106,9 +106,7 @@ def find_all_event_times(main_settings_json: Path):
         base_settings = {}
     horizon = (
         run_settings.get("sim_time [s]")
-        or run_settings.get("Sim_time [s]")
         or base_settings.get("sim_time [s]")
-        or base_settings.get("Sim_time [s]")
         or base_settings.get("plan_time [s]")
         or SECONDS_PER_WEEK
     )
@@ -264,9 +262,24 @@ def main():
         B_production_planning.create_production_plan(order_csv_path,on_going_run_path,layout_file,label,SECONDS_PER_WEEK)
 
         #finds the event_times based on the disruption file for the run
-        event_times = find_all_event_times(main_settings_dir)
+        if base_settings["segment_time"] == 0:
+            event_times = find_all_event_times(main_settings_dir)
+        elif base_settings["segment_time"] == 1:
+            
+            segment_interval = base_settings["segment_interval"]
+            segment_length = int(segment_interval * 60*60*HOURS_PER_DAY)
 
-        
+            event_times = [0]
+            t = segment_length
+            while t < plan_time:
+                    event_times.append(t)
+                    t += segment_length
+
+            event_times.append(plan_time)
+            event_times.append(base_settings["sim_time [s]"])
+        else:
+            print("something is wrong in the base_settings \n--> the \"segment_time\" needs to be either 1 or 0 for enabled or disabled")
+        input(f"event_times: {event_times}")
         # Run simulation in event-driven segments: [t_i, t_{i+1}).
         # GA is called at t=0 to create the first routed schedule. If the selected
         # algorithm name contains GA, it is also called again at every disruption
