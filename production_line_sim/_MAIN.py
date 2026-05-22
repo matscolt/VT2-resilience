@@ -202,8 +202,8 @@ def main():
 
         # takes wayyy too long to generate a gantt chart for each one
         #A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
-        #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
-        break
+        next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
+        #break
     #input("change the disruptions file")
     run_idx = 0
     next_pct = 0
