@@ -204,7 +204,7 @@ def main():
         #A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
         #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
         break
-    input("change the disruptions file")
+    #input("change the disruptions file")
     run_idx = 0
     next_pct = 0
     max_idx = len(scenarios) * len(pressures) * len(ratios)* len(algos) * len(seeds)
@@ -277,9 +277,9 @@ def main():
 
             event_times.append(plan_time)
             event_times.append(base_settings["sim_time [s]"])
+            print(f"event_times: {event_times}")
         else:
             print("something is wrong in the base_settings \n--> the \"segment_time\" needs to be either 1 or 0 for enabled or disabled")
-        input(f"event_times: {event_times}")
         # Run simulation in event-driven segments: [t_i, t_{i+1}).
         # GA is called at t=0 to create the first routed schedule. If the selected
         # algorithm name contains GA, it is also called again at every disruption
