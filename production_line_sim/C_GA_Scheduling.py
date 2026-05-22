@@ -176,6 +176,21 @@ ELITE_MIN = BASE_SETTINGS["elite_min"]
 TOURNAMENT_SCALE = BASE_SETTINGS["tournament_scale"]
 TOURNAMENT_CONSTANT = BASE_SETTINGS["tournament_constant"]
 TOURNAMENT_MIN = BASE_SETTINGS["tournament_min"]
+fast_GA = BASE_SETTINGS["fast_GA"]
+if fast_GA == 1:
+    GENERATION_LIMIT = 2 
+    SWAPS_SCALE = 0
+    SWAPS_CONSTANT = 0
+    SWAPS_MIN = 2
+    POPULATION_SCALE = 0
+    POPULATION_CONSTANT = 0
+    POPULATION_MIN = 4
+    ELITE_SCALE = 0
+    ELITE_CONSTANT = 0
+    ELITE_MIN = 1
+    TOURNAMENT_SCALE = 0
+    TOURNAMENT_CONSTANT = 0
+    TOURNAMENT_MIN = 1
 
 # ============================================================
 # FITNESS WEIGHTS
@@ -378,6 +393,7 @@ def filter_orders_and_units_for_rolling_horizon(
     units: List[Unit],
     order_units: dict,
     current_time_s: float = 0.0,
+    segment_capacity: float = 0.0,
     lookahead_days: int = ALLOWED_LOOKAHEAD_DAYS[0],
     completed_unit_ids=None
 ) -> Tuple[List[Order], List[Unit], dict, Dict[str, float]]:
@@ -394,60 +410,68 @@ def filter_orders_and_units_for_rolling_horizon(
     If an order has partly completed units, the remaining quantity is scheduled
     as a reduced order with the same order_id/due_date/priority.
     """
-
-    completed = normalize_completed_unit_ids(completed_unit_ids)
-
-    first_planned_day, last_planned_day = get_planned_day_window(
-        current_time_s=current_time_s,
-        lookahead_days=lookahead_days
-    )
-
-    units_by_id = {
-        unit.unit_id: unit
-        for unit in units
-    }
-
-    horizon_orders = []
+    horizon_loop = 0
     horizon_units = []
-    horizon_order_units = {}
+    while len(horizon_units) < segment_capacity:
+        horizon_loop +=1
+        print(f"horizon_loop = {horizon_loop}")
+        if horizon_loop == 10:
+            print("cannot find more units to fit within this segment")
+            break
+        completed = normalize_completed_unit_ids(completed_unit_ids)
 
-    for order in orders:
+        first_planned_day, last_planned_day = get_planned_day_window(
+            current_time_s=current_time_s,
+            lookahead_days=lookahead_days
+        )
 
-        # Carry-over logic:
-        # If an order was planned for an earlier day but did not finish because
-        # disruptions pushed the schedule late, it must stay in the scheduling
-        # problem until it is completed. Therefore the GA includes every
-        # unfinished order up to the end of the current look-ahead window,
-        # not only orders whose planned_day is inside [first_day, last_day].
-        if int(order.planned_day) > int(last_planned_day):
-            continue
+        units_by_id = {
+            unit.unit_id: unit
+            for unit in units
+        }
 
-        remaining_unit_ids = [
-            unit_id
-            for unit_id in order_units[order.order_id]
-            if unit_id not in completed
-        ]
+        horizon_orders = []
+        horizon_units = []
+        horizon_order_units = {}
 
-        if not remaining_unit_ids:
-            continue
+        for order in orders:
 
-        horizon_order_units[order.order_id] = remaining_unit_ids
+            # Carry-over logic:
+            # If an order was planned for an earlier day but did not finish because
+            # disruptions pushed the schedule late, it must stay in the scheduling
+            # problem until it is completed. Therefore the GA includes every
+            # unfinished order up to the end of the current look-ahead window,
+            # not only orders whose planned_day is inside [first_day, last_day].
+            if int(order.planned_day) > int(last_planned_day):
+                continue
 
-        horizon_orders.append(
-            Order(
-                order_id=order.order_id,
-                due_date=order.due_date,
-                priority=order.priority,
-                total_units=len(remaining_unit_ids),
-                planned_week=order.planned_week,
-                planned_day=order.planned_day
+            remaining_unit_ids = [
+                unit_id
+                for unit_id in order_units[order.order_id]
+                if unit_id not in completed
+            ]
+
+            if not remaining_unit_ids:
+                continue
+
+            horizon_order_units[order.order_id] = remaining_unit_ids
+
+            horizon_orders.append(
+                Order(
+                    order_id=order.order_id,
+                    due_date=order.due_date,
+                    priority=order.priority,
+                    total_units=len(remaining_unit_ids),
+                    planned_week=order.planned_week,
+                    planned_day=order.planned_day
+                )
             )
-        )
 
-        horizon_units.extend(
-            units_by_id[unit_id]
-            for unit_id in remaining_unit_ids
-        )
+            horizon_units.extend(
+                units_by_id[unit_id]
+                for unit_id in remaining_unit_ids
+            )
+        lookahead_days +=1
 
     # Important:
     # Horizon start is the actual current simulation time,
@@ -1236,6 +1260,13 @@ def _schedule_exists_and_has_content(schedule_path):
     except Exception:
         return False
 
+def segment_capacity_calc(current_time_s,segment_end_s):
+    layout_json = ROOT / "data" / "Layouts" / MAIN_SETTINGS["settings"]["Scenarios"]
+    monthly_capacity = simulator.load_json(layout_json)["monthly_capacity"]
+    hourly_capacity = int(monthly_capacity/(20*8))+1
+    segment_duration = int((segment_end_s - current_time_s)/3600)+1
+    return hourly_capacity*segment_duration
+
 
 def _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, production_plan_path):
     """Return True if the existing schedule covers less than 1 production day beyond current time.
@@ -1305,7 +1336,7 @@ def _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_
 
     # If the schedule does not extend into at least the next day, treat as < 1 day left.
     print(f"max_abs_day: {max_abs_day} | current_abs_day {current_abs_day}")
-    return (max_abs_day - current_abs_day) < 1, max_abs_day < segment_end_day, segment_end_day - current_abs_day+1
+    return (max_abs_day - current_abs_day) < 1, max_abs_day < segment_end_day, segment_end_day - current_abs_day+2
 
 
 
@@ -1314,12 +1345,30 @@ def main(
     current_time_s,
     segment_end_time_s,
     seed,
+    rescheduling_enabled,
     lookahead_days: int = ALLOWED_LOOKAHEAD_DAYS[0],
     ):
     random.seed(seed)
     # Configure paths before the schedule pre-check, otherwise ON_GOING_RUN_DIR is still None.
     configure_paths_from_main_settings(main_settings_path)
 
+    if rescheduling_enabled == 0:
+        global GENERATION_LIMIT, SWAPS_SCALE,SWAPS_CONSTANT,SWAPS_MIN,POPULATION_SCALE,POPULATION_CONSTANT,POPULATION_MIN,ELITE_SCALE,ELITE_CONSTANT,ELITE_MIN,TOURNAMENT_SCALE,TOURNAMENT_CONSTANT,TOURNAMENT_MIN
+        GENERATION_LIMIT = 1
+        SWAPS_SCALE = 0
+        SWAPS_CONSTANT = 0
+        SWAPS_MIN = 0
+        POPULATION_SCALE = 0
+        POPULATION_CONSTANT = 0
+        POPULATION_MIN = 1
+        ELITE_SCALE = 0
+        ELITE_CONSTANT = 0
+        ELITE_MIN = 1
+        TOURNAMENT_SCALE = 0
+        TOURNAMENT_CONSTANT = 0
+        TOURNAMENT_MIN = 1
+        ALLOWED_LOOKAHEAD_DAYS.append(25)
+        print("rescheduling is disabled")
     # ===============================
     # NEW: schedule pre-check
     # ===============================
@@ -1328,10 +1377,14 @@ def main(
         schedule_path = ON_GOING_RUN_DIR / "current_schedule.csv"
 
     need_full_horizon = False
-
+    
     if not _schedule_exists_and_has_content(schedule_path):
         print("\nschedule is missing\n")
         need_full_horizon = True
+        if segment_end_time_s/SECONDS_PER_PRODUCTION_DAY > max(ALLOWED_LOOKAHEAD_DAYS):
+            print(f"{segment_end_time_s/SECONDS_PER_PRODUCTION_DAY} days > {max(ALLOWED_LOOKAHEAD_DAYS)} days")
+            need_full_horizon = False
+            lookahead_days = int(segment_end_time_s/SECONDS_PER_PRODUCTION_DAY)+1
     elif _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[0]:
         print("\nhorizon less than a day\n")
         need_full_horizon = True
@@ -1339,10 +1392,13 @@ def main(
         lookahead_days = _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[2]
         print(f"The segment is longer than the horizon!\nnew lookahead_days: {lookahead_days}")
     
+    if BASE_SETTINGS["segment_time"] ==1:
+        lookahead_days = max(lookahead_days,max(ALLOWED_LOOKAHEAD_DAYS))
+        print(f"lookahead days: {lookahead_days}")
+
     if need_full_horizon:
         print("!!!NEEDED A FULL HORIZON!!!")
         lookahead_days = max(ALLOWED_LOOKAHEAD_DAYS)
-
     # Snapshot the previous schedule BEFORE GA evaluations overwrite current_schedule.csv.
     previous_schedule_df = None
     prev_schedule_path = Path(ON_GOING_RUN_DIR) / 'current_schedule.csv'
@@ -1367,6 +1423,9 @@ def main(
     )
 
     all_orders, all_units, all_order_units = load_orders_and_units_from_file(production_df)
+    
+    segment_capacity = segment_capacity_calc(current_time_s,segment_end_time_s)
+
 
     def _run_once(lookahead_days_local: int):
         orders, units, order_units, horizon_info = filter_orders_and_units_for_rolling_horizon(
@@ -1375,7 +1434,8 @@ def main(
             order_units=all_order_units,
             current_time_s=current_time_s,
             lookahead_days=lookahead_days_local,
-            completed_unit_ids=completed_units
+            completed_unit_ids=completed_units,
+            segment_capacity=segment_capacity
         )
 
         if not orders:

@@ -1945,6 +1945,104 @@ def run_simulation(
     ]
     unit_chosen_route_by_root: defaultdict[int, dict[int, int]] = defaultdict(dict)
 
+    def _route_mapping_from_snapshot_entry(entry: dict[str, Any] | None) -> dict[int, int]:
+        if not isinstance(entry, dict):
+            return {}
+
+        raw_mapping = entry.get("chosen_route_station_indices_by_stage")
+        if raw_mapping is None:
+            raw_mapping = entry.get("route_station_indices_by_stage")
+
+        parsed_mapping: dict[int, int] = {}
+        if isinstance(raw_mapping, dict):
+            iterable_mapping = raw_mapping.items()
+        elif isinstance(raw_mapping, list):
+            iterable_mapping = enumerate(raw_mapping)
+        else:
+            iterable_mapping = []
+
+        for stage_key, station_value in iterable_mapping:
+            try:
+                stage_index = int(float(stage_key))
+                station_index = int(float(station_value))
+            except (TypeError, ValueError):
+                continue
+            if stage_index < 0 or stage_index >= len(stage_instance_indices):
+                continue
+            if station_index not in set(int(value) for value in stage_instance_indices[stage_index]):
+                continue
+            parsed_mapping[stage_index] = station_index
+
+        if parsed_mapping:
+            return parsed_mapping
+
+        # Backward/forward compatibility: if a snapshot has a complete route_id
+        # instead of the partial route-state mapping, restore that too.
+        route_value = entry.get("route_taken", entry.get("route_id", entry.get("route_taken_so_far", "0")))
+        parsed_route = _parse_unit_route_for_layout(route_value, stage_instance_indices)
+        if parsed_route is None:
+            return {}
+        return {stage_index: int(station_index) for stage_index, station_index in enumerate(parsed_route)}
+
+    def _restore_snapshot_route_state(
+        unit_index: int,
+        entry: dict[str, Any],
+        route_state_by_unit_id: dict[str, Any] | None = None,
+    ) -> None:
+        root_index = int(root_indices[int(unit_index)])
+        route_mapping = _route_mapping_from_snapshot_entry(entry)
+
+        if not route_mapping and isinstance(route_state_by_unit_id, dict):
+            unit_id_text = str(entry.get("unit_id", "")).strip()
+            raw_unit_route_state = route_state_by_unit_id.get(unit_id_text)
+            if isinstance(raw_unit_route_state, dict):
+                route_mapping = _route_mapping_from_snapshot_entry(raw_unit_route_state)
+
+        if not route_mapping:
+            return
+
+        chosen_by_stage = unit_chosen_route_by_root[int(root_index)]
+        for stage_index, station_index in route_mapping.items():
+            chosen_by_stage[int(stage_index)] = int(station_index)
+
+    def _snapshot_route_state_for_unit_index(unit_index_value: int) -> dict[str, Any]:
+        if int(unit_index_value) < 0 or int(unit_index_value) >= len(root_indices):
+            return {}
+        root_index_value = int(root_indices[int(unit_index_value)])
+        chosen_by_stage = unit_chosen_route_by_root.get(root_index_value, {})
+
+        valid_mapping: dict[int, int] = {}
+        for stage_index, station_index in chosen_by_stage.items():
+            try:
+                stage_index_int = int(stage_index)
+                station_index_int = int(station_index)
+            except (TypeError, ValueError):
+                continue
+            if stage_index_int < 0 or stage_index_int >= len(stage_instance_indices):
+                continue
+            if station_index_int not in set(int(value) for value in stage_instance_indices[stage_index_int]):
+                continue
+            valid_mapping[stage_index_int] = station_index_int
+
+        if not valid_mapping:
+            return {}
+
+        route_indices: list[int | None] = []
+        for stage_index in range(len(stage_instance_indices)):
+            route_indices.append(valid_mapping.get(stage_index))
+
+        route_state: dict[str, Any] = {
+            "chosen_route_station_indices_by_stage": {
+                str(stage_index): int(station_index)
+                for stage_index, station_index in sorted(valid_mapping.items())
+            },
+            "chosen_route_stage_count": int(len(valid_mapping)),
+        }
+        complete_route_id = _route_indices_to_route_id(route_indices, stage_instance_indices)
+        if complete_route_id != "0":
+            route_state["route_taken"] = complete_route_id
+        return route_state
+
     unit_index_by_unit_id: dict[str, int] = {
         str(unit_id_value).strip(): int(idx)
         for idx, unit_id_value in enumerate(unit_ids)
@@ -2473,6 +2571,9 @@ def run_simulation(
 
         occupied_carrier_count = 0
         restored_unit_ids: set[str] = set()
+        route_state_by_unit_id = initial_line_state_snapshot.get("route_state_by_unit_id", {})
+        if not isinstance(route_state_by_unit_id, dict):
+            route_state_by_unit_id = {}
 
         for unit_id_text, carried_value in (initial_line_state_snapshot.get("carried_base_process_time_by_unit_id", {}) or {}).items():
             try:
@@ -2502,6 +2603,7 @@ def run_simulation(
             restored_unit_ids.add(str(unit_ids[unit_index_int]).strip())
             occupied_carrier_count += 1
             _set_snapshot_first_times(unit_index_int, entry)
+            _restore_snapshot_route_state(unit_index_int, entry, route_state_by_unit_id)
 
             try:
                 remaining_base = float(entry.get("remaining_base_process_time_s", entry.get("remaining_process_time_s", 0.0)) or 0.0)
@@ -2574,6 +2676,7 @@ def run_simulation(
             restored_unit_ids.add(str(unit_ids[unit_index_int]).strip())
             occupied_carrier_count += 1
             _set_snapshot_first_times(unit_index_int, entry)
+            _restore_snapshot_route_state(unit_index_int, entry, route_state_by_unit_id)
             station_state = station_states[station_index_int]
             _update_queue_area(station_state, 0.0)
             _enqueue_station_queue(
@@ -2599,6 +2702,7 @@ def run_simulation(
             restored_unit_ids.add(str(unit_ids[unit_index_int]).strip())
             occupied_carrier_count += 1
             _set_snapshot_first_times(unit_index_int, entry)
+            _restore_snapshot_route_state(unit_index_int, entry, route_state_by_unit_id)
             push_event(float(entry.get("time_s", 0.0) or 0.0), EVENT_ARRIVAL, station_index_int, unit_index_int)
 
         # Carriers returning for units that completed before the boundary but whose
@@ -2881,6 +2985,7 @@ def run_simulation(
                     else None
                 ),
             }
+            common.update(_snapshot_route_state_for_unit_index(int(unit_index_value)))
             return common
 
         active_indices_for_snapshot: set[int] = set(int(value) for value in released_unit_indices)
@@ -2976,6 +3081,14 @@ def run_simulation(
             if str(unit_id_text) in active_unit_id_texts:
                 carried_base_snapshot[str(unit_id_text)] += float(previous_carried)
 
+        route_state_by_unit_id_snapshot: dict[str, dict[str, Any]] = {}
+        for unit_index_value in sorted(active_indices_for_snapshot):
+            if 0 <= int(unit_index_value) < len(root_indices):
+                unit_id_text = _root_unit_id_text(root_indices[int(unit_index_value)])
+                route_state = _snapshot_route_state_for_unit_index(int(unit_index_value))
+                if route_state:
+                    route_state_by_unit_id_snapshot[str(unit_id_text)] = route_state
+
         occupied_carriers = len(active_indices_for_snapshot)
         # Add anonymous occupied carriers represented by cart-return events whose
         # units are not present in the current schedule anymore.
@@ -2993,6 +3106,7 @@ def run_simulation(
             "arrival_events": arrival_events_snapshot,
             "cart_return_events": cart_return_events_snapshot,
             "carried_base_process_time_by_unit_id": {str(k): round(float(v), 6) for k, v in carried_base_snapshot.items()},
+            "route_state_by_unit_id": route_state_by_unit_id_snapshot,
             "active_unit_ids": sorted(active_unit_id_texts),
             "occupied_carriers": int(max(0, min(int(max_units_in_system), occupied_carriers))),
         }
@@ -3232,6 +3346,9 @@ def calculate_kpis(
     if not unit_summaries:
         return {
             "total_units_ordered": 0,
+            "produced_units_fuse0": 0,
+            "produced_units_fuse1": 0,
+            "produced_units_fuse2": 0,
             "makespan_seconds": 0.0,
             "average_cycle_time_seconds": 0.0,
             "cycle_time_from_1_over_throughput_rate_seconds": math.inf,
@@ -3258,8 +3375,13 @@ def calculate_kpis(
     average_throughput_efficiency = mean(float(u.throughput_efficiency) for u in unit_summaries)
     total_wait_time_s = sum(float(op.wait_time_s) for op in operations)
 
+    produced_mix = Counter(str(unit_summary.variant).upper() for unit_summary in unit_summaries)
+
     kpis: dict[str, float | int] = {
         "total_units_ordered": total_units,
+        "produced_units_fuse0": int(produced_mix.get("FUSE0", 0)),
+        "produced_units_fuse1": int(produced_mix.get("FUSE1", 0)),
+        "produced_units_fuse2": int(produced_mix.get("FUSE2", 0)),
         "makespan_seconds": round(makespan_s, 4),
         "average_cycle_time_seconds": round(average_cycle_time_s, 4),
         "cycle_time_from_1_over_throughput_rate_seconds": round(
@@ -3779,11 +3901,13 @@ def write_station_summary_csv(
     output_path: Path,
     utilization_active_window_without_disruptions_by_station: dict[tuple[int, str], float] | None = None,
     active_order_utilization_by_station: dict[tuple[int, str], float] | None = None,
+    units_processed_by_station: dict[tuple[int, str], int] | None = None,
 ) -> None:
     utilization_active_window_without_disruptions_by_station = (
         utilization_active_window_without_disruptions_by_station or {}
     )
     active_order_utilization_by_station = active_order_utilization_by_station or {}
+    units_processed_by_station = units_processed_by_station or {}
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(
@@ -3797,6 +3921,7 @@ def write_station_summary_csv(
                 "average_queue_length",
                 "average_wait_time_s",
                 "total_wait_time_s",
+                "units_processed",
                 "utilization_overall",
                 "utilization_active_window",
                 "utilization_active_window_without_disruptions",
@@ -3811,6 +3936,7 @@ def write_station_summary_csv(
             active_order_utilization_value = active_order_utilization_by_station.get(
                 station_key
             )
+            units_processed_value = int(units_processed_by_station.get(station_key, 0))
             writer.writerow(
                 [
                     summary.station_index,
@@ -3826,6 +3952,7 @@ def write_station_summary_csv(
                     round(summary.average_queue_length, 6),
                     round(summary.average_wait_time_s, 4),
                     round(summary.total_wait_time_s, 4),
+                    units_processed_value,
                     round(summary.utilization_overall, 6),
                     round(summary.utilization_active_window, 6),
                     round(float(no_disruptions_value), 6)
@@ -5195,7 +5322,15 @@ def _write_outputs_for_integrated_run(ctx: dict[str, Any], operations, transport
     write_operations_csv(operations, run_output_dir / "station_schedule.csv")
     write_transport_csv(transport_records, run_output_dir / "transport_schedule.csv")
     write_unit_summary_csv(unit_summaries, run_output_dir / "unit_summary.csv")
-    write_station_summary_csv(station_summaries, run_output_dir / "station_summary.csv")
+    units_processed_by_station = Counter(
+        (int(operation.station_index), str(operation.station_name))
+        for operation in operations
+    )
+    write_station_summary_csv(
+        station_summaries,
+        run_output_dir / "station_summary.csv",
+        units_processed_by_station=dict(units_processed_by_station),
+    )
     if disruptions_enabled or simulation_details.get("disruption_event_log"):
         save_json({"disruptions_enabled": bool(disruptions_enabled), "disruption_mode": int(disruption_mode), "seed": str(disruption_seed) if disruption_seed is not None else None, "timed_disruption_records": list(timed_records), "disruption_counts": dict(simulation_details.get("disruption_counts", {})), "events": list(simulation_details.get("disruption_event_log", []))}, run_output_dir / "disruption_summary.json")
 
@@ -5298,12 +5433,37 @@ def main(main_settings_path: str | Path | None = None, simulation_time_limit_s: 
         combined_transport_records,
     )
 
+    non_emergency_unit_summaries = [
+        summary
+        for summary in combined_unit_summaries
+        if not _is_emergency_unit_id(getattr(summary, "unit_id", ""))
+    ]
+    non_emergency_unit_ids = {str(summary.unit_id) for summary in non_emergency_unit_summaries}
+    non_emergency_operations = [
+        operation
+        for operation in combined_operations
+        if str(operation.unit_id) in non_emergency_unit_ids
+    ]
+    non_emergency_transport_records = [
+        transport
+        for transport in combined_transport_records
+        if str(transport.unit_id) in non_emergency_unit_ids
+    ]
+    station_summaries_without_emergency = _build_station_summaries_from_operations(
+        non_emergency_operations,
+        list(effective.get("station_sequence", [])),
+    )
+    non_emergency_completed_good_variants = [
+        str(summary.variant)
+        for summary in non_emergency_unit_summaries
+    ]
+
     kpis_without_disruptions = calculate_kpis_without_disruption_penalties(
-        ordered_units=combined_completed_good_variants,
-        operations=combined_operations,
-        unit_summaries=combined_unit_summaries,
-        station_summaries=station_summaries_for_output,
-        transport_records=combined_transport_records,
+        ordered_units=non_emergency_completed_good_variants,
+        operations=non_emergency_operations,
+        unit_summaries=non_emergency_unit_summaries,
+        station_summaries=station_summaries_without_emergency,
+        transport_records=non_emergency_transport_records,
         timed_records=timed_records if enabled else [],
         cutoff_time_s=ctx.get("absolute_stop_time_s", ctx["simulation_time_s"]),
     )

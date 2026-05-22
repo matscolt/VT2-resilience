@@ -5,46 +5,173 @@ import json
 import os
 import shutil
 import time
+import re
 from datetime import datetime
 from pathlib import Path
-#  +-----------------------------+
-#  | Creates plots from the data |
-#  +-----------------------------+
+from typing import List, Optional, Tuple
 
 ROOTDIR = Path(__file__).parent
 
-#find the correct order
-def find_output_folder(output_path=None, target_timestamp=None):
-    if output_path is None:
-        output_path = ROOTDIR / "output"
 
-    folders = []
 
-    for name in os.listdir(output_path):
-        full_path = output_path / name   
+def _parse_main_folder_name(name: str, assumed_year: int) -> Optional[Tuple[datetime, int]]:
+    """Parse main folder name: main_DD-MM_HH-MM_n
 
+    Returns (timestamp_dt, counter_n) or None if not parseable.
+    """
+    parts = name.split("_")
+    if len(parts) < 4 or parts[0] != "main":
+        return None
+
+    # parts: ["main", "DD-MM", "HH-MM", "n"]
+    try:
+        timestamp_str = parts[1] + "_" + parts[2]  # "DD-MM_HH-MM"
+        ts = datetime.strptime(timestamp_str, "%d-%m_%H-%M").replace(year=assumed_year)
+        n = int(parts[3])
+        return ts, n
+    except Exception:
+        return None
+
+
+def list_output_runs(output_dir: Path) -> List[Path]:
+    """List main output folders (main_DD-MM_HH-MM_n) sorted newest first."""
+    output_dir = Path(output_dir)
+    assumed_year = datetime.now().year
+
+    folders: List[Tuple[datetime, int, Path]] = []
+
+    for name in os.listdir(output_dir):
+        full_path = output_dir / name
         if not full_path.is_dir():
             continue
 
-        try:
-            timestamp_str = name.split("__")[0]
-            timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
-            folders.append((timestamp, full_path))
-
-        except Exception:
+        parsed = _parse_main_folder_name(name, assumed_year)
+        if not parsed:
             continue
 
-    if not folders:
-        raise FileNotFoundError(f"No valid output folders found in {output_path}")
+        ts, n = parsed
+        folders.append((ts, n, full_path))
 
-    folders.sort(key=lambda x: x[0])
+    folders.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [p for (_, _, p) in folders]
 
+
+def prompt_for_data_folder(output_dir: Path, outputs: List[Path]) -> Path:
+    """Interactive selection of a main output folder."""
+    if not outputs:
+        raise FileNotFoundError(f"No output folders found in: {output_dir}")
+
+    print("Available main folders in ./output (newest first):")
+    for i, p in enumerate(outputs, start=1):
+        print(f"  {i:2d}) {p.name}")
+
+    default = 1
+    while True:
+        s = input(f"Choose main folder number (Enter = {default}): ").strip()
+        if s == "":
+            return outputs[default - 1]
+        if s.isdigit() and 1 <= int(s) <= len(outputs):
+            return outputs[int(s) - 1]
+        candidate = output_dir / s
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+        print("Invalid selection. Enter a number from the list or paste the folder name.")
+
+
+def list_run_folders(main_dir: Path) -> List[Path]:
+    """Return run folders inside a main folder, sorted by run number."""
+    main_dir = Path(main_dir)
+    runs = [p for p in main_dir.iterdir() if p.is_dir() and p.name.startswith("run_")]
+
+    def run_num(path: Path) -> int:
+        m = re.match(r"run_(\d+)$", path.name)
+        return int(m.group(1)) if m else 10**9
+
+    runs.sort(key=run_num)
+    return runs
+
+
+def prompt_for_run_folder(main_dir: Path, runs: List[Path]) -> Path:
+    """Interactive selection of a run_* folder inside a main folder."""
+    if not runs:
+        raise FileNotFoundError(f"No run folders found in: {main_dir}")
+
+    print(f"Available run folders in {Path(main_dir).name} (lowest run number first):")
+    for i, p in enumerate(runs, start=1):
+        print(f"  {i:2d}) {p.name}")
+
+    default = 1
+    while True:
+        s = input(f"Choose run folder number (Enter = {default}): ").strip()
+        if s == "":
+            return runs[default - 1]
+        if s.isdigit() and 1 <= int(s) <= len(runs):
+            return runs[int(s) - 1]
+        candidate = Path(main_dir) / s
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+        print("Invalid selection. Enter a number from the list or paste the folder name.")
+
+
+def find_results_folder(
+    output_dir: Path,
+    target_timestamp: Optional[str] = None,
+    prompt: bool = True,
+) -> Path:
+    """Pick a main folder (optionally closest to target_timestamp), then pick run_*, then return run/results.
+
+    Parameters
+    ----------
+    output_dir:
+        Path to ./output
+    target_timestamp:
+        Optional string "DD-MM_HH-MM" used to select closest main folder.
+    prompt:
+        If True, prompts user to pick the main folder (unless target_timestamp provided) and always prompts for run.
+
+    Returns
+    -------
+    Path:
+        <main_folder>/<run_folder>/results
+    """
+    output_dir = Path(output_dir)
+    assumed_year = datetime.now().year
+
+    # Gather candidates
+    candidates: List[Tuple[datetime, int, Path]] = []
+    for name in os.listdir(output_dir):
+        full_path = output_dir / name
+        if not full_path.is_dir():
+            continue
+
+        parsed = _parse_main_folder_name(name, assumed_year)
+        if not parsed:
+            continue
+        ts, n = parsed
+        candidates.append((ts, n, full_path))
+
+    if not candidates:
+        raise FileNotFoundError(f"No valid output folders found in {output_dir}")
+
+    # Newest first
+    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+    # Select main folder
     if target_timestamp:
-        target_dt = datetime.strptime(target_timestamp, "%Y%m%d_%H%M%S")
-        closest = min(folders, key=lambda x: abs(x[0] - target_dt))
-        return closest[1]
+        target_dt = datetime.strptime(target_timestamp, "%d-%m_%H-%M").replace(year=assumed_year)
+        chosen_main = min(candidates, key=lambda x: abs(x[0] - target_dt))[2]
+    else:
+        if prompt:
+            outputs = [p for (_, _, p) in candidates]
+            chosen_main = prompt_for_data_folder(output_dir, outputs)
+        else:
+            chosen_main = candidates[0][2]
 
-    return folders[-1][1]
+    # Select run folder
+    runs = list_run_folders(chosen_main)
+    chosen_run = prompt_for_run_folder(chosen_main, runs)
+
+    return chosen_main,chosen_run / "results"
 
 
 def clear_folder(folder):
@@ -105,10 +232,8 @@ def load_all_data(data_folder):
     station_summary = to_float(station_summary, [
         "busy_time_s","first_start_time_s","last_finish_time_s",
         "max_queue_length","average_queue_length","average_wait_time_s",
-        "total_wait_time_s","utilization_overall","utilization_active_window",
-        "active_order_utilization"
-    ])
-
+        "total_wait_time_s","utilization_overall","utilization_active_window"
+    ]) 
     transport_data = to_float(transport_data, [
         "start_time_s", "finish_time_s", "transport_time_s"
     ])
@@ -125,19 +250,38 @@ def load_all_data(data_folder):
 
 
 
-def plot_gantt(station_data, transport_data, graphfolder_dir):
+
+def plot_gantt(station_data, transport_data, graphfolder_dir, starttime_gantt, endtime_gantt):
     print(">> Generating Gantt charts!")
+
+    # ---------------------------
+    # Keep only rows that overlap the time window
+    # ---------------------------
+    station_data_window = [
+        row for row in station_data
+        if float(row["finish_time_s"]) > starttime_gantt and float(row["start_time_s"]) < endtime_gantt
+    ]
+
+    transport_data_window = [
+        row for row in transport_data
+        if float(row["finish_time_s"]) > starttime_gantt and float(row["start_time_s"]) < endtime_gantt
+    ]
+
+    if not station_data_window and not transport_data_window:
+        print(f">> No station/transport activity in time window [{starttime_gantt}, {endtime_gantt}]")
+        return
+
     # ---------------------------
     # Build ordered y-axis
     # ---------------------------
     stations = sorted(set(
         (int(row["station_index"]), row["station_name"])
-        for row in station_data
+        for row in station_data_window
     ))
 
     transports = sorted(set(
         (int(row["transport_index"]), row["transport_name"])
-        for row in transport_data
+        for row in transport_data_window
     ))
 
     # Interleave: S1, T1, S2, T2, ...
@@ -153,18 +297,29 @@ def plot_gantt(station_data, transport_data, graphfolder_dir):
     y_labels_station = [s[1] for s in stations]
     y_pos_station = {label: i for i, label in enumerate(y_labels_station)}
 
-    # Colors
-    units = list(set(row["unit_id"] for row in station_data))
+    # ---------------------------
+    # Colors (only units in visible window)
+    # ---------------------------
+    units = list(set(
+        [row["unit_id"] for row in station_data_window] +
+        [row["unit_id"] for row in transport_data_window]
+    ))
     colors = {u: i for i, u in enumerate(units)}
 
     # ===========================
     # Stations only
     # ===========================
     fig1, ax1 = plt.subplots(figsize=(12, 6))
-    graphname = "Gantt_chart_stations.png"
-    for row in station_data:
-        start = row["start_time_s"]
-        duration = row["finish_time_s"] - start
+    graphname = f"Gantt_chart_stations_{int(starttime_gantt)}_{int(endtime_gantt)}.png"
+
+    for row in station_data_window:
+        start = max(float(row["start_time_s"]), starttime_gantt)
+        finish = min(float(row["finish_time_s"]), endtime_gantt)
+        duration = finish - start
+
+        if duration <= 0:
+            continue
+
         y = y_pos_station[row["station_name"]]
         unit = row["unit_id"]
 
@@ -178,19 +333,22 @@ def plot_gantt(station_data, transport_data, graphfolder_dir):
             alpha=0.75
         )
 
-        ax1.text(
-            start + duration / 2,
-            y,
-            unit,
-            ha="center",
-            va="center",
-            fontsize=7
-        )
+        # Only print text if bar is wide enough
+        if duration > 50:
+            ax1.text(
+                start + duration / 2,
+                y,
+                unit,
+                ha="center",
+                va="center",
+                fontsize=7
+            )
 
     ax1.set_yticks(range(len(y_labels_station)))
     ax1.set_yticklabels(y_labels_station)
     ax1.set_xlabel("Time [s]")
-    ax1.set_title("Gantt Chart (Stations only)")
+    ax1.set_title(f"Gantt Chart (Stations only) [{starttime_gantt}, {endtime_gantt}]")
+    ax1.set_xlim(starttime_gantt, endtime_gantt)
     ax1.grid(True, axis="x", linestyle="--", alpha=0.5)
 
     fig1.tight_layout()
@@ -203,11 +361,17 @@ def plot_gantt(station_data, transport_data, graphfolder_dir):
     # Stations + Transport
     # ===========================
     fig2, ax2 = plt.subplots(figsize=(14, 7))
-    graphname2 = "Gantt_chart_with_transport.png"
+    graphname2 = f"Gantt_chart_with_transport_{int(starttime_gantt)}_{int(endtime_gantt)}.png"
+
     # --- Stations ---
-    for row in station_data:
-        start = row["start_time_s"]
-        duration = row["finish_time_s"] - start
+    for row in station_data_window:
+        start = max(float(row["start_time_s"]), starttime_gantt)
+        finish = min(float(row["finish_time_s"]), endtime_gantt)
+        duration = finish - start
+
+        if duration <= 0:
+            continue
+
         y = y_pos_full[row["station_name"]]
         unit = row["unit_id"]
 
@@ -221,19 +385,25 @@ def plot_gantt(station_data, transport_data, graphfolder_dir):
             alpha=0.75
         )
 
-        ax2.text(
-            start + duration / 2,
-            y,
-            unit,
-            ha="center",
-            va="center",
-            fontsize=7
-        )
+        if duration > 50:
+            ax2.text(
+                start + duration / 2,
+                y,
+                unit,
+                ha="center",
+                va="center",
+                fontsize=7
+            )
 
     # --- Transport ---
-    for row in transport_data:
-        start = row["start_time_s"]
-        duration = row["finish_time_s"] - start
+    for row in transport_data_window:
+        start = max(float(row["start_time_s"]), starttime_gantt)
+        finish = min(float(row["finish_time_s"]), endtime_gantt)
+        duration = finish - start
+
+        if duration <= 0:
+            continue
+
         y = y_pos_full[row["transport_name"]]
         unit = row["unit_id"]
 
@@ -247,19 +417,21 @@ def plot_gantt(station_data, transport_data, graphfolder_dir):
             alpha=0.75
         )
 
-        ax2.text(
-            start + duration / 2,
-            y,
-            unit,
-            ha="center",
-            va="center",
-            fontsize=6
-        )
+        if duration > 50:
+            ax2.text(
+                start + duration / 2,
+                y,
+                unit,
+                ha="center",
+                va="center",
+                fontsize=6
+            )
 
     ax2.set_yticks(range(len(y_labels_full)))
     ax2.set_yticklabels(y_labels_full)
     ax2.set_xlabel("Time [s]")
-    ax2.set_title("Gantt Chart (Stations + Transport)")
+    ax2.set_title(f"Gantt Chart (Stations + Transport) [{starttime_gantt}, {endtime_gantt}]")
+    ax2.set_xlim(starttime_gantt, endtime_gantt)
     ax2.grid(True, axis="x", linestyle="--", alpha=0.5)
 
     fig2.tight_layout()
@@ -267,12 +439,13 @@ def plot_gantt(station_data, transport_data, graphfolder_dir):
     plt.close(fig2)
 
     print(f">> Generated {graphname2}")
+
     
 def plot_flow_times(unit_data,graphfolder):
     print(">> Generating throughput time plots!")
     units = [row["unit_id"] for row in unit_data]
     flow = [float(row["active_flow_time_s"]) for row in unit_data]
-    graphname = "Flow_times.png"
+    graphname = "throughput_times.png"
     avg_flow = sum(flow) / len(flow)
 
     plt.figure()
@@ -298,7 +471,7 @@ def plot_flow_times(unit_data,graphfolder):
         rotation=90
     )
     plt.ylabel("Flow time [s]")
-    plt.title("Flow time per unit")
+    plt.title("throughput time per unit")
 
     plt.tight_layout()
     plt.savefig(graphfolder/graphname, dpi=200, bbox_inches="tight")
@@ -310,7 +483,7 @@ def plot_station_utilization(station_data, graphfolder):
 
     # 1) Data (én række per station i din CSV)
     stations = [row["station_name"] for row in station_data]
-    times = [float(row["active_order_utilization"]) * 100 for row in station_data]
+    times = [float(row["utilization_active_window"]) * 100 for row in station_data]
 
     # 2) Farvelogik (justér thresholds efter behov)
     lower = 40
@@ -362,31 +535,25 @@ def plot_station_utilization(station_data, graphfolder):
 
 #main
 def main(starttime = time.perf_counter()):
-    specific_folder = "20260420_131845"#enter the wanted foldername(only the first timestamp) in the output folder
-    
-    specific_folder_choice = 0 #yes = 1, no = 0
-    
-    if specific_folder_choice == 1:
-        try:
-            folder = find_output_folder(target_timestamp=specific_folder)
-            print(f">> Using selected folder: {folder}")
-        except Exception as e:
-            print(f">> Warning: Could not find requested folder ({e})")
-            print(">> Falling back to newest folder instead.")
-            folder = find_output_folder()
-    else:
-        folder = find_output_folder()
-    foldername = str(folder).split("\\")[-1].split("__")[0]
-    print(f"using folder: {foldername}")
+    output_dir = ROOTDIR / "output"
+    mainfolder,resultfolder = find_results_folder(output_dir)
+    post_processing_folder = ROOTDIR / "post_processing"
+    mainfoldername = str(mainfolder).split("\\")[-1]
+    ppfolder = post_processing_folder / mainfoldername
+    print(f"placing graphs and so on inside {mainfoldername}")
+    clear_folder(ppfolder)
+    station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(resultfolder)
 
-    clear_folder(folder)
-    station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(folder)
-
-    graph_folder = folder / "graphs"
+    graph_folder = ppfolder / "graphs"
     graph_folder.mkdir(exist_ok=True)
 
-    plot_gantt(station_schedule,transport_data,graph_folder)
-    print("Time spent: "+str(time.perf_counter()-starttime))
+    starttime_gantt = float(input("where do you want your gantt chart to start from? >>"))
+    endtime_gantt = float(input("where do you want your gantt chart to end from? >>"))
+    if endtime_gantt-starttime_gantt<=0:
+        print("time invalid therefore skipping")
+    else:
+        plot_gantt(station_schedule,transport_data,graph_folder,starttime_gantt,endtime_gantt)
+        print("Time spent: "+str(time.perf_counter()-starttime))
     plot_flow_times(unit_data,graph_folder)
     print("Time spent: "+str(time.perf_counter()-starttime))
     plot_station_utilization(station_summary,graph_folder)
@@ -397,225 +564,3 @@ if __name__ == "__main__":
     endtime = time.perf_counter()
     print(f"Total graph generation time: {endtime - starttime:.6f} seconds")
 
-
-"""
-def _unit_color_map(unit_ids: list[str]) -> dict[str, Any]:
-    if plt is None:
-        return {}
-    cmap = plt.get_cmap("tab20")
-    sorted_unit_ids = sorted(unit_ids)
-    return {unit_id: cmap(i % cmap.N) for i, unit_id in enumerate(sorted_unit_ids)}
-
-
-def create_gantt_chart(
-    operations: list[OperationRecord],
-    transport_records: list[TransportRecord],
-    output_path: Path,
-) -> bool:
-    if plt is None:
-        return False
-
-    if not operations:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.set_title("Production line Gantt chart")
-        ax.set_xlabel("Time [s]")
-        ax.set_ylabel("Stations / Transport")
-        ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
-        fig.tight_layout()
-        fig.savefig(output_path, dpi=200, bbox_inches="tight")
-        plt.close(fig)
-        return True
-
-    station_entries: list[tuple[int, int, str]] = []
-    seen_station_names: set[str] = set()
-    for op in sorted(operations, key=lambda x: x.station_index):
-        if op.station_name in seen_station_names:
-            continue
-        stage_number, copy_number, _ = _extract_station_name_parts(op.station_name)
-        station_entries.append((stage_number or op.station_index, copy_number or 0, op.station_name))
-        seen_station_names.add(op.station_name)
-
-    transport_entries: dict[int, str] = {}
-    for tr in sorted(transport_records, key=lambda x: x.transport_index):
-        transport_stage_number = _transport_stage_number_from_name(tr.transport_name)
-        if transport_stage_number is None:
-            transport_stage_number = tr.transport_index
-        transport_entries.setdefault(transport_stage_number, tr.transport_name)
-
-    stations_by_stage: defaultdict[int, list[tuple[int, str]]] = defaultdict(list)
-    for stage_number, copy_number, station_name in station_entries:
-        stations_by_stage[stage_number].append((copy_number, station_name))
-
-    row_names: list[str] = []
-    all_stage_numbers = sorted(stations_by_stage.keys())
-    for stage_number in all_stage_numbers:
-        for _, station_name in sorted(stations_by_stage[stage_number], key=lambda item: item[0]):
-            row_names.append(station_name)
-        if stage_number in transport_entries:
-            row_names.append(transport_entries[stage_number])
-
-    row_to_y = {name: idx for idx, name in enumerate(row_names)}
-    unit_colors = _unit_color_map([op.unit_id for op in operations])
-
-    fig, ax = plt.subplots(figsize=(18, 9))
-
-    for op in operations:
-        y = row_to_y[op.station_name]
-        duration = op.finish_time_s - op.start_time_s
-        color = unit_colors.get(op.unit_id)
-        ax.barh(
-            y,
-            duration,
-            left=op.start_time_s,
-            height=0.62,
-            color=color,
-            edgecolor="black",
-            linewidth=0.25,
-        )
-        if duration > 1.0:
-            ax.text(
-                op.start_time_s + duration / 2,
-                y,
-                f"{op.unit_id}-{op.variant}",
-                ha="center",
-                va="center",
-                fontsize=5,
-            )
-
-    for tr in transport_records:
-        y = row_to_y[tr.transport_name]
-        duration = tr.finish_time_s - tr.start_time_s
-        color = unit_colors.get(tr.unit_id)
-        ax.barh(
-            y,
-            duration,
-            left=tr.start_time_s,
-            height=0.42,
-            color=color,
-            edgecolor="black",
-            linewidth=0.25,
-            alpha=0.65,
-        )
-        if duration > 1.0:
-            ax.text(
-                tr.start_time_s + duration / 2,
-                y,
-                f"{tr.unit_id}-{tr.variant}",
-                ha="center",
-                va="center",
-                fontsize=4.5,
-            )
-
-    ax.set_yticks(list(row_to_y.values()))
-    ax.set_yticklabels(list(row_to_y.keys()))
-    ax.set_xlabel("Time [s]")
-    ax.set_ylabel("Stations / Transport")
-    ax.set_title("Production line Gantt chart")
-    ax.grid(True, axis="x", alpha=0.3)
-    # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    return True
-
-
-def create_gantt_chart_no_transport(
-    operations: list[OperationRecord],
-    transport_records: list[TransportRecord],
-    output_path: Path,
-) -> bool:
-    if plt is None:
-        return False
-
-    if not operations:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.set_title("Production line Gantt chart")
-        ax.set_xlabel("Time [s]")
-        ax.set_ylabel("Stations / Transport")
-        ax.text(0.5, 0.5, "No units were produced.", transform=ax.transAxes, ha="center", va="center")
-        fig.tight_layout()
-        fig.savefig(output_path, dpi=200, bbox_inches="tight")
-        plt.close(fig)
-        return True
-
-    station_names = []
-    seen_stations = set()
-    for op in sorted(operations, key=lambda x: x.station_index):
-        if op.station_name not in seen_stations:
-            station_names.append(op.station_name)
-            seen_stations.add(op.station_name)
-
-    row_names: list[str] = []
-    for idx, station_name in enumerate(station_names):
-        row_names.append(station_name)
-
-    row_to_y = {name: idx for idx, name in enumerate(row_names)}
-    unit_colors = _unit_color_map([op.unit_id for op in operations])
-
-    fig, ax = plt.subplots(figsize=(18, 9))
-
-    for op in operations:
-        y = row_to_y[op.station_name]
-        duration = op.finish_time_s - op.start_time_s
-        color = unit_colors.get(op.unit_id)
-        ax.barh(
-            y,
-            duration,
-            left=op.start_time_s,
-            height=0.62,
-            color=color,
-            edgecolor="black",
-            linewidth=0.25,
-        )
-        if duration > 1.0:
-            ax.text(
-                op.start_time_s + duration / 2,
-                y,
-                f"{op.unit_id}-{op.variant}",
-                ha="center",
-                va="center",
-                fontsize=5,
-            )
-
-    ax.set_yticks(list(row_to_y.values()))
-    ax.set_yticklabels(list(row_to_y.keys()))
-    ax.set_xlabel("Time [s]")
-    ax.set_ylabel("Stations / Transport")
-    ax.set_title("Production line Gantt chart")
-    ax.grid(True, axis="x", alpha=0.3)
-    # Intentionally do not invert the y-axis so the chart keeps the original bottom-to-top orientation.
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    return True
-
-
-def create_throughput_chart(unit_summaries: list[UnitSummary], output_path: Path) -> bool:
-    if plt is None:
-        return False
-
-    completion_times = sorted(u.completion_time_s for u in unit_summaries)
-    x = [0.0] + completion_times
-    y = [0] + list(range(1, len(completion_times) + 1))
-
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.step(x, y, where="post")
-    ax.set_xlabel("Time [s]")
-    ax.set_ylabel("Completed units")
-    ax.set_title("Cumulative completed phones over time")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
-    return True
-
-chart_notes: list[str] = []
-if not create_gantt_chart(operations, transport_records, run_output_dir / "gantt_chart.png"):
-    chart_notes.append("gantt_chart.png not created because matplotlib is not installed.")
-if not create_gantt_chart_no_transport(operations, transport_records, run_output_dir / "gantt_chart_no_transport.png"):
-    chart_notes.append("gantt_chart_no_transport.png not created because matplotlib is not installed.")
-if not create_throughput_chart(unit_summaries, run_output_dir / "throughput_chart.png"):
-    chart_notes.append("throughput_chart.png not created because matplotlib is not installed.")
-if chart_notes:
-    (run_output_dir / "charts_skipped.txt").write_text("\n".join(chart_notes), encoding="utf-8")
-"""

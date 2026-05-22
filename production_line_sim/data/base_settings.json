@@ -10,8 +10,7 @@
         "medium": 25
     },
     "algorithms": {
-        "1": "genetic algortihm",
-        "2": "simulated annealing"
+        "1": "genetic algortihm"
     },
     "weightage": {
         "tardines": "?",
@@ -27,6 +26,13 @@
     },
     "sim_time [s]": 800000,
     "plan_time [s]": 576000,
+
+    "rescheduling_enabled":1,
+    "reaction_enabled":1,
+
+    "fast_GA":0,
+    "segment_time":0,
+    "segment_interval":2.5,
     "random based disruptions": {
         "enabled": 2
     },

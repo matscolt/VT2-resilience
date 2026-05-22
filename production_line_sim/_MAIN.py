@@ -106,9 +106,7 @@ def find_all_event_times(main_settings_json: Path):
         base_settings = {}
     horizon = (
         run_settings.get("sim_time [s]")
-        or run_settings.get("Sim_time [s]")
         or base_settings.get("sim_time [s]")
-        or base_settings.get("Sim_time [s]")
         or base_settings.get("plan_time [s]")
         or SECONDS_PER_WEEK
     )
@@ -157,13 +155,12 @@ def main():
     dirs[0] = runs_dir
     
     #read settings
-    mainsettings = A_input.read_settings_json(data_dir / "base_settings.json")
     base_settings = A_input.read_settings_json(data_dir / "base_settings.json")
-    scenarios = list(mainsettings["Scenarios"].items())
-    pressures = list(mainsettings["pressure_of_capacity"].items())
-    ratios = list(mainsettings["order_units_ratio"].items())
-    algos = list(mainsettings["algorithms"].items())
-    seeds = list(mainsettings["seeds"].items())
+    scenarios = list(base_settings["Scenarios"].items())
+    pressures = list(base_settings["pressure_of_capacity"].items())
+    ratios = list(base_settings["order_units_ratio"].items())
+    algos = list(base_settings["algorithms"].items())
+    seeds = list(base_settings["seeds"].items())
     
     # build index maps for the keys
     sc_idx = {k: i+1 for i, (k, _) in enumerate(scenarios)}
@@ -195,12 +192,19 @@ def main():
         disruptionpath = disruption_dir/f"disruptions_{label}.csv"
         print(f"units: {num_units} and orders: {num_orders}")
         A_input.generate_orderlist(seed,plan_time,orderpath,num_orders, num_units)
-        A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
+        if base_settings["random based disruptions"]["enabled"] == 2:
+            A_input.generate_disruption_list(seed,plan_time,disruptionpath,num_orders, num_units,layout_dir /layout_file)
+        elif base_settings["random based disruptions"]["enabled"] == 0:
+            A_input.generate_empty_disruption_list(disruptionpath)
+        else:
+            print("something is wrong in the base_settings \n--> the \"random based disruptions\" needs to be either 2 or 0 for enabled or disabled")
+            return
+
         # takes wayyy too long to generate a gantt chart for each one
         #A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
-        #next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
-        break
-    #input("change the disruptions file")
+        next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
+        #break
+    input("change the disruptions file")
     run_idx = 0
     next_pct = 0
     max_idx = len(scenarios) * len(pressures) * len(ratios)* len(algos) * len(seeds)
@@ -258,15 +262,33 @@ def main():
         B_production_planning.create_production_plan(order_csv_path,on_going_run_path,layout_file,label,SECONDS_PER_WEEK)
 
         #finds the event_times based on the disruption file for the run
-        event_times = find_all_event_times(main_settings_dir)
+        if base_settings["segment_time"] == 0:
+            event_times = find_all_event_times(main_settings_dir)
+        elif base_settings["segment_time"] == 1:
+            
+            segment_interval = base_settings["segment_interval"]
+            segment_length = int(segment_interval * 60*60*HOURS_PER_DAY)
 
-        
+            event_times = [0]
+            t = segment_length
+            while t < plan_time:
+                    event_times.append(t)
+                    t += segment_length
+
+            event_times.append(plan_time)
+            event_times.append(base_settings["sim_time [s]"])
+            print(f"event_times: {event_times}")
+        else:
+            print("something is wrong in the base_settings \n--> the \"segment_time\" needs to be either 1 or 0 for enabled or disabled")
         # Run simulation in event-driven segments: [t_i, t_{i+1}).
         # GA is called at t=0 to create the first routed schedule. If the selected
         # algorithm name contains GA, it is also called again at every disruption
         # start/end timestamp so it can react only to already-known events.
         # Run GA at every segment boundary so it can reschedule from the current snapshot.
-        rolling_ga_enabled = True
+        rescheduling_enabled = base_settings["rescheduling_enabled"]
+        reaction_enabled = base_settings["reaction_enabled"]
+
+                
         for i in range(max(0, len(event_times) - 1)):
             t_start = event_times[i]
             t_stop = event_times[i + 1]
@@ -276,9 +298,9 @@ def main():
             start = ti.perf_counter()
             print(f"[MAIN] Segment {i+1}/{len(event_times)-1}: t={t_start} -> {t_stop}\n day {t_start/(3600*8):.4f} to {t_stop/(3600*8):.4f}")
 
-            if i == 0 or rolling_ga_enabled:
+            if i == 0 or reaction_enabled:
                 print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
-                C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed)
+                C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
             else:
                 print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
 
@@ -286,7 +308,8 @@ def main():
             D_production_line_sim.main(main_settings_dir, t_stop, t_start)
             end = ti.perf_counter()
             print(f"[MAIN] segment wall time: {end - start}\n\n\n - - - - - \n")
-            #input("Press [ENTER] to continue the loop")
+            print(f"the simulation has run for {int(end - run_time_start)} seconds")
+            input("Press [ENTER] to continue the loop")
         run_time_end = ti.perf_counter()
         print(f"\n\n--- RUN {run_idx} ---")
         print(f"Run time {run_time_end-run_time_start}")
@@ -298,7 +321,7 @@ def main():
         #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
         print("----------------------------------------------------------------------------------------------------")
         next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct,action=action)
-        return #stop the loop
+        #stop the loop
 
 if __name__ == "__main__":
    main()
