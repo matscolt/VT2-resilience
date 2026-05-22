@@ -318,7 +318,7 @@ def main():
         #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
         print("----------------------------------------------------------------------------------------------------")
         next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct,action=action)
-        return #stop the loop
+        #stop the loop
 
 if __name__ == "__main__":
    main()
