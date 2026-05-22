@@ -1305,7 +1305,7 @@ def _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_
 
     # If the schedule does not extend into at least the next day, treat as < 1 day left.
     print(f"max_abs_day: {max_abs_day} | current_abs_day {current_abs_day}")
-    return (max_abs_day - current_abs_day) < 1, max_abs_day < segment_end_day, segment_end_day - current_abs_day+1
+    return (max_abs_day - current_abs_day) < 1, max_abs_day < segment_end_day, segment_end_day - current_abs_day+2
 
 
 
