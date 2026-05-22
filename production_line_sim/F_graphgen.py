@@ -250,19 +250,38 @@ def load_all_data(data_folder):
 
 
 
-def plot_gantt(station_data, transport_data, graphfolder_dir,starttime_gantt,endtime_gantt):
+
+def plot_gantt(station_data, transport_data, graphfolder_dir, starttime_gantt, endtime_gantt):
     print(">> Generating Gantt charts!")
+
+    # ---------------------------
+    # Keep only rows that overlap the time window
+    # ---------------------------
+    station_data_window = [
+        row for row in station_data
+        if float(row["finish_time_s"]) > starttime_gantt and float(row["start_time_s"]) < endtime_gantt
+    ]
+
+    transport_data_window = [
+        row for row in transport_data
+        if float(row["finish_time_s"]) > starttime_gantt and float(row["start_time_s"]) < endtime_gantt
+    ]
+
+    if not station_data_window and not transport_data_window:
+        print(f">> No station/transport activity in time window [{starttime_gantt}, {endtime_gantt}]")
+        return
+
     # ---------------------------
     # Build ordered y-axis
     # ---------------------------
     stations = sorted(set(
         (int(row["station_index"]), row["station_name"])
-        for row in station_data
+        for row in station_data_window
     ))
 
     transports = sorted(set(
         (int(row["transport_index"]), row["transport_name"])
-        for row in transport_data
+        for row in transport_data_window
     ))
 
     # Interleave: S1, T1, S2, T2, ...
@@ -278,18 +297,29 @@ def plot_gantt(station_data, transport_data, graphfolder_dir,starttime_gantt,end
     y_labels_station = [s[1] for s in stations]
     y_pos_station = {label: i for i, label in enumerate(y_labels_station)}
 
-    # Colors
-    units = list(set(row["unit_id"] for row in station_data))
+    # ---------------------------
+    # Colors (only units in visible window)
+    # ---------------------------
+    units = list(set(
+        [row["unit_id"] for row in station_data_window] +
+        [row["unit_id"] for row in transport_data_window]
+    ))
     colors = {u: i for i, u in enumerate(units)}
 
     # ===========================
     # Stations only
     # ===========================
     fig1, ax1 = plt.subplots(figsize=(12, 6))
-    graphname = "Gantt_chart_stations.png"
-    for row in station_data:
-        start = row["start_time_s"]
-        duration = row["finish_time_s"] - start
+    graphname = f"Gantt_chart_stations_{int(starttime_gantt)}_{int(endtime_gantt)}.png"
+
+    for row in station_data_window:
+        start = max(float(row["start_time_s"]), starttime_gantt)
+        finish = min(float(row["finish_time_s"]), endtime_gantt)
+        duration = finish - start
+
+        if duration <= 0:
+            continue
+
         y = y_pos_station[row["station_name"]]
         unit = row["unit_id"]
 
@@ -303,19 +333,22 @@ def plot_gantt(station_data, transport_data, graphfolder_dir,starttime_gantt,end
             alpha=0.75
         )
 
-        ax1.text(
-            start + duration / 2,
-            y,
-            unit,
-            ha="center",
-            va="center",
-            fontsize=7
-        )
+        # Only print text if bar is wide enough
+        if duration > 50:
+            ax1.text(
+                start + duration / 2,
+                y,
+                unit,
+                ha="center",
+                va="center",
+                fontsize=7
+            )
 
     ax1.set_yticks(range(len(y_labels_station)))
     ax1.set_yticklabels(y_labels_station)
     ax1.set_xlabel("Time [s]")
-    ax1.set_title("Gantt Chart (Stations only)")
+    ax1.set_title(f"Gantt Chart (Stations only) [{starttime_gantt}, {endtime_gantt}]")
+    ax1.set_xlim(starttime_gantt, endtime_gantt)
     ax1.grid(True, axis="x", linestyle="--", alpha=0.5)
 
     fig1.tight_layout()
@@ -328,11 +361,17 @@ def plot_gantt(station_data, transport_data, graphfolder_dir,starttime_gantt,end
     # Stations + Transport
     # ===========================
     fig2, ax2 = plt.subplots(figsize=(14, 7))
-    graphname2 = "Gantt_chart_with_transport.png"
+    graphname2 = f"Gantt_chart_with_transport_{int(starttime_gantt)}_{int(endtime_gantt)}.png"
+
     # --- Stations ---
-    for row in station_data:
-        start = row["start_time_s"]
-        duration = row["finish_time_s"] - start
+    for row in station_data_window:
+        start = max(float(row["start_time_s"]), starttime_gantt)
+        finish = min(float(row["finish_time_s"]), endtime_gantt)
+        duration = finish - start
+
+        if duration <= 0:
+            continue
+
         y = y_pos_full[row["station_name"]]
         unit = row["unit_id"]
 
@@ -346,19 +385,25 @@ def plot_gantt(station_data, transport_data, graphfolder_dir,starttime_gantt,end
             alpha=0.75
         )
 
-        ax2.text(
-            start + duration / 2,
-            y,
-            unit,
-            ha="center",
-            va="center",
-            fontsize=7
-        )
+        if duration > 50:
+            ax2.text(
+                start + duration / 2,
+                y,
+                unit,
+                ha="center",
+                va="center",
+                fontsize=7
+            )
 
     # --- Transport ---
-    for row in transport_data:
-        start = row["start_time_s"]
-        duration = row["finish_time_s"] - start
+    for row in transport_data_window:
+        start = max(float(row["start_time_s"]), starttime_gantt)
+        finish = min(float(row["finish_time_s"]), endtime_gantt)
+        duration = finish - start
+
+        if duration <= 0:
+            continue
+
         y = y_pos_full[row["transport_name"]]
         unit = row["unit_id"]
 
@@ -372,19 +417,21 @@ def plot_gantt(station_data, transport_data, graphfolder_dir,starttime_gantt,end
             alpha=0.75
         )
 
-        ax2.text(
-            start + duration / 2,
-            y,
-            unit,
-            ha="center",
-            va="center",
-            fontsize=6
-        )
+        if duration > 50:
+            ax2.text(
+                start + duration / 2,
+                y,
+                unit,
+                ha="center",
+                va="center",
+                fontsize=6
+            )
 
     ax2.set_yticks(range(len(y_labels_full)))
     ax2.set_yticklabels(y_labels_full)
     ax2.set_xlabel("Time [s]")
-    ax2.set_title("Gantt Chart (Stations + Transport)")
+    ax2.set_title(f"Gantt Chart (Stations + Transport) [{starttime_gantt}, {endtime_gantt}]")
+    ax2.set_xlim(starttime_gantt, endtime_gantt)
     ax2.grid(True, axis="x", linestyle="--", alpha=0.5)
 
     fig2.tight_layout()
@@ -392,6 +439,7 @@ def plot_gantt(station_data, transport_data, graphfolder_dir,starttime_gantt,end
     plt.close(fig2)
 
     print(f">> Generated {graphname2}")
+
     
 def plot_flow_times(unit_data,graphfolder):
     print(">> Generating throughput time plots!")
@@ -499,8 +547,8 @@ def main(starttime = time.perf_counter()):
     graph_folder = ppfolder / "graphs"
     graph_folder.mkdir(exist_ok=True)
 
-    starttime_gantt = input("where do you want your gantt chart to start from? >>")
-    endtime_gantt = input("where do you want your gantt chart to end from? >>")
+    starttime_gantt = float(input("where do you want your gantt chart to start from? >>"))
+    endtime_gantt = float(input("where do you want your gantt chart to end from? >>"))
     if endtime_gantt-starttime_gantt<=0:
         print("time invalid therefore skipping")
     else:
