@@ -4,7 +4,7 @@
   "scaled_monthly_capacity": 8764.7,
   "capacity_percentage": "90.0%",
   "layout_name": "layout_2_2_5_2_2_2",
-  "carriers": 48,
+  "carriers": 16,
   "transport_times_between_consecutive_stations": {
     "Station 1: Bottom cover -> Station 2: Drill station": 39.0,
     "Station 2: Drill station -> Station 3: Robot cell": 39.0,

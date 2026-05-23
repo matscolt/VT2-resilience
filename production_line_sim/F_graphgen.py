@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import csv
@@ -11,19 +13,16 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 ROOTDIR = Path(__file__).parent
-
+RESULTSDIR = ROOTDIR / "RESULTS"
 
 
 def _parse_main_folder_name(name: str, assumed_year: int) -> Optional[Tuple[datetime, int]]:
     """Parse main folder name: main_DD-MM_HH-MM_n
-
     Returns (timestamp_dt, counter_n) or None if not parseable.
     """
     parts = name.split("_")
     if len(parts) < 4 or parts[0] != "main":
         return None
-
-    # parts: ["main", "DD-MM", "HH-MM", "n"]
     try:
         timestamp_str = parts[1] + "_" + parts[2]  # "DD-MM_HH-MM"
         ts = datetime.strptime(timestamp_str, "%d-%m_%H-%M").replace(year=assumed_year)
@@ -37,18 +36,15 @@ def list_output_runs(output_dir: Path) -> List[Path]:
     """List main output folders (main_DD-MM_HH-MM_n) sorted newest first."""
     output_dir = Path(output_dir)
     assumed_year = datetime.now().year
-
     folders: List[Tuple[datetime, int, Path]] = []
 
     for name in os.listdir(output_dir):
         full_path = output_dir / name
         if not full_path.is_dir():
             continue
-
         parsed = _parse_main_folder_name(name, assumed_year)
         if not parsed:
             continue
-
         ts, n = parsed
         folders.append((ts, n, full_path))
 
@@ -63,7 +59,7 @@ def prompt_for_data_folder(output_dir: Path, outputs: List[Path]) -> Path:
 
     print("Available main folders in ./output (newest first):")
     for i, p in enumerate(outputs, start=1):
-        print(f"  {i:2d}) {p.name}")
+        print(f" {i:2d}) {p.name}")
 
     default = 1
     while True:
@@ -98,7 +94,7 @@ def prompt_for_run_folder(main_dir: Path, runs: List[Path]) -> Path:
 
     print(f"Available run folders in {Path(main_dir).name} (lowest run number first):")
     for i, p in enumerate(runs, start=1):
-        print(f"  {i:2d}) {p.name}")
+        print(f" {i:2d}) {p.name}")
 
     default = 1
     while True:
@@ -117,33 +113,22 @@ def find_results_folder(
     output_dir: Path,
     target_timestamp: Optional[str] = None,
     prompt: bool = True,
-) -> Path:
+) -> Tuple[Path, Path]:
     """Pick a main folder (optionally closest to target_timestamp), then pick run_*, then return run/results.
-
-    Parameters
-    ----------
-    output_dir:
-        Path to ./output
-    target_timestamp:
-        Optional string "DD-MM_HH-MM" used to select closest main folder.
-    prompt:
-        If True, prompts user to pick the main folder (unless target_timestamp provided) and always prompts for run.
 
     Returns
     -------
-    Path:
-        <main_folder>/<run_folder>/results
+    (Path, Path):
+        (<main_folder>, <run_folder>/results)
     """
     output_dir = Path(output_dir)
     assumed_year = datetime.now().year
 
-    # Gather candidates
     candidates: List[Tuple[datetime, int, Path]] = []
     for name in os.listdir(output_dir):
         full_path = output_dir / name
         if not full_path.is_dir():
             continue
-
         parsed = _parse_main_folder_name(name, assumed_year)
         if not parsed:
             continue
@@ -153,10 +138,8 @@ def find_results_folder(
     if not candidates:
         raise FileNotFoundError(f"No valid output folders found in {output_dir}")
 
-    # Newest first
     candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
-    # Select main folder
     if target_timestamp:
         target_dt = datetime.strptime(target_timestamp, "%d-%m_%H-%M").replace(year=assumed_year)
         chosen_main = min(candidates, key=lambda x: abs(x[0] - target_dt))[2]
@@ -167,16 +150,14 @@ def find_results_folder(
         else:
             chosen_main = candidates[0][2]
 
-    # Select run folder
     runs = list_run_folders(chosen_main)
     chosen_run = prompt_for_run_folder(chosen_main, runs)
 
-    return chosen_main,chosen_run / "results"
+    return chosen_main, chosen_run
 
 
-def clear_folder(folder):
+def clear_folder(folder: Path):
     folder_path = folder / "graphs"
-
     if not folder_path.exists():
         print(f">> Folder does not exist: {folder_path}")
         return
@@ -189,33 +170,31 @@ def clear_folder(folder):
                 item.unlink()
         except PermissionError:
             print(f">> Could not delete (locked): {item}")
-    folder = str(folder).split("\\")[-1].split("__")[0]
-    print(f"cleaned out {folder}/graph")
+
+    folder_name = str(folder).split("\\")[-1].split("__")[0]
+    print(f"cleaned out {folder_name}/graph")
 
 
-#import data function
 def load_data(filepath):
     ext = os.path.splitext(filepath)[1].lower()
-
     if ext == ".json":
         with open(filepath, "r") as f:
             return json.load(f)
-
     elif ext == ".csv":
         with open(filepath, "r", newline="") as f:
             reader = csv.DictReader(f)
             return list(reader)
-
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 
-#convert the data to a float 
+
 def to_float(data, keys):
     for row in data:
         for key in keys:
-            if key in row:
+            if key in row and row[key] not in ("", None):
                 row[key] = float(row[key])
     return data
+
 
 def load_all_data(data_folder):
     station_schedule = load_data(os.path.join(data_folder, "station_schedule.csv"))
@@ -223,45 +202,41 @@ def load_all_data(data_folder):
     transport_data = load_data(os.path.join(data_folder, "transport_schedule.csv"))
     unit_data = load_data(os.path.join(data_folder, "unit_summary.csv"))
     material_data = load_data(os.path.join(data_folder, "unit_summary.csv"))
+    order_data = load_data(os.path.join(data_folder, "order_summary.csv"))
 
-    # convert relevant columns
     station_schedule = to_float(station_schedule, [
         "start_time_s", "finish_time_s", "process_time_s"
     ])
-   
     station_summary = to_float(station_summary, [
-        "busy_time_s","first_start_time_s","last_finish_time_s",
-        "max_queue_length","average_queue_length","average_wait_time_s",
-        "total_wait_time_s","utilization_overall","utilization_active_window"
-    ]) 
+        "busy_time_s", "first_start_time_s", "last_finish_time_s",
+        "max_queue_length", "average_queue_length", "average_wait_time_s",
+        "total_wait_time_s", "utilization_overall", "utilization_active_window"
+    ])
     transport_data = to_float(transport_data, [
         "start_time_s", "finish_time_s", "transport_time_s"
     ])
-
     unit_data = to_float(unit_data, [
-        "completion_time_s", "flow_time_s"
+        "completion_time_s", "flow_time_s", "active_flow_time_s"
+    ])
+    order_data = to_float(order_data, [
+        "due date", "start_time", "finish_time", "through_put_time",
+        "lateness", "priority", "planned_week", "finished_week", "planned_day", "finished_day"
     ])
 
-    return station_schedule, station_summary, transport_data, unit_data,material_data
+    return station_schedule, station_summary, transport_data, unit_data, material_data, order_data
+
 
 # ---------------------------
 # PLOTS
 # ---------------------------
 
-
-
-
 def plot_gantt(station_data, transport_data, graphfolder_dir, starttime_gantt, endtime_gantt):
     print(">> Generating Gantt charts!")
 
-    # ---------------------------
-    # Keep only rows that overlap the time window
-    # ---------------------------
     station_data_window = [
         row for row in station_data
         if float(row["finish_time_s"]) > starttime_gantt and float(row["start_time_s"]) < endtime_gantt
     ]
-
     transport_data_window = [
         row for row in transport_data
         if float(row["finish_time_s"]) > starttime_gantt and float(row["start_time_s"]) < endtime_gantt
@@ -271,44 +246,31 @@ def plot_gantt(station_data, transport_data, graphfolder_dir, starttime_gantt, e
         print(f">> No station/transport activity in time window [{starttime_gantt}, {endtime_gantt}]")
         return
 
-    # ---------------------------
-    # Build ordered y-axis
-    # ---------------------------
     stations = sorted(set(
         (int(row["station_index"]), row["station_name"])
         for row in station_data_window
     ))
-
     transports = sorted(set(
         (int(row["transport_index"]), row["transport_name"])
         for row in transport_data_window
     ))
 
-    # Interleave: S1, T1, S2, T2, ...
     y_labels_full = []
     for i in range(len(stations)):
         y_labels_full.append(stations[i][1])
         if i < len(transports):
             y_labels_full.append(transports[i][1])
-
     y_pos_full = {label: i for i, label in enumerate(y_labels_full)}
 
-    # Station-only
     y_labels_station = [s[1] for s in stations]
     y_pos_station = {label: i for i, label in enumerate(y_labels_station)}
 
-    # ---------------------------
-    # Colors (only units in visible window)
-    # ---------------------------
     units = list(set(
         [row["unit_id"] for row in station_data_window] +
         [row["unit_id"] for row in transport_data_window]
     ))
     colors = {u: i for i, u in enumerate(units)}
 
-    # ===========================
-    # Stations only
-    # ===========================
     fig1, ax1 = plt.subplots(figsize=(12, 6))
     graphname = f"Gantt_chart_stations_{int(starttime_gantt)}_{int(endtime_gantt)}.png"
 
@@ -316,13 +278,11 @@ def plot_gantt(station_data, transport_data, graphfolder_dir, starttime_gantt, e
         start = max(float(row["start_time_s"]), starttime_gantt)
         finish = min(float(row["finish_time_s"]), endtime_gantt)
         duration = finish - start
-
         if duration <= 0:
             continue
 
         y = y_pos_station[row["station_name"]]
         unit = row["unit_id"]
-
         ax1.barh(
             y=y,
             width=duration,
@@ -333,7 +293,6 @@ def plot_gantt(station_data, transport_data, graphfolder_dir, starttime_gantt, e
             alpha=0.75
         )
 
-        # Only print text if bar is wide enough
         if duration > 50:
             ax1.text(
                 start + duration / 2,
@@ -350,31 +309,23 @@ def plot_gantt(station_data, transport_data, graphfolder_dir, starttime_gantt, e
     ax1.set_title(f"Gantt Chart (Stations only) [{starttime_gantt}, {endtime_gantt}]")
     ax1.set_xlim(starttime_gantt, endtime_gantt)
     ax1.grid(True, axis="x", linestyle="--", alpha=0.5)
-
     fig1.tight_layout()
     fig1.savefig(graphfolder_dir / graphname, dpi=200)
     plt.close(fig1)
-
     print(f">> Generated {graphname}")
 
-    # ===========================
-    # Stations + Transport
-    # ===========================
     fig2, ax2 = plt.subplots(figsize=(14, 7))
     graphname2 = f"Gantt_chart_with_transport_{int(starttime_gantt)}_{int(endtime_gantt)}.png"
 
-    # --- Stations ---
     for row in station_data_window:
         start = max(float(row["start_time_s"]), starttime_gantt)
         finish = min(float(row["finish_time_s"]), endtime_gantt)
         duration = finish - start
-
         if duration <= 0:
             continue
 
         y = y_pos_full[row["station_name"]]
         unit = row["unit_id"]
-
         ax2.barh(
             y=y,
             width=duration,
@@ -395,18 +346,15 @@ def plot_gantt(station_data, transport_data, graphfolder_dir, starttime_gantt, e
                 fontsize=7
             )
 
-    # --- Transport ---
     for row in transport_data_window:
         start = max(float(row["start_time_s"]), starttime_gantt)
         finish = min(float(row["finish_time_s"]), endtime_gantt)
         duration = finish - start
-
         if duration <= 0:
             continue
 
         y = y_pos_full[row["transport_name"]]
         unit = row["unit_id"]
-
         ax2.barh(
             y=y,
             width=duration,
@@ -433,32 +381,30 @@ def plot_gantt(station_data, transport_data, graphfolder_dir, starttime_gantt, e
     ax2.set_title(f"Gantt Chart (Stations + Transport) [{starttime_gantt}, {endtime_gantt}]")
     ax2.set_xlim(starttime_gantt, endtime_gantt)
     ax2.grid(True, axis="x", linestyle="--", alpha=0.5)
-
     fig2.tight_layout()
     fig2.savefig(graphfolder_dir / graphname2, dpi=200)
     plt.close(fig2)
-
     print(f">> Generated {graphname2}")
 
-    
-def plot_flow_times(unit_data,graphfolder):
+
+def plot_throughput_times(unit_data, graphfolder):
     print(">> Generating throughput time plots!")
     units = [row["unit_id"] for row in unit_data]
-    flow = [float(row["active_flow_time_s"]) for row in unit_data]
+    throughput_time = [float(row["active_flow_time_s"]) for row in unit_data]
     graphname = "throughput_times.png"
-    avg_flow = sum(flow) / len(flow)
+    avg_throughput_time = sum(throughput_time) / len(throughput_time)
 
     plt.figure()
-    plt.bar(units, flow)
+    plt.bar(units, throughput_time)
 
     plt.axhline(
-        y=avg_flow,
+        y=avg_throughput_time,
         linestyle=":",
         linewidth=1,
         color="black",
-        label=f"Average = {avg_flow:.2f} s"
+        label=f"Average = {avg_throughput_time:.2f} s"
     )
-    
+
     plt.legend(loc="upper left")
 
     max_labels = 30
@@ -470,58 +416,208 @@ def plot_flow_times(unit_data,graphfolder):
         labels=units[::step],
         rotation=90
     )
-    plt.ylabel("Flow time [s]")
+    plt.ylabel("throughput time [s]")
     plt.title("throughput time per unit")
 
     plt.tight_layout()
-    plt.savefig(graphfolder/graphname, dpi=200, bbox_inches="tight")
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close()
     print(f">> Generated {graphname}")
+
+
+def _priority_color(priority_value):
+    """Map priority 1..5 to colors.
+    1 = green, 2 = yellow-green, 3 = yellow, 4 = orange, 5 = red.
+    Unknown/missing priority = gray.
+    """
+    try:
+        p = int(float(priority_value))
+    except (TypeError, ValueError):
+        return "#7f7f7f"
+
+    mapping = {
+        1: "#2ca02c",  # green
+        2: "#9ACD32",  # yellow-green
+        3: "#fceb31",  # yellow
+        4: "#ff7f0e",  # orange
+        5: "#d62728",  # red
+    }
+    return mapping.get(p)
+
+
+def _plot_order_lateness_variant(valid_rows, graphfolder, graphname, title):
+    if not valid_rows:
+        print(f">> No valid lateness data found. Skipping {graphname}.")
+        return
+
+    orders = [row["order_id"] for row in valid_rows]
+    lateness = [row["lateness"] for row in valid_rows]
+    priorities = [row.get("priority") for row in valid_rows]
+    avg_lateness = sum(lateness) / len(lateness)
+    colors = [_priority_color(p) for p in priorities]
+
+    plt.figure(figsize=(12, 6))
+    plt.bar(orders, lateness, color=colors)
+
+    plt.axhline(
+        y=0,
+        linestyle="-",
+        linewidth=1,
+        color="black",
+        label="Due date"
+    )
+
+    plt.axhline(
+        y=avg_lateness,
+        linestyle=":",
+        linewidth=1,
+        color="blue",
+        label=f"Average lateness = {avg_lateness:.2f} s"
+    )
+
+    legend_handles = [
+        mpatches.Patch(color="#2ca02c", label="Priority 1"),
+        mpatches.Patch(color="#9ACD32", label="Priority 2"),
+        mpatches.Patch(color="#fceb31", label="Priority 3"),
+        mpatches.Patch(color="#ff7f0e", label="Priority 4"),
+        mpatches.Patch(color="#d62728", label="Priority 5"),
+    ]
+    plt.legend(handles=legend_handles + [
+        plt.Line2D([0], [0], color="black", linestyle="-", linewidth=1, label="Due date"),
+        plt.Line2D([0], [0], color="blue", linestyle=":", linewidth=1, label=f"Average lateness = {avg_lateness:.2f} s"),
+    ], loc="lower left")
+
+    max_labels = 30
+    n_orders = len(orders)
+    step = max(1, n_orders // max_labels)
+
+    plt.xticks(
+        ticks=range(0, n_orders, step),
+        labels=orders[::step],
+        rotation=90
+    )
+
+    plt.ylabel("lateness [s]")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f">> Generated {graphname}")
+
+
+def plot_order_lateness(order_data, graphfolder):
+    print(">> Generating order lateness plots!")
+
+    valid_rows = []
+    for row in order_data:
+        lateness_val = row.get("lateness", "")
+        order_id_val = row.get("order_id", "")
+        if lateness_val in ("", None) or order_id_val in ("", None):
+            continue
+
+        try:
+            record = {
+                "order_id": str(order_id_val),
+                "lateness": float(lateness_val),
+                "priority": row.get("priority", None),
+                "due date": row.get("due date", None),
+            }
+
+            due_val = row.get("due date", None)
+            if due_val not in ("", None):
+                record["due date"] = float(due_val)
+            else:
+                record["due date"] = None
+
+            valid_rows.append(record)
+        except ValueError:
+            pass
+
+    if not valid_rows:
+        print(">> No valid lateness data found. Skipping order lateness plots.")
+        return
+
+    def sort_by_order_id(row):
+        try:
+            return int(row["order_id"])
+        except ValueError:
+            return row["order_id"]
+
+    def sort_by_due_date(row):
+        due_date = row.get("due date")
+        if due_date is None:
+            return float("inf")
+        return due_date
+
+    def sort_by_lateness(row):
+        return row["lateness"]
+
+    by_order_id = sorted(valid_rows, key=sort_by_order_id)
+    by_due_date = sorted(valid_rows, key=sort_by_due_date)
+    by_lateness = sorted(valid_rows, key=sort_by_lateness, reverse=True)
+
+    _plot_order_lateness_variant(
+        by_order_id,
+        graphfolder,
+        graphname="order_lateness.png",
+        title="lateness per order (sorted by order id)"
+    )
+
+    _plot_order_lateness_variant(
+        by_due_date,
+        graphfolder,
+        graphname="order_lateness_due_date.png",
+        title="lateness per order (sorted by due date)"
+    )
+
+    _plot_order_lateness_variant(
+        by_lateness,
+        graphfolder,
+        graphname="order_lateness_lateness.png",
+        title="lateness per order (sorted by lateness)"
+    )
+
 
 def plot_station_utilization(station_data, graphfolder):
     print(">> Generating station utilization!")
     graphname = "Station_utilization.png"
 
-    # 1) Data (én række per station i din CSV)
     stations = [row["station_name"] for row in station_data]
     times = [float(row["utilization_active_window"]) * 100 for row in station_data]
 
-    # 2) Farvelogik (justér thresholds efter behov)
     lower = 40
     higher = 80
 
     def color_for(u):
         if u < lower:
-            return "#2ca02c"   # grøn
+            return "#2ca02c"
         elif u < higher:
-            return "#fceb31"   # gul
+            return "#fceb31"
         else:
-            return "#d62728"   # rød
+            return "#d62728"
 
     colors = [color_for(u) for u in times]
 
-    # 3) Plot
     fig, ax = plt.subplots(figsize=(9, max(3, 0.5 * len(stations))))
     bars = ax.barh(stations, times, color=colors)
 
     ax.set_xlabel("Utilization [%]")
     ax.set_title("Station utilization")
 
-    # 4) Skriv værdien ved enden af hver bar
-    # (bar_label kræver Matplotlib >= 3.4; fallback nedenfor hvis du får fejl)
     try:
         ax.bar_label(bars, labels=[f"{t:.1f}%" for t in times], padding=3)
     except AttributeError:
         for bar, val in zip(bars, times):
-            ax.text(val + 1,
-                    bar.get_y() + bar.get_height() / 2,
-                    f"{val:.1f}%",
-                    va="center", ha="left", fontsize=9)
+            ax.text(
+                val + 1,
+                bar.get_y() + bar.get_height() / 2,
+                f"{val:.1f}%",
+                va="center", ha="left", fontsize=9
+            )
 
-    # 5) Giv luft i højre side så labels ikke klippes
     right = max(times) if times else 1
     ax.set_xlim(0, right * 1.15)
 
-    # 6) Legend (forklar farverne)
     legend_handles = [
         mpatches.Patch(color="#2ca02c", label=f"Low (<{lower}%)"),
         mpatches.Patch(color="#fceb31", label=f"Medium ({lower}–{higher}%)"),
@@ -531,36 +627,50 @@ def plot_station_utilization(station_data, graphfolder):
 
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close(fig)
     print(f">> Generated {graphname}")
 
-#main
-def main(starttime = time.perf_counter()):
-    output_dir = ROOTDIR / "output"
-    mainfolder,resultfolder = find_results_folder(output_dir)
-    post_processing_folder = ROOTDIR / "post_processing"
+
+def main(starttime=time.perf_counter()):
+    output_dir = RESULTSDIR / "output"
+    mainfolder, runfolder = find_results_folder(output_dir)
+    resultfolder = runfolder / "results"
+    chosenrun = runfolder.name
+
+    post_processing_folder = RESULTSDIR / "post_processing"
+    post_processing_folder.mkdir(parents=True, exist_ok=True)
+
     mainfoldername = str(mainfolder).split("\\")[-1]
-    ppfolder = post_processing_folder / mainfoldername
+    ppfolder = post_processing_folder / mainfoldername / chosenrun
+    ppfolder.mkdir(parents=True, exist_ok=True)
+
     print(f"placing graphs and so on inside {mainfoldername}")
     clear_folder(ppfolder)
-    station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(resultfolder)
+
+    station_schedule, station_summary, transport_data, unit_data, material_data, order_data = load_all_data(resultfolder)
 
     graph_folder = ppfolder / "graphs"
     graph_folder.mkdir(exist_ok=True)
 
-    starttime_gantt = float(input("where do you want your gantt chart to start from? >>"))
+    """starttime_gantt = float(input("where do you want your gantt chart to start from? >>"))
     endtime_gantt = float(input("where do you want your gantt chart to end from? >>"))
-    if endtime_gantt-starttime_gantt<=0:
+    if endtime_gantt - starttime_gantt <= 0:
         print("time invalid therefore skipping")
     else:
-        plot_gantt(station_schedule,transport_data,graph_folder,starttime_gantt,endtime_gantt)
-        print("Time spent: "+str(time.perf_counter()-starttime))
-    plot_flow_times(unit_data,graph_folder)
-    print("Time spent: "+str(time.perf_counter()-starttime))
-    plot_station_utilization(station_summary,graph_folder)
+        plot_gantt(station_schedule, transport_data, graph_folder, starttime_gantt, endtime_gantt)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+
+    plot_throughput_times(unit_data, graph_folder)
+    print("Time spent: " + str(time.perf_counter() - starttime))
+
+    plot_order_lateness(order_data, graph_folder)
+    print("Time spent: " + str(time.perf_counter() - starttime))"""
+
+    plot_station_utilization(station_summary, graph_folder)
+
 
 if __name__ == "__main__":
     starttime = time.perf_counter()
     main(starttime)
     endtime = time.perf_counter()
     print(f"Total graph generation time: {endtime - starttime:.6f} seconds")
-
