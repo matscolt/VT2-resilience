@@ -118,6 +118,21 @@ def find_all_event_times(main_settings_json: Path):
 
     return sorted(set(int(t) for t in event_times if int(t) >= 0))
 
+def terminal_print(algo,react,dis,seg):
+    print("You are now running the simulation with the following settings!\n"+
+              f"Algorithm: {algo}\n" + 
+              f"Reactive routing: {react}\n"+
+              f"Disruptions: {dis}")
+    print(f"Segments: {seg}") if seg is not None else print()
+
+def terminal_print_after(algo,react,dis,seg):
+    print("You ran the simulation with the following settings!\n"+
+              f"Algorithm: {algo}\n" + 
+              f"Reactive routing: {react}\n"+
+              f"Disruptions: {dis}")
+    print(f"Segments: {seg}") if seg is not None else print()
+
+
 def main():
     main_start_time = ti.perf_counter()
     #create folders/check they are there
@@ -169,7 +184,45 @@ def main():
     r_idx  = {k: i+1 for i, (k, _) in enumerate(ratios)}
     s_idx  = {k: i+1 for i, (k, _) in enumerate(seeds)}
 
+    #print which version you are running with
+    warning = None
+    seg = None
+    if base_settings["rescheduling_enabled"] == 1:
+        algo = "Genetic algorithm"
+        if base_settings["fast_GA"] == 1:
+            algo = "Fast genetic algotihm"
+    elif base_settings["rescheduling_enabled"] == 0:
+        algo = "earliest due date [production plan]"
+        if base_settings["fast_GA"] == 1:
+            warning = "Fast ga is enabled while there is no rescheduling which will break the earliest due date sorting!"
 
+    if base_settings["reaction_enabled"] == 1:
+        react = "Enabled"
+    elif base_settings["reaction_enabled"] == 0:
+        react = "Disabled"
+    
+    if base_settings["random based disruptions"]["enabled"]==1:
+        dis ="enabled"
+        if base_settings["segment_time"]==1:
+            warning= "Segment_time is enabled while disruptions also are enabled"
+    elif base_settings["random based disruptions"]["enabled"]==0:
+        dis ="Disabled"
+        if base_settings["segment_time"]==1:
+            seg = f"Enabled \nSegment interval: {base_settings["segment_interval"]}"
+        if base_settings["rescheduling_enabled"] == 1:
+            if base_settings["segment_time"]==0:
+                warning = "With segments disabled you will have problems with the GA while there are no disruptions"
+        if base_settings["rescheduling_enabled"] == 0:
+            if base_settings["segment_time"]==1:
+                seg = f"Enabled \nSegment interval: {base_settings["segment_interval"]}"
+
+    if warning is None:
+        terminal_print(algo,react,dis,seg)
+    else:
+        print(f"WARNING!\n{warning}\n")
+        return
+        
+    input("ARE THESE SETTING CORRECT? - press [ENTER] if you wish to run the program")
     plan_time = base_settings["plan_time [s]"]
     #generate the order lists and the disruption lists
     A_input.create_disruption_json(disruption_dir / "disruption.json")
@@ -336,6 +389,7 @@ def main():
     s = total_time % 60
     clock_time = f"{h:d}:{m:02d}:{s:02d}"if h > 0 else f"{m:02d}:{s:02d}"
     print(f"TOTAL TIME RUNNING MAIN\n{clock_time}")
+    terminal_print_after(algo,react,dis,seg)
 
 if __name__ == "__main__":
    main()
