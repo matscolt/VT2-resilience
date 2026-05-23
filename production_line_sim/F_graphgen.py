@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 ROOTDIR = Path(__file__).parent
+RESULTSDIR = ROOTDIR / "RESULTS"
 
 
 
@@ -535,11 +536,13 @@ def plot_station_utilization(station_data, graphfolder):
 
 #main
 def main(starttime = time.perf_counter()):
-    output_dir = ROOTDIR / "output"
+    output_dir = RESULTSDIR / "output"
     mainfolder,resultfolder = find_results_folder(output_dir)
-    post_processing_folder = ROOTDIR / "post_processing"
+    post_processing_folder = RESULTSDIR / "post_processing"
+    post_processing_folder.mkdir(parents=True, exist_ok=True)
     mainfoldername = str(mainfolder).split("\\")[-1]
     ppfolder = post_processing_folder / mainfoldername
+    ppfolder.mkdir(parents=True, exist_ok=True)
     print(f"placing graphs and so on inside {mainfoldername}")
     clear_folder(ppfolder)
     station_schedule, station_summary, transport_data, unit_data, material_data = load_all_data(resultfolder)

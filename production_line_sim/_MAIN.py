@@ -310,7 +310,7 @@ def main():
             end = ti.perf_counter()
             print(f"[MAIN] segment wall time: {end - start}\n\n\n - - - - - \n")
             print(f"the simulation has run for {int(end - run_time_start)} seconds")
-            print(f"Time since starting program: {end-main_start_time}")
+            print(f"Time since starting program: {end-main_start_time:.2f}")
             #input("Press [ENTER] to continue the loop")
         run_time_end = ti.perf_counter()
         print(f"\n\n--- RUN {run_idx} ---")
@@ -325,7 +325,7 @@ def main():
         next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct,action=action)
         #stop the loop
     main_stop_time = ti.perf_counter()
-    total_time = main_stop_time-main_start_time 
+    total_time = int(main_stop_time-main_start_time)
     h = total_time // 3600
     m = (total_time % 3600) // 60
     s = total_time % 60
