@@ -652,7 +652,7 @@ def main(starttime=time.perf_counter()):
     graph_folder = ppfolder / "graphs"
     graph_folder.mkdir(exist_ok=True)
 
-    starttime_gantt = float(input("where do you want your gantt chart to start from? >>"))
+    """starttime_gantt = float(input("where do you want your gantt chart to start from? >>"))
     endtime_gantt = float(input("where do you want your gantt chart to end from? >>"))
     if endtime_gantt - starttime_gantt <= 0:
         print("time invalid therefore skipping")
@@ -664,7 +664,7 @@ def main(starttime=time.perf_counter()):
     print("Time spent: " + str(time.perf_counter() - starttime))
 
     plot_order_lateness(order_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
+    print("Time spent: " + str(time.perf_counter() - starttime))"""
 
     plot_station_utilization(station_summary, graph_folder)
 
