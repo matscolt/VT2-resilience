@@ -4896,19 +4896,133 @@ def _filter_context_to_segment_remaining_units(ctx: dict[str, Any]) -> dict[str,
     return ctx
 
 
+
+def _disruption_history_estimate_match_key(
+    disruption_type: Any,
+    station_id: Any,
+    start_time_s: Any,
+) -> tuple[str, str, float] | None:
+    disruption_type_text = str(disruption_type or "").strip().casefold()
+    if disruption_type_text == "":
+        return None
+
+    station_id_text = ""
+    if station_id is not None and not _is_nan_like(station_id):
+        normalized_station_id = _normalize_station_disruption_id(station_id)
+        station_id_text = "" if normalized_station_id is None else str(normalized_station_id)
+
+    try:
+        start_value = round(float(start_time_s), 6)
+    except (TypeError, ValueError):
+        return None
+
+    return disruption_type_text, station_id_text, start_value
+
+
+def _read_disruption_history_estimates(disruption_history_path: Path | None) -> dict[tuple[str, str, float], float]:
+    estimates: dict[tuple[str, str, float], float] = {}
+    if disruption_history_path is None:
+        return estimates
+
+    path = Path(disruption_history_path)
+    if not path.exists() or not path.is_file():
+        return estimates
+
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            key = _disruption_history_estimate_match_key(
+                row.get("disruption_type"),
+                row.get("station_id"),
+                row.get("start_time"),
+            )
+            if key is None:
+                continue
+
+            try:
+                estimated_duration_s = float(row.get("estimated_duration", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                estimated_duration_s = 0.0
+
+            if estimated_duration_s > 0.0:
+                estimates[key] = float(estimated_duration_s)
+
+    return estimates
+
+
+def _apply_disruption_history_estimates_to_timed_records(
+    timed_records: list[dict[str, Any]],
+    disruption_history_path: Path | None,
+) -> list[dict[str, Any]]:
+    estimates = _read_disruption_history_estimates(disruption_history_path)
+    if not estimates:
+        return timed_records
+
+    updated_records: list[dict[str, Any]] = []
+    for record in timed_records:
+        updated_record = dict(record)
+        key = _disruption_history_estimate_match_key(
+            updated_record.get("disruption_type"),
+            updated_record.get("station_id"),
+            updated_record.get("start_time_s"),
+        )
+        if key is not None and key in estimates:
+            updated_record["estimated_duration"] = float(estimates[key])
+        updated_records.append(updated_record)
+
+    return updated_records
+
+
+def _estimated_duration_for_visible_timed_disruption(
+    record: dict[str, Any],
+    disruption_config: dict[str, Any] | None = None,
+) -> float:
+    """Return the planning estimate for a visible timed disruption.
+
+    A positive estimated_duration means the forward-looking makespan should
+    treat the disruption as lasting start_time + estimated_duration.  A zero
+    estimate keeps the original timed record behavior unchanged.
+    """
+    disruption_type = str(record.get("disruption_type", "")).strip()
+    disruption_type_cf = disruption_type.casefold()
+    if disruption_type_cf in {"", "efficiency_loss", "efficiency loss", "failed_inspection", "inspection_failure", "inspection failure", "emergency_order"}:
+        return 0.0
+
+    estimated_raw = record.get("estimated_duration")
+    if estimated_raw is not None and not _is_nan_like(estimated_raw):
+        try:
+            return max(0.0, float(estimated_raw))
+        except (TypeError, ValueError):
+            pass
+
+    station_id = record.get("station_id")
+    stage_number = None
+    if station_id is not None and not _is_nan_like(station_id):
+        try:
+            stage_number = int(float(str(station_id).split(".", maxsplit=1)[0]))
+        except (TypeError, ValueError):
+            stage_number = None
+
+    return max(0.0, float(_estimate_breakdown_duration_from_config(disruption_config, stage_number, disruption_type)))
+
+
 def _shift_timed_records_for_segment(
     timed_records: list[dict[str, Any]],
     segment_start_s: float,
     segment_stop_s: float | None,
     visibility_cutoff_s: float | None = None,
+    disruption_config: dict[str, Any] | None = None,
+    use_estimated_duration_for_visible_disruptions: bool = False,
 ) -> list[dict[str, Any]]:
     """Return only disruptions visible at the current segment start.
 
     Important:
     - The simulation/GA must not see future disruptions.
     - A timed disruption becomes visible only when its start_time has been reached.
-    - The current segment may still simulate an already-visible active disruption
-      until the next segment boundary.
+    - For forward-looking makespan estimates, a positive estimated duration means
+      the visible breakdown is planned as active from start_time until
+      start_time + estimated_duration, regardless of the future actual end_time
+      stored in the timed disruption input.
     - Emergency orders are hidden until their start_time is reached. Once visible,
       they are only released into this simulation window when their Order_time falls
       inside the current simulated window.
@@ -4923,11 +5037,31 @@ def _shift_timed_records_for_segment(
         start_abs = float(record.get("start_time_s", 0.0) or 0.0)
         end_raw = record.get("end_time_s")
         end_abs = float(end_raw) if end_raw is not None else start_abs
+        end_is_known_for_shift = end_raw is not None
         dtype = str(record.get("disruption_type", "")).strip().casefold()
 
         # Do not expose future disruption events to the simulator/GA.
         if start_abs > visibility_cutoff_s + eps:
             continue
+
+        if (
+            use_estimated_duration_for_visible_disruptions
+            and dtype not in {"", "efficiency_loss", "efficiency loss", "failed_inspection", "inspection_failure", "inspection failure", "emergency_order"}
+        ):
+            estimated_duration_s = _estimated_duration_for_visible_timed_disruption(record, disruption_config)
+            if estimated_duration_s > 0.0:
+                actual_end_is_visible = (
+                    end_raw is not None
+                    and float(end_abs) <= visibility_cutoff_s + eps
+                )
+                if not actual_end_is_visible:
+                    # Before the real end_time event has been reached, planning
+                    # should estimate the active disruption as start + estimated
+                    # duration. Once the real end_time event is reached, the
+                    # disruption must be treated as ended and must not continue
+                    # into later forward makespan recalculations.
+                    end_abs = float(start_abs) + float(estimated_duration_s)
+                    end_is_known_for_shift = True
 
         new_record = dict(record)
 
@@ -4958,20 +5092,21 @@ def _shift_timed_records_for_segment(
             if segment_stop_s is not None and start_abs > segment_stop_s + eps:
                 continue
             new_record["start_time_s"] = max(0.0, start_abs - segment_start_s)
-            if end_raw is not None:
+            if end_is_known_for_shift:
                 new_record["end_time_s"] = max(0.0, end_abs - segment_start_s)
             shifted.append(new_record)
             continue
 
         # Breakdown/efficiency-loss subtype: include only if it is already known
-        # and intersects this segment window.
-        if end_abs < segment_start_s - eps:
+        # and intersects this segment window. If a positive estimate was supplied
+        # for planning, the intersection test uses the estimated end time.
+        if end_is_known_for_shift and end_abs <= segment_start_s + eps:
             continue
         if segment_stop_s is not None and start_abs > segment_stop_s + eps:
             continue
 
         new_record["start_time_s"] = max(0.0, start_abs - segment_start_s)
-        if end_raw is not None:
+        if end_is_known_for_shift:
             new_record["end_time_s"] = max(0.0, end_abs - segment_start_s)
 
         shifted.append(new_record)
@@ -5105,11 +5240,17 @@ def _prepare_disruption_inputs(ctx: dict[str, Any], effective_line_layout: dict[
             list(ctx["unit_order_ids"]),
             list(ctx.get("unit_ids", [])),
         )
+        timed_records = _apply_disruption_history_estimates_to_timed_records(
+            timed_records,
+            ctx.get("ongoing_disruption_history"),
+        )
         timed_records_for_sim = _shift_timed_records_for_segment(
             timed_records=timed_records,
             segment_start_s=float(ctx.get("segment_start_s", 0.0) or 0.0),
             segment_stop_s=float(ctx.get("absolute_stop_time_s", ctx.get("simulation_time_s", 0.0)) or 0.0),
             visibility_cutoff_s=float(ctx.get("segment_start_s", 0.0) or 0.0),
+            disruption_config=disruption_config,
+            use_estimated_duration_for_visible_disruptions=bool(ctx.get("use_estimated_duration_for_visible_disruptions", False)),
         )
         scheduled_emergency_order_ids = _emergency_order_ids_already_in_schedule(list(ctx.get("schedule_rows", [])))
         if scheduled_emergency_order_ids:
@@ -5164,6 +5305,7 @@ def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0)
     ctx["initial_line_state_snapshot"] = initial_line_state_snapshot
     effective = build_effective_line_layout(ctx["process_time_data"], ctx["transport_time_data"], line_layout_config)
     valid_variants = set(ctx["process_time_data"]["process_times"].keys())
+    ctx["use_estimated_duration_for_visible_disruptions"] = True
     mode, enabled, chance_based, timed, seed, dis_cfg, timed_records, timed_data, _, _ = _prepare_disruption_inputs(ctx, effective, valid_variants)
     ops, trs, units, stations, _, details = run_simulation(
         ordered_units=list(ctx["ordered_units"]),
@@ -5181,7 +5323,7 @@ def simulate_for_ga(main_settings_path: str | Path, current_time_s: float = 0.0)
         disruptions_enabled=enabled,
         disruption_config=dis_cfg if chance_based else None,
         disruption_seed=seed if chance_based else None,
-        simulation_time_s=ctx["simulation_time_s"],
+        simulation_time_s=None,
         timed_disruption_data=timed_data,
         initial_available_system_slots=ctx.get("initial_available_system_slots"),
         initial_cart_return_times_s=ctx.get("initial_cart_return_times_s", []),
