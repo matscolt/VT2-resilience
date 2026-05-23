@@ -3896,18 +3896,124 @@ def write_unit_summary_csv(unit_summaries: list[UnitSummary], output_path: Path)
             )
 
 
+def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    clean_intervals = [
+        (float(start_time_s), float(end_time_s))
+        for start_time_s, end_time_s in intervals
+        if float(end_time_s) > float(start_time_s)
+    ]
+    if not clean_intervals:
+        return []
+
+    clean_intervals.sort()
+    merged: list[tuple[float, float]] = []
+    current_start_s, current_end_s = clean_intervals[0]
+    for start_time_s, end_time_s in clean_intervals[1:]:
+        if start_time_s <= current_end_s:
+            current_end_s = max(current_end_s, end_time_s)
+        else:
+            merged.append((current_start_s, current_end_s))
+            current_start_s, current_end_s = start_time_s, end_time_s
+    merged.append((current_start_s, current_end_s))
+    return merged
+
+
+def _calculate_station_availability_by_station(
+    station_summaries: list[StationSummary],
+    timed_records: list[dict[str, Any]] | None,
+    total_makespan_s: float,
+) -> dict[tuple[int, str], float]:
+    """Availability = (makespan - machine-breakdown time) / makespan.
+
+    Only machine-breakdown-like disruption records reduce availability.
+    Efficiency losses, inspection failures, and emergency orders are excluded
+    because the station is still available for production in those cases.
+    """
+    makespan_s = max(0.0, float(total_makespan_s or 0.0))
+    station_key_by_disruption_id = {
+        _station_disruption_id_from_station_name(summary.station_name): (
+            int(summary.station_index),
+            str(summary.station_name),
+        )
+        for summary in station_summaries
+    }
+
+    unavailable_intervals_by_station: defaultdict[tuple[int, str], list[tuple[float, float]]] = defaultdict(list)
+    excluded_types = {
+        "efficiency_loss",
+        "efficiency loss",
+        "failed_inspection",
+        "inspection_failure",
+        "inspection failure",
+        "emergency_order",
+    }
+
+    for record in timed_records or []:
+        disruption_type = str(record.get("disruption_type", "")).strip().casefold()
+        if disruption_type in excluded_types:
+            continue
+
+        station_id = record.get("station_id")
+        if station_id is None:
+            continue
+
+        station_key = station_key_by_disruption_id.get(str(station_id))
+        if station_key is None:
+            continue
+
+        try:
+            start_time_s = float(record.get("start_time_s", record.get("start_time", 0.0)) or 0.0)
+        except (TypeError, ValueError):
+            continue
+
+        end_raw = record.get("end_time_s", record.get("end_time"))
+        if end_raw is None or _is_nan_like(end_raw):
+            end_time_s = makespan_s
+        else:
+            try:
+                end_time_s = float(end_raw)
+            except (TypeError, ValueError):
+                end_time_s = makespan_s
+
+        clipped_start_s = max(0.0, min(start_time_s, makespan_s))
+        clipped_end_s = max(0.0, min(end_time_s, makespan_s))
+        if clipped_end_s > clipped_start_s:
+            unavailable_intervals_by_station[station_key].append((clipped_start_s, clipped_end_s))
+
+    availability_by_station: dict[tuple[int, str], float] = {}
+    for summary in station_summaries:
+        station_key = (int(summary.station_index), str(summary.station_name))
+        unavailable_time_s = sum(
+            end_time_s - start_time_s
+            for start_time_s, end_time_s in _merge_intervals(
+                unavailable_intervals_by_station.get(station_key, [])
+            )
+        )
+        if makespan_s <= 0.0:
+            availability_by_station[station_key] = 0.0
+        else:
+            availability_by_station[station_key] = max(
+                0.0,
+                min(1.0, (makespan_s - unavailable_time_s) / makespan_s),
+            )
+
+    return availability_by_station
+
+
 def write_station_summary_csv(
     station_summaries: list[StationSummary],
     output_path: Path,
     utilization_active_window_without_disruptions_by_station: dict[tuple[int, str], float] | None = None,
     active_order_utilization_by_station: dict[tuple[int, str], float] | None = None,
     units_processed_by_station: dict[tuple[int, str], int] | None = None,
+    station_availability_by_station: dict[tuple[int, str], float] | None = None,
 ) -> None:
     utilization_active_window_without_disruptions_by_station = (
         utilization_active_window_without_disruptions_by_station or {}
     )
     active_order_utilization_by_station = active_order_utilization_by_station or {}
     units_processed_by_station = units_processed_by_station or {}
+    station_availability_by_station = station_availability_by_station or {}
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(
@@ -3922,6 +4028,7 @@ def write_station_summary_csv(
                 "average_wait_time_s",
                 "total_wait_time_s",
                 "units_processed",
+                "availability",
                 "utilization_overall",
                 "utilization_active_window",
                 "utilization_active_window_without_disruptions",
@@ -3937,6 +4044,7 @@ def write_station_summary_csv(
                 station_key
             )
             units_processed_value = int(units_processed_by_station.get(station_key, 0))
+            availability_value = station_availability_by_station.get(station_key)
             writer.writerow(
                 [
                     summary.station_index,
@@ -3953,6 +4061,9 @@ def write_station_summary_csv(
                     round(summary.average_wait_time_s, 4),
                     round(summary.total_wait_time_s, 4),
                     units_processed_value,
+                    round(float(availability_value), 6)
+                    if availability_value is not None
+                    else "",
                     round(summary.utilization_overall, 6),
                     round(summary.utilization_active_window, 6),
                     round(float(no_disruptions_value), 6)
@@ -5512,10 +5623,17 @@ def _write_outputs_for_integrated_run(ctx: dict[str, Any], operations, transport
         (int(operation.station_index), str(operation.station_name))
         for operation in operations
     )
+    total_makespan_s = float(kpis.get("makespan_seconds", 0.0) or 0.0)
+    station_availability_by_station = _calculate_station_availability_by_station(
+        station_summaries,
+        timed_records if bool(disruptions_enabled) else [],
+        total_makespan_s,
+    )
     write_station_summary_csv(
         station_summaries,
         run_output_dir / "station_summary.csv",
         units_processed_by_station=dict(units_processed_by_station),
+        station_availability_by_station=station_availability_by_station,
     )
     if disruptions_enabled or simulation_details.get("disruption_event_log"):
         save_json({"disruptions_enabled": bool(disruptions_enabled), "disruption_mode": int(disruption_mode), "seed": str(disruption_seed) if disruption_seed is not None else None, "timed_disruption_records": list(timed_records), "disruption_counts": dict(simulation_details.get("disruption_counts", {})), "events": list(simulation_details.get("disruption_event_log", []))}, run_output_dir / "disruption_summary.json")
