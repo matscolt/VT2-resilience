@@ -1,0 +1,61 @@
+﻿disruption_type,estimated_duration,station_id,efficiency_loss,start_time,end_time
+inspection_failure,0.0,,0.0,4497.0,
+Drill To Dull,4576.0,2,0.0,16188.0,19543.0
+Bottom Cover Misaligned,1144.0,1.1,0.0,57944.0,58830.0
+inspection_failure,0.0,,0.0,60869.0,
+Top Cover Misaligned,1144.0,5.1,0.0,95180.0,96134.0
+Drill To Dull,4576.0,2.2,0.0,106380.0,109879.0
+Top Cover Stuck,1196.0,5.2,0.0,113796.0,114920.0
+efficiency_loss,0.0,2,83.0,120239.0,120582.0
+emergency_order,0.0,,0.0,124535.0,
+emergency_order,0.0,,0.0,130817.0,
+Top Cover Stuck,1196.0,5.2,0.0,136714.0,137776.0
+emergency_order,0.0,,0.0,142375.0,
+Cover Wrong Orientation,4368.0,3,0.0,153338.0,156247.0
+Top Cover Misaligned,1144.0,5,0.0,167426.0,168198.0
+PLC Failure,1656.0,1,0.0,176157.0,177489.0
+Misaligned Material,5220.0,3,0.0,179731.0,182748.0
+efficiency_loss,0.0,5,70.0,190573.0,191170.0
+emergency_order,0.0,,0.0,198256.0,
+efficiency_loss,0.0,2.2,61.0,199129.0,199399.0
+emergency_order,0.0,,0.0,208176.0,
+efficiency_loss,0.0,4,53.0,215091.0,215462.0
+Top Cover Misaligned,1144.0,5.2,0.0,216667.0,217827.0
+Top Cover Stuck,1196.0,5,0.0,234649.0,235698.0
+efficiency_loss,0.0,6,27.0,236129.0,236324.0
+Misaligned Material,5220.0,3.2,0.0,237614.0,241066.0
+efficiency_loss,0.0,5.2,41.0,244488.0,245172.0
+Bottom Cover Misaligned,1144.0,1,0.0,257467.0,258290.0
+efficiency_loss,0.0,2.1,31.0,257753.0,258099.0
+emergency_order,0.0,,0.0,268643.0,
+efficiency_loss,0.0,6.1,69.0,271510.0,271692.0
+emergency_order,0.0,,0.0,276046.0,
+efficiency_loss,0.0,5,75.0,279902.0,280599.0
+PLC Failure,1656.0,2,0.0,280372.0,281912.0
+efficiency_loss,0.0,4.1,50.0,297110.0,297458.0
+emergency_order,0.0,,0.0,297463.0,
+efficiency_loss,0.0,4,82.0,298432.0,298768.0
+PLC Failure,1656.0,4.1,0.0,300396.0,301833.0
+efficiency_loss,0.0,1,12.0,307889.0,308408.0
+emergency_order,0.0,,0.0,318778.0,
+Camera Dirty,1248.0,4,0.0,318848.0,319702.0
+efficiency_loss,0.0,1.1,66.0,346495.0,347000.0
+emergency_order,0.0,,0.0,355245.0,
+Top Cover Stuck,1196.0,5.1,0.0,389987.0,391054.0
+Bottom Cover Stuck,1196.0,1.1,0.0,391471.0,392480.0
+PLC Failure,1656.0,5,0.0,393350.0,394741.0
+emergency_order,0.0,,0.0,400288.0,
+efficiency_loss,0.0,5.1,53.0,452161.0,452856.0
+efficiency_loss,0.0,5.1,54.0,462690.0,463374.0
+Cover Wrong Orientation,4368.0,3.3,0.0,463663.0,466934.0
+Camera Dirty,1248.0,4.1,0.0,508390.0,509193.0
+inspection_failure,0.0,,0.0,514960.0,
+Misaligned Material,5220.0,3.1,0.0,528662.0,533710.0
+efficiency_loss,0.0,5.2,79.0,531440.0,532071.0
+emergency_order,0.0,,0.0,540618.0,
+Bottom Cover Stuck,1196.0,1,0.0,542715.0,543673.0
+Drill To Dull,4576.0,2.1,0.0,546684.0,550350.0
+inspection_failure,0.0,,0.0,549807.0,
+efficiency_loss,0.0,4.1,26.0,557979.0,558288.0
+Misaligned Material,5220.0,3.4,0.0,560139.0,563355.0
+emergency_order,0.0,,0.0,561758.0,

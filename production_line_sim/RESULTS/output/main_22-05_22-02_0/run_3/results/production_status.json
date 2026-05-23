@@ -1,0 +1,11 @@
+{
+  "requested_unit_count": 14405,
+  "produced_unit_count": 13451,
+  "completed_good_units": 13451,
+  "disruptions_enabled": true,
+  "disruption_mode": 2,
+  "stop_reason": {
+    "type": "simulation_time_limit",
+    "time_s": 800000.0
+  }
+}

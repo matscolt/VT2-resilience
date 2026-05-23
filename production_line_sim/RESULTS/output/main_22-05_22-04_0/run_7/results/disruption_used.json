@@ -1,0 +1,350 @@
+{
+    "Stations": {
+        "1": {
+            "station_type": "Bottom cover",
+            "machine breakdowns": [
+                {
+                    "name": "PLC Failure",
+                    "chance [%]": 0.000156,
+                    "chance of sim time [%]": 0.12,
+                    "range [s]": [
+                        60,
+                        120
+                    ],
+                    "mean [s]": 1440,
+                    "std [% of mean]": 5
+                },
+                {
+                    "name": "Bottom Cover Misaligned",
+                    "chance [%]": 7.8e-05,
+                    "chance of sim time [%]": 0.21,
+                    "range [s]": [
+                        60,
+                        160
+                    ],
+                    "mean [s]": 880,
+                    "std [% of mean]": 10
+                },
+                {
+                    "name": "Bottom Cover Stuck",
+                    "chance [%]": 7.8e-05,
+                    "chance of sim time [%]": 0.188,
+                    "range [s]": [
+                        80,
+                        180
+                    ],
+                    "mean [s]": 1040,
+                    "std [% of mean]": 5
+                },
+                {
+                    "name": "Piston Broke",
+                    "chance [%]": 1.56e-05,
+                    "chance of sim time [%]": 0.6,
+                    "range [s]": [
+                        1200,
+                        3600
+                    ],
+                    "mean [s]": 38400,
+                    "std [% of mean]": 20
+                }
+            ],
+            "efficiency loss": {
+                "chance [%]": 0.00059,
+                "chance of sim time [%]": 0.095,
+                "range [%]": [
+                    10,
+                    90
+                ],
+                "mean [s]": 480,
+                "std [% of mean]": 10
+            }
+        },
+        "2": {
+            "station_type": "Drilling",
+            "machine breakdowns": [
+                {
+                    "name": "PLC Failure",
+                    "chance [%]": 0.000156,
+                    "chance of sim time [%]": 0.12,
+                    "range [s]": [
+                        60,
+                        120
+                    ],
+                    "mean [s]": 1440,
+                    "std [% of mean]": 5
+                },
+                {
+                    "name": "Drill To Dull",
+                    "chance [%]": 3.9e-05,
+                    "chance of sim time [%]": 0.4,
+                    "range [s]": [
+                        240,
+                        640
+                    ],
+                    "mean [s]": 3520,
+                    "std [% of mean]": 10
+                },
+                {
+                    "name": "Drill Broke",
+                    "chance [%]": 7.8e-05,
+                    "chance of sim time [%]": 0.625,
+                    "range [s]": [
+                        320,
+                        680
+                    ],
+                    "mean [s]": 8000,
+                    "std [% of mean]": 10
+                }
+            ],
+            "efficiency loss": {
+                "chance [%]": 0.000375,
+                "chance of sim time [%]": 0.0375,
+                "range [%]": [
+                    10,
+                    90
+                ],
+                "mean [s]": 300,
+                "std [% of mean]": 10
+            }
+        },
+        "3": {
+            "station_type": "Robot cell",
+            "machine breakdowns": [
+                {
+                    "name": "PLC Failure",
+                    "chance [%]": 0.000156,
+                    "chance of sim time [%]": 0.11,
+                    "range [s]": [
+                        60,
+                        120
+                    ],
+                    "mean [s]": 1440,
+                    "std [% of mean]": 5
+                },
+                {
+                    "name": "Cover Wrong Orientation",
+                    "chance [%]": 7.8e-05,
+                    "chance of sim time [%]": 0.2825,
+                    "range [s]": [
+                        240,
+                        600
+                    ],
+                    "mean [s]": 3360,
+                    "std [% of mean]": 10
+                },
+                {
+                    "name": "Arm Movement Misaligned",
+                    "chance [%]": 3.9e-05,
+                    "chance of sim time [%]": 1.125,
+                    "range [s]": [
+                        1200,
+                        2400
+                    ],
+                    "mean [s]": 28800,
+                    "std [% of mean]": 15
+                },
+                {
+                    "name": "Cart Relised To Early",
+                    "chance [%]": 3.9e-05,
+                    "chance of sim time [%]": 0.28,
+                    "range [s]": [
+                        600,
+                        1200
+                    ],
+                    "mean [s]": 4800,
+                    "std [% of mean]": 10
+                },
+                {
+                    "name": "Misaligned Material",
+                    "chance [%]": 3.9e-05,
+                    "chance of sim time [%]": 0.325,
+                    "range [s]": [
+                        400,
+                        960
+                    ],
+                    "mean [s]": 3600,
+                    "std [% of mean]": 15
+                },
+                {
+                    "name": "Tool Broke",
+                    "chance [%]": 7.8e-06,
+                    "chance of sim time [%]": 0.3375,
+                    "range [s]": [
+                        1800,
+                        3600
+                    ],
+                    "mean [s]": 43200,
+                    "std [% of mean]": 20
+                },
+                {
+                    "name": "Robot Arm Broke",
+                    "chance [%]": 7.8e-06,
+                    "chance of sim time [%]": 1.3,
+                    "range [s]": [
+                        6800,
+                        14000
+                    ],
+                    "mean [s]": 166400,
+                    "std [% of mean]": 25
+                }
+            ],
+            "efficiency loss": {
+                "chance [%]": 0.00021,
+                "chance of sim time [%]": 0.0475,
+                "range [%]": [
+                    10,
+                    90
+                ],
+                "mean [s]": 676,
+                "std [% of mean]": 10
+            }
+        },
+        "4": {
+            "station_type": "Inspection",
+            "machine breakdowns": [
+                {
+                    "name": "PLC Failure",
+                    "chance [%]": 0.000156,
+                    "chance of sim time [%]": 0.12,
+                    "range [s]": [
+                        60,
+                        120
+                    ],
+                    "mean [s]": 1440,
+                    "std [% of mean]": 5
+                },
+                {
+                    "name": "Camera Broken",
+                    "chance [%]": 8.6e-06,
+                    "chance of sim time [%]": 0.125,
+                    "range [s]": [
+                        600,
+                        1200
+                    ],
+                    "mean [s]": 14400,
+                    "std [% of mean]": 15
+                },
+                {
+                    "name": "Camera Dirty",
+                    "chance [%]": 3.9e-05,
+                    "chance of sim time [%]": 0.1125,
+                    "range [s]": [
+                        120,
+                        240
+                    ],
+                    "mean [s]": 960,
+                    "std [% of mean]": 10
+                }
+            ],
+            "inspection failure": {
+                "name": "Inspection Failure",
+                "effect": "cancel_and_redo_unit",
+                "chance [%]": 0.001,
+                "chance of sim time [%]": 0.05,
+                "action": "The unit is cancelled and redone."
+            },
+            "efficiency loss": {
+                "chance [%]": 0.00093,
+                "chance of sim time [%]": 0.109,
+                "range [%]": [
+                    10,
+                    90
+                ],
+                "mean [s]": 352,
+                "std [% of mean]": 10
+            }
+        },
+        "5": {
+            "station_type": "Top cover",
+            "machine breakdowns": [
+                {
+                    "name": "PLC Failure",
+                    "chance [%]": 0.000156,
+                    "chance of sim time [%]": 0.12,
+                    "range [s]": [
+                        60,
+                        120
+                    ],
+                    "mean [s]": 1440,
+                    "std [% of mean]": 5
+                },
+                {
+                    "name": "Top Cover Misaligned",
+                    "chance [%]": 7.8e-05,
+                    "chance of sim time [%]": 0.1375,
+                    "range [s]": [
+                        60,
+                        160
+                    ],
+                    "mean [s]": 880,
+                    "std [% of mean]": 10
+                },
+                {
+                    "name": "Top Cover Stuck",
+                    "chance [%]": 7.8e-05,
+                    "chance of sim time [%]": 0.25,
+                    "range [s]": [
+                        80,
+                        180
+                    ],
+                    "mean [s]": 1040,
+                    "std [% of mean]": 5
+                },
+                {
+                    "name": "Piston Broke",
+                    "chance [%]": 1.56e-05,
+                    "chance of sim time [%]": 0.6,
+                    "range [s]": [
+                        1200,
+                        3600
+                    ],
+                    "mean [s]": 38400,
+                    "std [% of mean]": 20
+                }
+            ],
+            "efficiency loss": {
+                "chance [%]": 0.00085,
+                "chance of sim time [%]": 0.193,
+                "range [%]": [
+                    10,
+                    90
+                ],
+                "mean [s]": 680,
+                "std [% of mean]": 10
+            }
+        },
+        "6": {
+            "station_type": "Packaging",
+            "machine breakdowns": [
+                {
+                    "name": "PLC Failure",
+                    "chance [%]": 0.000156,
+                    "chance of sim time [%]": 0.12,
+                    "range [s]": [
+                        60,
+                        120
+                    ],
+                    "mean [s]": 1440,
+                    "std [% of mean]": 5
+                }
+            ],
+            "inspection failure": {
+                "name": "Inspection Failure",
+                "effect": "cancel_and_redo_unit",
+                "chance [%]": 0.0017,
+                "chance of sim time [%]": 0.05,
+                "action": "The unit is cancelled and redone."
+            },
+            "efficiency loss": {
+                "chance [%]": 0.00049,
+                "chance of sim time [%]": 0.032,
+                "range [%]": [
+                    10,
+                    90
+                ],
+                "mean [s]": 196,
+                "std [% of mean]": 10
+            }
+        }
+    }
+}
