@@ -310,7 +310,12 @@ def main():
             end = ti.perf_counter()
             print(f"[MAIN] segment wall time: {end - start}\n\n\n - - - - - \n")
             print(f"the simulation has run for {int(end - run_time_start)} seconds")
-            print(f"Time since starting program: {end-main_start_time:.2f}")
+            ctotal_time = int(end-main_start_time)
+            ch = ctotal_time // 3600
+            cm = (ctotal_time % 3600) // 60
+            cs = ctotal_time % 60
+            cclock_time = f"{ch:d}:{cm:02d}:{cs:02d}"if ch > 0 else f"{cm:02d}:{cs:02d}"
+            print(f"Time since starting program: {cclock_time}")
             #input("Press [ENTER] to continue the loop")
         run_time_end = ti.perf_counter()
         print(f"\n\n--- RUN {run_idx} ---")
