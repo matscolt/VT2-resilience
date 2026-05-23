@@ -442,7 +442,7 @@ def _priority_color(priority_value):
         4: "#ff7f0e",  # orange
         5: "#d62728",  # red
     }
-    return mapping.get(p, "#7f7f7f")
+    return mapping.get(p)
 
 
 def _plot_order_lateness_variant(valid_rows, graphfolder, graphname, title):
@@ -481,12 +481,11 @@ def _plot_order_lateness_variant(valid_rows, graphfolder, graphname, title):
         mpatches.Patch(color="#fceb31", label="Priority 3"),
         mpatches.Patch(color="#ff7f0e", label="Priority 4"),
         mpatches.Patch(color="#d62728", label="Priority 5"),
-        mpatches.Patch(color="#7f7f7f", label="Priority missing/unknown"),
     ]
     plt.legend(handles=legend_handles + [
         plt.Line2D([0], [0], color="black", linestyle="-", linewidth=1, label="Due date"),
         plt.Line2D([0], [0], color="blue", linestyle=":", linewidth=1, label=f"Average lateness = {avg_lateness:.2f} s"),
-    ], loc="upper left")
+    ], loc="lower left")
 
     max_labels = 30
     n_orders = len(orders)
@@ -555,7 +554,7 @@ def plot_order_lateness(order_data, graphfolder):
 
     by_order_id = sorted(valid_rows, key=sort_by_order_id)
     by_due_date = sorted(valid_rows, key=sort_by_due_date)
-    by_lateness = sorted(valid_rows, key=sort_by_lateness)
+    by_lateness = sorted(valid_rows, key=sort_by_lateness, reverse=True)
 
     _plot_order_lateness_variant(
         by_order_id,
