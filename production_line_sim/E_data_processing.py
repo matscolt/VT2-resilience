@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json
+
 import re
 from datetime import datetime
 from pathlib import Path
@@ -11,11 +11,16 @@ import pandas as pd
 # ============================================================
 # Hardcoded configuration
 # ============================================================
+# This script is assumed to sit BESIDE the RESULTS folder, not inside it.
+# Example:
+#   project_root/
+#   ├─ RESULTS/
+#   └─ E_data_processing.py
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "RESULTS" / "output"
+ON_GOING_DIR = Path(__file__).resolve().parent / "RESULTS" / "on_going"
 DAY_SECONDS = 8 * 60 * 60   # 8 hours per day
 WEEK_DAYS = 5               # 5 days per week
-DUE_DATE_SCALE = 1.0        # due date already in seconds
 
 
 # ============================================================
@@ -51,19 +56,13 @@ def safe_numeric(series: pd.Series) -> pd.Series:
 
 
 def seconds_to_week_day(seconds_value: float, day_seconds: float, week_days: int) -> tuple[Optional[int], Optional[int]]:
-    """
-    Convert simulation seconds to (week, day), both 1-based.
-
-    With the hardcoded defaults:
-    - 1 day = 8 hours = 28,800 seconds
-    - 1 week = 5 days
-    """
+    """Convert simulation seconds to (week, day), both 1-based."""
     if pd.isna(seconds_value):
         return None, None
 
     day_index = int(float(seconds_value) // day_seconds)
     week = day_index // week_days + 1
-    day = day_index % week_days + 1
+    day = day_index + 1
     return week, day
 
 
@@ -107,15 +106,7 @@ def list_main_folders(output_dir: Path) -> List[Path]:
 
 
 def select_main_folder(output_dir: Path) -> Path:
-    """
-    Show a numbered list like:
-
-    Available main folders in ./output (newest first):
-    1) main_...
-    2) main_...
-
-    Choose main folder number (Enter = 1):
-    """
+    """Interactive main-folder picker."""
     candidates = list_main_folders(output_dir)
     if not candidates:
         raise FileNotFoundError(f"No valid main folders found in {output_dir}")
@@ -141,96 +132,130 @@ def list_run_folders(main_output_dir: Path) -> List[Path]:
     return runs
 
 
-def find_metadata_file(results_dir: Path) -> Optional[Path]:
+def find_production_plan_file(main_name: str, run_name: str) -> Path:
     """
-    Optional helper: look for a results-side order/plan-like CSV that may contain
-    due date / priority / planned week / planned day.
-
-    This script intentionally does NOT use the input/ tree.
+    Find the single production_plan*.csv for a run in:
+      RESULTS/on_going/<main_name>/<run_name>/
     """
-    patterns = [
-        "*order*.csv",
-        "*orders*.csv",
-        "*plan*.csv",
-        "*production*.csv",
-    ]
-    unit_name = "unit_summary.csv"
-    matches: List[Path] = []
-    for pattern in patterns:
-        matches.extend([p for p in results_dir.glob(pattern) if p.name != unit_name])
+    run_dir = ON_GOING_DIR / main_name / run_name
+    if not run_dir.exists():
+        raise FileNotFoundError(f"on_going run folder not found: {run_dir}")
 
-    # stable de-duplication
-    seen = set()
-    unique = []
-    for p in sorted(matches):
-        if p not in seen:
-            seen.add(p)
-            unique.append(p)
-    return unique[0] if unique else None
+    plans = sorted(run_dir.glob("production_plan*.csv"))
+    if not plans:
+        raise FileNotFoundError(f"No production_plan*.csv found in {run_dir}")
+    if len(plans) > 1:
+        print(f"WARNING: Multiple production plans found in {run_dir}. Using: {plans[0].name}")
+    return plans[0]
 
 
-def extract_optional_order_metadata(results_dir: Path) -> pd.DataFrame:
-    """
-    Try to extract order-level metadata from a results-side CSV if one exists.
-    If not found, return an empty dataframe with the right columns.
-    """
-    meta_file = find_metadata_file(results_dir)
-    desired_cols = ["order_id", "due date", "priority", "planned_week", "planned_day"]
+def extract_plan_metadata(plan_df: pd.DataFrame) -> pd.DataFrame:
+    """Extract metadata columns from the production plan."""
+    order_col = find_col(plan_df, ["order_id", "orderID"])
+    due_col = find_col(plan_df, ["due date", "due_date", "due"])
+    priority_col = find_col(plan_df, ["priority"])
+    planned_week_col = find_col(plan_df, ["planned_week", "planned week"])
+    planned_day_col = find_col(plan_df, ["planned_day", "planned day"])
 
-    if meta_file is None:
-        return pd.DataFrame(columns=desired_cols)
-
-    try:
-        df = pd.read_csv(meta_file)
-    except Exception as exc:
-        print(f"WARNING: Could not read metadata file {meta_file}: {exc}")
-        return pd.DataFrame(columns=desired_cols)
-
-    try:
-        order_col = find_col(df, ["order_id", "orderID"])
-    except KeyError:
-        print(f"WARNING: Metadata file {meta_file.name} does not contain order_id. Ignoring it.")
-        return pd.DataFrame(columns=desired_cols)
-
-    due_col = find_col(df, ["due date", "due_date", "due"], required=False)
-    priority_col = find_col(df, ["priority"], required=False)
-    planned_week_col = find_col(df, ["planned_week", "planned week"], required=False)
-    planned_day_col = find_col(df, ["planned_day", "planned day"], required=False)
-
-    keep = {order_col: "order_id"}
-    if due_col:
-        keep[due_col] = "due date"
-    if priority_col:
-        keep[priority_col] = "priority"
-    if planned_week_col:
-        keep[planned_week_col] = "planned_week"
-    if planned_day_col:
-        keep[planned_day_col] = "planned_day"
-
-    meta = df[list(keep.keys())].rename(columns=keep).copy()
+    meta = plan_df[[order_col, due_col, priority_col, planned_week_col, planned_day_col]].copy()
+    meta = meta.rename(columns={
+        order_col: "order_id",
+        due_col: "due date",
+        priority_col: "priority",
+        planned_week_col: "planned_week",
+        planned_day_col: "planned_day",
+    })
     meta["order_id"] = safe_numeric(meta["order_id"]).astype("Int64")
     meta = meta.dropna(subset=["order_id"]).copy()
     meta["order_id"] = meta["order_id"].astype(int)
-
-    for col in ["due date", "priority", "planned_week", "planned_day"]:
-        if col in meta.columns:
-            meta[col] = safe_numeric(meta[col])
-        else:
-            meta[col] = pd.NA
-
-    meta = meta[["order_id", "due date", "priority", "planned_week", "planned_day"]]
+    for c in ["due date", "priority", "planned_week", "planned_day"]:
+        meta[c] = safe_numeric(meta[c])
     meta = meta.drop_duplicates(subset=["order_id"])
     return meta
 
 
+def extract_plan_variants(plan_df: pd.DataFrame) -> pd.DataFrame:
+    """Extract variant0..2 and quantity0..2 from the production plan."""
+    order_col = find_col(plan_df, ["order_id", "orderID"])
+
+    col_aliases = {
+        "variant0": ["variant0", "variant_0"],
+        "quantity0": ["quantity0", "quantity_0"],
+        "variant1": ["variant1", "variant_1"],
+        "quantity1": ["quantity1", "quantity_1"],
+        "variant2": ["variant2", "variant_2"],
+        "quantity2": ["quantity2", "quantity_2"],
+    }
+
+    resolved = {"order_id": order_col}
+    for out_col, aliases in col_aliases.items():
+        resolved[out_col] = find_col(plan_df, aliases, required=False)
+
+    keep_cols = [order_col] + [c for c in resolved.values() if c is not None and c != order_col]
+    variants = plan_df[keep_cols].copy()
+    rename_map = {order_col: "order_id"}
+    for out_col, source_col in resolved.items():
+        if out_col != "order_id" and source_col is not None:
+            rename_map[source_col] = out_col
+    variants = variants.rename(columns=rename_map)
+
+    variants["order_id"] = safe_numeric(variants["order_id"]).astype("Int64")
+    variants = variants.dropna(subset=["order_id"]).copy()
+    variants["order_id"] = variants["order_id"].astype(int)
+
+    for vcol in ["variant0", "variant1", "variant2"]:
+        if vcol not in variants.columns:
+            variants[vcol] = ""
+        variants[vcol] = variants[vcol].fillna("").astype(str)
+
+    for qcol in ["quantity0", "quantity1", "quantity2"]:
+        if qcol not in variants.columns:
+            variants[qcol] = 0
+        variants[qcol] = safe_numeric(variants[qcol]).fillna(0).astype(int)
+
+    variants = variants[[
+        "order_id", "variant0", "quantity0", "variant1", "quantity1", "variant2", "quantity2"
+    ]].drop_duplicates(subset=["order_id"])
+    return variants
+
+
+def build_actual_variant_summary(unit_df: pd.DataFrame, order_col: str, variant_col: str) -> pd.DataFrame:
+    """Build actual variant counts from unit_summary.csv."""
+    counts = (
+        unit_df.groupby([order_col, variant_col], dropna=False)
+        .size()
+        .reset_index(name="qty")
+        .rename(columns={order_col: "order_id", variant_col: "variant"})
+    )
+
+    rows = []
+    for order_id, grp in counts.groupby("order_id"):
+        grp = grp.sort_values("variant", kind="stable").reset_index(drop=True)
+        row = {"order_id": int(order_id)}
+        for i in range(3):
+            if i < len(grp):
+                row[f"variant{i}"] = str(grp.loc[i, "variant"])
+                row[f"quantity{i}"] = int(grp.loc[i, "qty"])
+            else:
+                row[f"variant{i}"] = ""
+                row[f"quantity{i}"] = 0
+        if len(grp) > 3:
+            extras = ", ".join(grp.loc[3:, "variant"].astype(str).tolist())
+            print(f"WARNING: order {order_id} has more than 3 variants in unit_summary. Extra variants ignored: {extras}")
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame(columns=["order_id", "variant0", "quantity0", "variant1", "quantity1", "variant2", "quantity2"])
+    return pd.DataFrame(rows)
+
+
 def validate_summary(summary: pd.DataFrame) -> None:
-    """Light sanity checks before writing the output CSV."""
     if summary["order_id"].duplicated().any():
         dupes = summary.loc[summary["order_id"].duplicated(), "order_id"].tolist()
         raise ValueError(f"Duplicate order_id values found in output summary: {dupes[:10]}")
 
     for col in ["quantity0", "quantity1", "quantity2"]:
-        if (pd.to_numeric(summary[col], errors="coerce").fillna(0) < 0).any():
+        if (safe_numeric(summary[col]).fillna(0) < 0).any():
             raise ValueError(f"Negative quantities found in {col}.")
 
     mask = summary["finish_time"].notna() & summary["start_time"].notna()
@@ -242,25 +267,22 @@ def validate_summary(summary: pd.DataFrame) -> None:
         )
 
 
-def build_order_summary(results_dir: Path) -> Path:
+def build_order_summary(results_dir: Path, main_name: str, run_name: str) -> Path:
     """
-    Create order_summary.csv using results-side data only.
-
-    Required source:
-      - unit_summary.csv
-
-    Optional metadata source (if present in results_dir):
-      - any CSV with order_id plus due date / priority / planned week / planned day
-
-    If optional metadata is not found, the columns are still created but left blank.
+    Create order_summary.csv using:
+      - output/<main>/run_x/results/unit_summary.csv
+      - on_going/<main>/run_x/production_plan*.csv
     """
     unit_path = results_dir / "unit_summary.csv"
     if not unit_path.exists():
         raise FileNotFoundError(f"Missing {unit_path}")
 
-    unit_df = pd.read_csv(unit_path)
+    plan_path = find_production_plan_file(main_name, run_name)
 
-    # --- Required unit_summary columns ---
+    unit_df = pd.read_csv(unit_path)
+    plan_df = pd.read_csv(plan_path)
+
+    # --- unit_summary columns ---
     unit_order_col = find_col(unit_df, ["order_id", "orderID"])
     unit_variant_col = find_col(unit_df, ["variant"])
     unit_start_col = find_col(unit_df, ["first_arrival_time_s", "first_arrival_time", "first_arrival"])
@@ -273,7 +295,7 @@ def build_order_summary(results_dir: Path) -> Path:
     unit_df[unit_order_col] = unit_df[unit_order_col].astype(int)
     unit_df[unit_variant_col] = unit_df[unit_variant_col].astype(str)
 
-    # --- Aggregate timing per order ---
+    # --- Actual timing from unit_summary ---
     timing = (
         unit_df.groupby(unit_order_col, dropna=False)
         .agg(
@@ -285,60 +307,48 @@ def build_order_summary(results_dir: Path) -> Path:
     )
     timing["through_put_time"] = timing["finish_time"] - timing["start_time"]
 
-    # --- Count variants per order ---
-    counts = (
-        unit_df.groupby([unit_order_col, unit_variant_col], dropna=False)
-        .size()
-        .reset_index(name="qty")
-        .rename(columns={unit_order_col: "order_id", unit_variant_col: "variant"})
-    )
+    # --- Actual variant counts from unit_summary ---
+    actual_variants = build_actual_variant_summary(unit_df, unit_order_col, unit_variant_col)
 
-    variant_rows = []
-    for order_id, grp in counts.groupby("order_id"):
-        grp = grp.sort_values("variant", kind="stable").reset_index(drop=True)
-        row = {"order_id": int(order_id)}
+    # --- Planned metadata and planned variants from production plan ---
+    plan_meta = extract_plan_metadata(plan_df)
+    plan_variants = extract_plan_variants(plan_df)
 
-        for i in range(3):
-            if i < len(grp):
-                row[f"variant{i}"] = grp.loc[i, "variant"]
-                row[f"quantity{i}"] = int(grp.loc[i, "qty"])
-            else:
-                row[f"variant{i}"] = ""
-                row[f"quantity{i}"] = 0
+    # --- Merge with plan as the base so planned orders with no completed units still appear ---
+    summary = plan_meta.merge(timing, on="order_id", how="left")
+    summary = summary.merge(plan_variants, on="order_id", how="left", suffixes=("", "_plan"))
+    summary = summary.merge(actual_variants, on="order_id", how="left", suffixes=("_plan", ""))
 
-        if len(grp) > 3:
-            extras = ", ".join(grp.loc[3:, "variant"].astype(str).tolist())
-            print(f"WARNING: order {order_id} has more than 3 variants. Extra variants ignored: {extras}")
-
-        variant_rows.append(row)
-
-    variant_df = pd.DataFrame(variant_rows)
-
-    # --- Optional metadata from results-side files only ---
-    order_meta = extract_optional_order_metadata(results_dir)
-    if not order_meta.empty and "due date" in order_meta.columns:
-        order_meta["due date"] = safe_numeric(order_meta["due date"]) * DUE_DATE_SCALE
-
-    # --- Merge everything ---
-    summary = timing.merge(variant_df, on="order_id", how="outer")
-    summary = summary.merge(order_meta, on="order_id", how="left")
-
-    # Ensure columns exist even when metadata is missing
+    # Prefer actual variant/quantity values when present; otherwise fall back to plan values
     for i in range(3):
-        vcol = f"variant{i}"
-        qcol = f"quantity{i}"
-        if vcol not in summary.columns:
-            summary[vcol] = ""
-        if qcol not in summary.columns:
-            summary[qcol] = 0
-        summary[vcol] = summary[vcol].fillna("")
-        summary[qcol] = safe_numeric(summary[qcol]).fillna(0).astype(int)
+        v_actual = f"variant{i}"
+        q_actual = f"quantity{i}"
+        v_plan = f"variant{i}_plan"
+        q_plan = f"quantity{i}_plan"
 
-    for col in ["due date", "priority", "planned_week", "planned_day"]:
-        if col not in summary.columns:
-            summary[col] = pd.NA
+        if v_actual not in summary.columns:
+            summary[v_actual] = ""
+        if q_actual not in summary.columns:
+            summary[q_actual] = pd.NA
+        if v_plan not in summary.columns:
+            summary[v_plan] = ""
+        if q_plan not in summary.columns:
+            summary[q_plan] = pd.NA
 
-    # Derived columns
+        summary[v_actual] = summary[v_actual].fillna("")
+        summary[v_plan] = summary[v_plan].fillna("")
+        summary[q_actual] = safe_numeric(summary[q_actual])
+        summary[q_plan] = safe_numeric(summary[q_plan])
+
+        use_plan_variant = summary[v_actual].eq("") & summary[v_plan].ne("")
+        summary.loc[use_plan_variant, v_actual] = summary.loc[use_plan_variant, v_plan]
+
+        use_plan_qty = summary[q_actual].isna() & summary[q_plan].notna()
+        summary.loc[use_plan_qty, q_actual] = summary.loc[use_plan_qty, q_plan]
+
+        summary[q_actual] = summary[q_actual].fillna(0).astype(int)
+
+    # Lateness from finish_time - due date (both in seconds)
     summary["lateness"] = pd.NA
     due_numeric = safe_numeric(summary["due date"])
     can_compute_lateness = summary["finish_time"].notna() & due_numeric.notna()
@@ -346,13 +356,10 @@ def build_order_summary(results_dir: Path) -> Path:
         summary.loc[can_compute_lateness, "finish_time"] - due_numeric.loc[can_compute_lateness]
     )
 
-    finished_week_day = summary["finish_time"].apply(
-        lambda x: seconds_to_week_day(x, DAY_SECONDS, WEEK_DAYS)
-    )
+    finished_week_day = summary["finish_time"].apply(lambda x: seconds_to_week_day(x, DAY_SECONDS, WEEK_DAYS))
     summary["finished_week"] = finished_week_day.apply(lambda x: x[0])
     summary["finished_day"] = finished_week_day.apply(lambda x: x[1])
 
-    # Final column order requested by user
     final_cols = [
         "order_id",
         "due date",
@@ -388,14 +395,17 @@ def build_order_summary(results_dir: Path) -> Path:
 def main() -> None:
     if not OUTPUT_DIR.exists():
         raise FileNotFoundError(f"Output folder does not exist: {OUTPUT_DIR}")
+    if not ON_GOING_DIR.exists():
+        raise FileNotFoundError(f"on_going folder does not exist: {ON_GOING_DIR}")
 
     chosen_main = select_main_folder(OUTPUT_DIR)
+    main_name = chosen_main.name
     runs = list_run_folders(chosen_main)
 
     if not runs:
         raise FileNotFoundError(f"No run_* folders found in {chosen_main}")
 
-    print(f"\nProcessing main folder: {chosen_main.name}")
+    print(f"\nProcessing main folder: {main_name}")
     print(f"Found {len(runs)} run folder(s).")
 
     created = []
@@ -405,33 +415,13 @@ def main() -> None:
             print(f"WARNING: No results folder in {run_dir}. Skipping.")
             continue
         try:
-            out_path = build_order_summary(results_dir)
+            out_path = build_order_summary(results_dir, main_name=main_name, run_name=run_dir.name)
             created.append(out_path)
             print(f"Created: {out_path}")
         except Exception as exc:
             print(f"ERROR in {run_dir}: {exc}")
 
-    print(f"\nDone. Created {len(created)} order_summary.csv file(s) in main folder: {chosen_main.name}")
-
-    if created:
-        missing_meta = []
-        for p in created:
-            try:
-                df = pd.read_csv(p)
-                if (
-                    df["due date"].isna().all()
-                    and df["priority"].isna().all()
-                    and df["planned_week"].isna().all()
-                    and df["planned_day"].isna().all()
-                ):
-                    missing_meta.append(p)
-            except Exception:
-                pass
-        if missing_meta:
-            print(
-                "\nNOTE: Some metadata columns (due date / priority / planned week / planned day) were left blank "
-                "because no results-side metadata file containing those columns was found."
-            )
+    print(f"\nDone. Created {len(created)} order_summary.csv file(s) in main folder: {main_name}")
 
 
 if __name__ == "__main__":
