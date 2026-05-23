@@ -1,4 +1,3 @@
-
 PP wo dis = main_22-05_23-23_0
 PP w dis wo react = main_22-05_22-04_0
 PP w dis w react = main_23-05_12-16_0
@@ -6,3 +5,74 @@ GA wo dis =
 GA w dis w react= 
 GA random w dis w react high settings = 
 GA random w dis w react standard settings = 
+
+
+PP wo dis = 
+    "rescheduling_enabled":0,
+    "reaction_enabled":0,
+    "fast_GA":0,
+    "segment_time":0,
+    "segment_interval":2.5,
+    "random based disruptions": {
+        "enabled": 0
+    },
+
+PP w dis wo react =
+    "rescheduling_enabled":0,
+    "reaction_enabled":0,
+    "fast_GA":0,
+    "segment_time":0,
+    "segment_interval":2.5,
+    "random based disruptions": {
+        "enabled": 1
+    },
+
+PP w dis w react =
+    "rescheduling_enabled":0,
+    "reaction_enabled":1,
+    "fast_GA":0,
+    "segment_time":0,
+    "segment_interval":2.5,
+    "random based disruptions": {
+        "enabled": 1
+    },
+
+GA wo dis =
+    "rescheduling_enabled":1,
+    "reaction_enabled":0,
+    "fast_GA":0,
+    "segment_time":1,
+    "segment_interval":2.5,
+    "random based disruptions": {
+        "enabled": 0
+    },
+
+GA w dis w react= 
+    "rescheduling_enabled":1,
+    "reaction_enabled":1,
+    "fast_GA":0,
+    "segment_time":0,
+    "segment_interval":2.5,
+    "random based disruptions": {
+        "enabled": 1
+    },
+
+GA random w dis w react high settings = 
+    "rescheduling_enabled":1,
+    "reaction_enabled":1,
+    "fast_GA":0,
+    "segment_time":0,
+    "segment_interval":2.5,
+    "random based disruptions": {
+        "enabled": 1
+    },
+
+GA random w dis w react standard settings = 
+    "rescheduling_enabled":1,
+    "reaction_enabled":1,
+    "fast_GA":0,
+    "segment_time":0,
+    "segment_interval":2.5,
+    "random based disruptions": {
+        "enabled": 1
+    },
