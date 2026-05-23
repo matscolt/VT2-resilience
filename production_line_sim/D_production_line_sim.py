@@ -4110,11 +4110,48 @@ def _emergency_order_ids_already_in_schedule(schedule_rows: list[dict[str, Any]]
     }
 
 
+def _read_completed_emergency_order_state_from_unit_summary(
+    unit_summary_path: Path | None,
+    cutoff_time_s: float,
+) -> tuple[Counter[tuple[str, str]], list[str]]:
+    completed_counts: Counter[tuple[str, str]] = Counter()
+    completed_unit_ids: list[str] = []
+    if unit_summary_path is None:
+        return completed_counts, completed_unit_ids
+
+    path = Path(unit_summary_path)
+    if not path.exists() or not path.is_file():
+        return completed_counts, completed_unit_ids
+
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            unit_id = str(row.get("unit_id", "")).strip()
+            if not _is_emergency_unit_id(unit_id):
+                continue
+
+            try:
+                completion_time_s = float(row.get("completion_time_s", "nan"))
+            except (TypeError, ValueError):
+                continue
+            if completion_time_s > float(cutoff_time_s):
+                continue
+
+            order_id = str(row.get("order_id", row.get("orderID", ""))).strip()
+            variant = str(row.get("variant", "")).strip().upper()
+            if order_id != "" and variant != "":
+                completed_counts[(order_id, variant)] += 1
+            completed_unit_ids.append(unit_id)
+
+    return completed_counts, completed_unit_ids
+
+
 def _sync_visible_emergency_orders_to_current_schedule(
     schedule_path: Path,
     valid_variants: set[str],
     timed_records: list[dict[str, Any]],
     cutoff_time_s: float,
+    unit_summary_path: Path | None = None,
 ) -> bool:
     """Add visible emergency orders to current_schedule.csv and put them first.
 
@@ -4124,7 +4161,9 @@ def _sync_visible_emergency_orders_to_current_schedule(
     emergency units are inserted at the front of current_schedule.csv and all
     unit_seq values are renumbered.  Existing emergency rows are moved to the
     front as well, so an earlier append-only schedule is corrected without
-    duplicating emergency units.
+    duplicating emergency units.  Completed emergency units from unit_summary.csv
+    are also counted, because GA can remove completed rows from current_schedule.csv
+    at later event boundaries.
     """
     schedule_path = Path(schedule_path)
     if not schedule_path.exists() or not schedule_path.is_file():
@@ -4185,9 +4224,13 @@ def _sync_visible_emergency_orders_to_current_schedule(
     visible_order_ids = set(visible_order_rank.keys())
 
     existing_unit_ids = [str(row[2]).strip() for row in padded_rows if len(row) > 2]
-    next_emergency_unit_number = _next_emergency_unit_number(existing_unit_ids)
+    completed_emergency_counts, completed_emergency_unit_ids = _read_completed_emergency_order_state_from_unit_summary(
+        unit_summary_path,
+        cutoff,
+    )
+    next_emergency_unit_number = _next_emergency_unit_number(existing_unit_ids + completed_emergency_unit_ids)
 
-    existing_emergency_counts: Counter[tuple[str, str]] = Counter()
+    existing_emergency_counts: Counter[tuple[str, str]] = Counter(completed_emergency_counts)
     for row in padded_rows:
         order_id = str(row[1]).strip() if len(row) > 1 else ""
         unit_id = str(row[2]).strip() if len(row) > 2 else ""
@@ -4427,6 +4470,7 @@ def _load_run_context_from_main_settings(main_settings_path: Path, simulation_ti
             valid_variants=valid_variants,
             timed_records=timed_records_for_schedule_sync,
             cutoff_time_s=segment_start_s,
+            unit_summary_path=_pathlist_path(pathlist, "on_going_run_unit_summary"),
         ):
             schedule = _read_current_schedule(schedule_path, valid_variants)
 
