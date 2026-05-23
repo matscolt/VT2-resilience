@@ -30,7 +30,7 @@
     "rescheduling_enabled":1,
     "reaction_enabled":1,
 
-    "fast_GA":1,
+    "fast_GA":0,
     "segment_time":0,
     "segment_interval":2.5,
     "random based disruptions": {
