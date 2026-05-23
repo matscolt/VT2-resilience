@@ -1,0 +1,8 @@
+{
+  "requested_unit_count": 9093,
+  "produced_unit_count": 9093,
+  "completed_good_units": 9093,
+  "disruptions_enabled": true,
+  "disruption_mode": 2,
+  "stop_reason": null
+}
