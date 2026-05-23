@@ -204,7 +204,7 @@ def main():
         #A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
         next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
         #break
-    input("change the disruptions file")
+    #input("change the disruptions file")
     run_idx = 0
     next_pct = 0
     max_idx = len(scenarios) * len(pressures) * len(ratios)* len(algos) * len(seeds)
@@ -309,7 +309,7 @@ def main():
             end = ti.perf_counter()
             print(f"[MAIN] segment wall time: {end - start}\n\n\n - - - - - \n")
             print(f"the simulation has run for {int(end - run_time_start)} seconds")
-            input("Press [ENTER] to continue the loop")
+            #input("Press [ENTER] to continue the loop")
         run_time_end = ti.perf_counter()
         print(f"\n\n--- RUN {run_idx} ---")
         print(f"Run time {run_time_end-run_time_start}")
