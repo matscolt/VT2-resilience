@@ -1,0 +1,5 @@
+material,requested_for_full_order,available_at_start,consumed_for_produced_units,remaining_after_run,unmet_for_full_order
+Bottom cover,9093,100000,9093,90907,0
+Fuse,9158,100000,9158,90842,0
+PCB,9093,100000,9093,90907,0
+Top cover,9093,100000,9093,90907,0

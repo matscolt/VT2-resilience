@@ -1,0 +1,30 @@
+{
+  "order_text": "1_1_1_4__scheduled_9239units__segment_from_560098__remaining_20units",
+  "expanded_order_sequence": [
+    "FUSE0",
+    "FUSE0",
+    "FUSE0",
+    "FUSE0",
+    "FUSE0",
+    "FUSE0",
+    "FUSE1",
+    "FUSE1",
+    "FUSE1",
+    "FUSE1",
+    "FUSE1",
+    "FUSE1",
+    "FUSE1",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2",
+    "FUSE2"
+  ],
+  "data_directory": "C:\\Users\\simmo\\OneDrive - Aalborg Universitet\\8. semester\\Projekt\\VS filer\\VT2-resilience\\production_line_sim\\data",
+  "output_directory": "C:\\Users\\simmo\\OneDrive - Aalborg Universitet\\8. semester\\Projekt\\VS filer\\VT2-resilience\\production_line_sim\\output\\main_22-05_22-04_0\\run_4\\results",
+  "created_at": "2026-05-22T22:29:52",
+  "main_settings_json": "C:\\Users\\simmo\\OneDrive - Aalborg Universitet\\8. semester\\Projekt\\VS filer\\VT2-resilience\\production_line_sim\\input\\main_22-05_22-04_0\\runs\\run_4\\main_settings.json",
+  "input_current_schedule": "C:\\Users\\simmo\\OneDrive - Aalborg Universitet\\8. semester\\Projekt\\VS filer\\VT2-resilience\\production_line_sim\\on_going\\main_22-05_22-04_0\\run_4\\current_schedule.csv"
+}
