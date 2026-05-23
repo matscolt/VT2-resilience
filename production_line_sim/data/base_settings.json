@@ -18,7 +18,11 @@
         "makespan": "?"
     },
     "seeds": {
-        "1": 1234
+        "1": 1234,
+	    "2": 2345,
+        "3": 3456,
+        "4": 4567,
+        "5": 5678
     },
     "sim_time [s]": 800000,
     "plan_time [s]": 576000,
@@ -30,7 +34,7 @@
     "segment_time":0,
     "segment_interval":2.5,
     "random based disruptions": {
-        "enabled": 0
+        "enabled": 2
     },
     "carriers": {
         "number of carriers": 8

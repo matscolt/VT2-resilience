@@ -201,7 +201,7 @@ def main():
     elif base_settings["reaction_enabled"] == 0:
         react = "Disabled"
     
-    if base_settings["random based disruptions"]["enabled"]==1:
+    if base_settings["random based disruptions"]["enabled"]==2:
         dis ="enabled"
         if base_settings["segment_time"]==1:
             warning= "Segment_time is enabled while disruptions also are enabled"
@@ -255,7 +255,8 @@ def main():
             return
 
         # takes wayyy too long to generate a gantt chart for each one
-        #A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
+        if base_settings["random based disruptions"]["enabled"]==2:
+            A_input.plot_disruption_gantt(disruption_dir,disruptionpath)
         next_pct = G_after_movie.progress_update(number, max_number, next_pct,action=action)
         #break
     #input("change the disruptions file")
