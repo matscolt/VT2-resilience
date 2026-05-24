@@ -389,7 +389,7 @@ def main():
     m = (total_time % 3600) // 60
     s = total_time % 60
     clock_time = f"{h:d}:{m:02d}:{s:02d}"if h > 0 else f"{m:02d}:{s:02d}"
-    print(f"TOTAL TIME RUNNING MAIN\n{clock_time}")
+    print(f"\nTOTAL TIME RUNNING MAIN\n{clock_time}")
     terminal_print_after(algo,react,dis,seg)
 
 if __name__ == "__main__":
