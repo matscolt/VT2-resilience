@@ -425,6 +425,82 @@ def plot_throughput_times(unit_data, graphfolder):
     print(f">> Generated {graphname}")
 
 
+
+def plot_cumulative_completed_units(unit_data, graphfolder):
+    print(">> Generating cumulative completed units plot!")
+
+    completion_times = []
+    for row in unit_data:
+        value = row.get("completion_time_s", row.get("completion_time", ""))
+        if value in ("", None):
+            continue
+        try:
+            completion_times.append(float(value))
+        except ValueError:
+            pass
+
+    if not completion_times:
+        print(">> No valid completion times found. Skipping cumulative completed units plot.")
+        return
+
+    completion_times.sort()
+    cumulative_units = list(range(1, len(completion_times) + 1))
+
+    graphname = "cumulative_completed_units.png"
+
+    plt.figure(figsize=(12, 6))
+    plt.step(completion_times, cumulative_units, where="post", linewidth=2, color="#1f77b4")
+    plt.xlabel("time [s]")
+    plt.ylabel("completed units [-]")
+    plt.title("cumulative completed units over time")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close()
+
+    print(f">> Generated {graphname}")
+
+
+def plot_order_lateness_boxplot(order_data, graphfolder):
+    print(">> Generating lateness box plot!")
+
+    lateness_values = []
+    for row in order_data:
+        value = row.get("lateness", "")
+        if value in ("", None):
+            continue
+        try:
+            lateness_values.append(float(value))
+        except ValueError:
+            pass
+
+    if not lateness_values:
+        print(">> No valid lateness data found. Skipping lateness box plot.")
+        return
+
+    graphname = "lateness_boxplot.png"
+
+    plt.figure(figsize=(8, 6))
+    plt.boxplot(
+        lateness_values,
+        patch_artist=True,
+        boxprops=dict(facecolor="#9ecae1", color="black"),
+        medianprops=dict(color="red", linewidth=1.5),
+        whiskerprops=dict(color="black"),
+        capprops=dict(color="black"),
+        flierprops=dict(marker="o", markerfacecolor="#1f77b4", markersize=4, markeredgecolor="black")
+    )
+    plt.axhline(y=0, linestyle="--", linewidth=1, color="black", label="Due date")
+    plt.xticks([1], ["orders"])
+    plt.ylabel("lateness [s]")
+    plt.title("distribution of order lateness")
+    plt.legend(loc="upper left")
+    plt.tight_layout()
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close()
+
+    print(f">> Generated {graphname}")
+
 def _priority_color(priority_value):
     """Map priority 1..5 to colors.
     1 = green, 2 = yellow-green, 3 = yellow, 4 = orange, 5 = red.
@@ -652,7 +728,7 @@ def main(starttime=time.perf_counter()):
     graph_folder = ppfolder / "graphs"
     graph_folder.mkdir(exist_ok=True)
 
-    """starttime_gantt = float(input("where do you want your gantt chart to start from? >>"))
+    starttime_gantt = float(input("where do you want your gantt chart to start from? >>"))
     endtime_gantt = float(input("where do you want your gantt chart to end from? >>"))
     if endtime_gantt - starttime_gantt <= 0:
         print("time invalid therefore skipping")
@@ -663,8 +739,14 @@ def main(starttime=time.perf_counter()):
     plot_throughput_times(unit_data, graph_folder)
     print("Time spent: " + str(time.perf_counter() - starttime))
 
+    plot_cumulative_completed_units(unit_data, graph_folder)
+    print("Time spent: " + str(time.perf_counter() - starttime))
+
     plot_order_lateness(order_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))"""
+    print("Time spent: " + str(time.perf_counter() - starttime))
+
+    plot_order_lateness_boxplot(order_data, graph_folder)
+    print("Time spent: " + str(time.perf_counter() - starttime))
 
     plot_station_utilization(station_summary, graph_folder)
 
