@@ -214,7 +214,8 @@ def main():
                 warning = "With segments disabled you will have problems with the GA while there are no disruptions"
         if base_settings["rescheduling_enabled"] == 0:
             if base_settings["segment_time"]==1:
-                seg = f"Enabled \nSegment interval: {base_settings["segment_interval"]}"
+                seg_set = base_settings["segment_interval"]
+                seg = f"Enabled \nSegment interval: {seg_set}"
 
     if warning is None:
         terminal_print(algo,react,dis,seg)
