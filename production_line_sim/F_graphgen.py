@@ -387,6 +387,61 @@ def plot_gantt(station_data, transport_data, graphfolder_dir, starttime_gantt, e
     print(f">> Generated {graphname2}")
 
 
+
+def _safe_filename(name: str) -> str:
+    return re.sub(r'[^A-Za-z0-9._-]+', '_', str(name)).strip('_')
+
+
+def plot_cumulative_completed_units_by_station(station_data, graphfolder):
+    """
+    Create one cumulative completed-units-over-time plot per station.
+
+    Uses station_schedule.csv because it contains the station_name and the exact
+    finish_time_s for each unit at each station. That is the most direct measure
+    of when a unit was completed at a station.
+    """
+    print(">> Generating cumulative completed units plots per station!")
+
+    station_rows = {}
+    for row in station_data:
+        station_name = row.get("station_name", "")
+        finish_val = row.get("finish_time_s", "")
+        if station_name in ("", None) or finish_val in ("", None):
+            continue
+        try:
+            finish_time = float(finish_val)
+        except ValueError:
+            continue
+        station_rows.setdefault(station_name, []).append(finish_time)
+
+    if not station_rows:
+        print(">> No valid station completion data found. Skipping station cumulative plots.")
+        return
+
+    station_folder = graphfolder / "cumulative_completed_units_by_station"
+    station_folder.mkdir(parents=True, exist_ok=True)
+
+    for station_name, finish_times in sorted(station_rows.items()):
+        if not finish_times:
+            continue
+
+        finish_times.sort()
+        cumulative_units = list(range(1, len(finish_times) + 1))
+
+        graphname = f"cumulative_completed_units_{_safe_filename(station_name)}.png"
+
+        plt.figure(figsize=(12, 6))
+        plt.step(finish_times, cumulative_units, where="post", linewidth=2, color="#1f77b4")
+        plt.xlabel("time [s]")
+        plt.ylabel("completed units [-]")
+        plt.title(f"cumulative completed units over time\n{station_name}")
+        plt.grid(True, linestyle="--", alpha=0.5)
+        plt.tight_layout()
+        plt.savefig(station_folder / graphname, dpi=200, bbox_inches="tight")
+        plt.close()
+
+    print(f">> Generated cumulative station plots in {station_folder}")
+
 def plot_throughput_times(unit_data, graphfolder):
     print(">> Generating throughput time plots!")
     units = [row["unit_id"] for row in unit_data]
@@ -903,6 +958,8 @@ def main(starttime=time.perf_counter()):
     print("Time spent: " + str(time.perf_counter() - starttime))
 
     plot_cumulative_completed_units(unit_data, graph_folder)
+    print("Time spent: " + str(time.perf_counter() - starttime))
+    plot_cumulative_completed_units_by_station(station_schedule, graph_folder)
     print("Time spent: " + str(time.perf_counter() - starttime))
 
     plot_order_lateness(order_data, graph_folder)
