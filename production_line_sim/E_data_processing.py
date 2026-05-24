@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -19,8 +20,21 @@ import pandas as pd
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "RESULTS" / "output"
 ON_GOING_DIR = Path(__file__).resolve().parent / "RESULTS" / "on_going"
+POST_PROCESSING_DIR = Path(__file__).resolve().parent / "RESULTS" / "post_processing"
+
 DAY_SECONDS = 8 * 60 * 60   # 8 hours per day
 WEEK_DAYS = 5               # 5 days per week
+
+# Order fitness settings
+ALPHA = 0.05
+BETA = 0.001
+GAMMA = 1.5
+DELTA = 1000
+TIME_SCALE = 60 * 60  # seconds -> hours
+
+# Output KPI filenames per layout
+LAYOUT_1_FILENAME = "KPIs_layout_2_2_5_2_2_2.csv"
+LAYOUT_2_FILENAME = "KPIs_layout_2_3_5_2_3_2.csv"
 
 
 # ============================================================
@@ -62,7 +76,7 @@ def seconds_to_week_day(seconds_value: float, day_seconds: float, week_days: int
 
     day_index = int(float(seconds_value) // day_seconds)
     week = day_index // week_days + 1
-    day = day_index + 1
+    day = day_index % week_days + 1
     return week, day
 
 
@@ -126,9 +140,14 @@ def select_main_folder(output_dir: Path) -> Path:
         print("Invalid selection. Please choose a valid number from the list.")
 
 
+def run_number(path: Path) -> int:
+    m = re.match(r"run_(\d+)$", path.name)
+    return int(m.group(1)) if m else 10**9
+
+
 def list_run_folders(main_output_dir: Path) -> List[Path]:
     runs = [p for p in main_output_dir.iterdir() if p.is_dir() and p.name.startswith("run_")]
-    runs.sort(key=lambda p: p.name)
+    runs.sort(key=run_number)
     return runs
 
 
@@ -147,6 +166,87 @@ def find_production_plan_file(main_name: str, run_name: str) -> Path:
     if len(plans) > 1:
         print(f"WARNING: Multiple production plans found in {run_dir}. Using: {plans[0].name}")
     return plans[0]
+
+
+def read_kpi_summary(kpi_path: Path) -> Dict[str, object]:
+    """Read a kpi_summary.csv key/value file into a dict."""
+    if not kpi_path.exists():
+        raise FileNotFoundError(f"Missing KPI file: {kpi_path}")
+
+    df = pd.read_csv(kpi_path, header=None)
+    if df.shape[1] < 2:
+        raise ValueError(f"KPI file does not look like a key/value csv: {kpi_path}")
+
+    keys = df.iloc[:, 0].astype(str).tolist()
+    values = df.iloc[:, 1].tolist()
+
+    record: Dict[str, object] = {}
+    for k, v in zip(keys, values):
+        try:
+            numeric_v = float(v)
+            if numeric_v.is_integer():
+                record[k] = int(numeric_v)
+            else:
+                record[k] = numeric_v
+        except Exception:
+            record[k] = v
+    return record
+
+
+def write_layout_kpi_csv(main_name: str, runs: List[Path], output_filename: str) -> Optional[Path]:
+    """
+    Build one layout KPI aggregation CSV.
+
+    Output shape:
+      - rows = KPI names
+      - columns = run names (run_1, run_2, ...)
+    """
+    if not runs:
+        print(f"WARNING: No runs available for {output_filename}. Skipping.")
+        return None
+
+    kpi_records = {}
+    for run_dir in runs:
+        kpi_path = run_dir / "results" / "kpi_summary.csv"
+        record = read_kpi_summary(kpi_path)
+        kpi_records[run_dir.name] = record
+
+    df = pd.DataFrame(kpi_records)
+    df.index.name = "kpi"
+
+    main_post_dir = POST_PROCESSING_DIR / main_name
+    main_post_dir.mkdir(parents=True, exist_ok=True)
+    out_path = main_post_dir / output_filename
+    df.to_csv(out_path)
+    return out_path
+
+
+def create_layout_kpi_csvs(main_name: str, runs: List[Path]) -> List[Path]:
+    """
+    Create two KPI CSVs for the selected main folder.
+
+    Assumption:
+      - first layout = first five runs in numeric order (typically run_1..run_5)
+      - second layout = next five runs in numeric order (typically run_6..run_10)
+    """
+    if not runs:
+        return []
+
+    ordered_runs = sorted(runs, key=run_number)
+    layout_1_runs = ordered_runs[:5]
+    layout_2_runs = ordered_runs[5:10]
+
+    created: List[Path] = []
+
+    out_1 = write_layout_kpi_csv(main_name, layout_1_runs, LAYOUT_1_FILENAME)
+    if out_1 is not None:
+        created.append(out_1)
+
+    out_2 = write_layout_kpi_csv(main_name, layout_2_runs, LAYOUT_2_FILENAME)
+    if out_2 is not None:
+        created.append(out_2)
+
+    return created
 
 
 def extract_plan_metadata(plan_df: pd.DataFrame) -> pd.DataFrame:
@@ -249,6 +349,30 @@ def build_actual_variant_summary(unit_df: pd.DataFrame, order_col: str, variant_
     return pd.DataFrame(rows)
 
 
+def compute_order_fitness_row(due_date: object, priority: object, finish_time: object) -> Optional[float]:
+    """Compute per-order fitness contribution using the provided GA objective structure."""
+    if pd.isna(due_date) or pd.isna(priority) or pd.isna(finish_time):
+        return None
+
+    due = float(due_date)
+    priority_int = max(1, int(float(priority)))
+    completion = float(finish_time)
+
+    w = float(priority_int) ** float(GAMMA)
+    lateness_s = completion - due
+    tardiness_s = max(0.0, lateness_s)
+    earliness_s = max(0.0, -lateness_s)
+
+    T_hours = tardiness_s / float(TIME_SCALE)
+    E_hours = earliness_s / float(TIME_SCALE)
+
+    exp_term = math.exp(float(ALPHA) * T_hours) - 1.0
+    weighted_exp_tardiness = float(DELTA) * w * exp_term
+    weighted_earliness_reward = float(BETA) * w * E_hours
+
+    return weighted_exp_tardiness - weighted_earliness_reward
+
+
 def validate_summary(summary: pd.DataFrame) -> None:
     if summary["order_id"].duplicated().any():
         dupes = summary.loc[summary["order_id"].duplicated(), "order_id"].tolist()
@@ -272,6 +396,7 @@ def build_order_summary(results_dir: Path, main_name: str, run_name: str) -> Pat
     Create order_summary.csv using:
       - output/<main>/run_x/results/unit_summary.csv
       - on_going/<main>/run_x/production_plan*.csv
+    Also adds a per-order fitness column.
     """
     unit_path = results_dir / "unit_summary.csv"
     if not unit_path.exists():
@@ -360,6 +485,12 @@ def build_order_summary(results_dir: Path, main_name: str, run_name: str) -> Pat
     summary["finished_week"] = finished_week_day.apply(lambda x: x[0])
     summary["finished_day"] = finished_week_day.apply(lambda x: x[1])
 
+    # Per-order fitness contribution
+    summary["fitness"] = summary.apply(
+        lambda row: compute_order_fitness_row(row["due date"], row["priority"], row["finish_time"]),
+        axis=1,
+    )
+
     final_cols = [
         "order_id",
         "due date",
@@ -367,6 +498,7 @@ def build_order_summary(results_dir: Path, main_name: str, run_name: str) -> Pat
         "finish_time",
         "through_put_time",
         "lateness",
+        "fitness",
         "priority",
         "variant0",
         "quantity0",
@@ -408,7 +540,7 @@ def main() -> None:
     print(f"\nProcessing main folder: {main_name}")
     print(f"Found {len(runs)} run folder(s).")
 
-    created = []
+    created_order_summaries: List[Path] = []
     for run_dir in runs:
         results_dir = run_dir / "results"
         if not results_dir.exists():
@@ -416,12 +548,17 @@ def main() -> None:
             continue
         try:
             out_path = build_order_summary(results_dir, main_name=main_name, run_name=run_dir.name)
-            created.append(out_path)
-            print(f"Created: {out_path}")
+            created_order_summaries.append(out_path)
+            print(f"Created order summary: {out_path}")
         except Exception as exc:
-            print(f"ERROR in {run_dir}: {exc}")
+            print(f"ERROR building order summary in {run_dir}: {exc}")
 
-    print(f"\nDone. Created {len(created)} order_summary.csv file(s) in main folder: {main_name}")
+    created_kpi_csvs = create_layout_kpi_csvs(main_name, runs)
+    for path in created_kpi_csvs:
+        print(f"Created KPI summary: {path}")
+
+    print(f"\nDone. Created {len(created_order_summaries)} order_summary.csv file(s) in main folder: {main_name}")
+    print(f"Created {len(created_kpi_csvs)} layout KPI CSV file(s) in post_processing/{main_name}")
 
 
 if __name__ == "__main__":
