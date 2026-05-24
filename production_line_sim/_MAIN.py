@@ -208,7 +208,7 @@ def main():
     elif base_settings["random based disruptions"]["enabled"]==0:
         dis ="Disabled"
         if base_settings["segment_time"]==1:
-            seg = f"Enabled \nSegment interval: {base_settings["segment_interval"]}"
+            seg = f"Enabled \nSegment interval: {base_settings['segment_interval']}"
         if base_settings["rescheduling_enabled"] == 1:
             if base_settings["segment_time"]==0:
                 warning = "With segments disabled you will have problems with the GA while there are no disruptions"
