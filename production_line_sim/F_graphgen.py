@@ -126,7 +126,7 @@ def prompt_for_run_folder(main_dir: Path, runs: List[Path]) -> Path:
         print("Invalid selection. Enter a number from the list or paste the folder name.")
 
 
-def prompt_for_compare_main_folders(output_dir: Path, count: int = 3) -> List[Path]:
+def prompt_for_compare_main_folders(output_dir: Path, count: int = 5) -> List[Path]:
     """Interactively select multiple distinct main folders for comparison."""
     outputs = list_output_runs(output_dir)
     if len(outputs) < count:
@@ -1304,17 +1304,121 @@ def _calc_throughput_rate_interval_series(unit_data):
     return bin_days, bin_rates
 
 
-def plot_compare_throughput_rate_moving(unit_data_by_main, graphfolder, run_name):
+def _load_throughput_rate_per_hour(resultfolder: Path):
+    candidates = [
+        Path(resultfolder) / "kpi_summary.csv",
+        Path(resultfolder) / "kpi_summary.json",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            if path.suffix.lower() == ".json":
+                with path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and "throughput_rate_per_hour" in data:
+                    return float(data["throughput_rate_per_hour"])
+                continue
+
+            with path.open("r", newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+
+            for row in rows:
+                if "throughput_rate_per_hour" in row and row["throughput_rate_per_hour"] not in ("", None):
+                    return float(row["throughput_rate_per_hour"])
+                lower_map = {str(k).strip().lower(): v for k, v in row.items()}
+                for key_name in ("kpi", "metric", "name"):
+                    if key_name in lower_map and str(lower_map[key_name]).strip().lower() == "throughput_rate_per_hour":
+                        for value_name in ("value", "val", "result"):
+                            if value_name in lower_map and lower_map[value_name] not in ("", None):
+                                return float(lower_map[value_name])
+
+            raw = path.read_text(encoding="utf-8-sig")
+            for line in raw.splitlines():
+                if "throughput_rate_per_hour" in line:
+                    parts = [p.strip() for p in line.split(",") if p.strip() != ""]
+                    for part in reversed(parts):
+                        try:
+                            return float(part)
+                        except ValueError:
+                            pass
+        except Exception:
+            continue
+    return None
+
+
+
+def _load_disruption_events(mainfolder: Path, run_name: str, resultfolder: Path):
+    candidates = [
+        Path(resultfolder) / "disruption_history.csv",
+        Path(resultfolder) / "disruption_his.csv",
+        Path(resultfolder).parent / "disruption_history.csv",
+        Path(resultfolder).parent / "disruption_his.csv",
+        RESULTSDIR / "on_going" / mainfolder.name / run_name / "disruption_his.csv",
+        RESULTSDIR / "on_going" / mainfolder.name / run_name / "disruption_history.csv",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+            events = []
+            for idx, row in enumerate(rows):
+                start_raw = row.get("start_time_s", row.get("start_time", ""))
+                end_raw = row.get("end_time_s", row.get("end_time", ""))
+                if start_raw in ("", None) or end_raw in ("", None):
+                    continue
+                try:
+                    start_val = float(start_raw)
+                    end_val = float(end_raw)
+                except ValueError:
+                    continue
+                events.append({
+                    "start": start_val,
+                    "end": end_val,
+                    "label": row.get("disruption_name", row.get("event_name", row.get("disruption", f"Disruption {idx + 1}"))),
+                })
+            return events
+        except Exception:
+            continue
+    return []
+
+
+
+def _add_disruption_lines(disruptions, color_offset=0):
+    for idx, event in enumerate(disruptions):
+        color = plt.cm.tab20((color_offset + idx) % 20)
+        start_day = _seconds_to_sim_days(event["start"])
+        end_day = _seconds_to_sim_days(event["end"])
+        plt.axvline(x=start_day, color=color, linestyle="-", linewidth=1.2, alpha=0.9)
+        plt.axvline(x=end_day, color=color, linestyle="--", linewidth=1.2, alpha=0.9)
+
+
+def plot_compare_throughput_rate_moving(compare_entries, graphfolder, run_name):
     print(f">> Generating compare moving throughput rate plot for {run_name}!")
     graphname = "compare_throughput_rate_moving.png"
 
     plt.figure(figsize=(12, 6))
     plotted = False
-    for main_name, unit_data in unit_data_by_main:
-        x_days, y_values = _calc_throughput_rate_moving_series(unit_data)
+
+    for entry in compare_entries[:2]:
+        avg_rate = entry.get("avg_rate")
+        if avg_rate is None:
+            continue
+        plt.axhline(y=avg_rate, linewidth=1.8, linestyle=":", label=f"{entry['main_name']} average")
+        plotted = True
+
+    color_offset = 0
+    for entry in compare_entries[2:]:
+        x_days, y_values = _calc_throughput_rate_moving_series(entry["unit_data"])
         if not x_days:
             continue
-        plt.plot(x_days, y_values, linewidth=0.8, label=main_name)
+        plt.plot(x_days, y_values, linewidth=0.8, label=entry["main_name"])
+        _add_disruption_lines(entry.get("disruptions", []), color_offset=color_offset)
+        color_offset += len(entry.get("disruptions", []))
         plotted = True
 
     if not plotted:
@@ -1334,17 +1438,28 @@ def plot_compare_throughput_rate_moving(unit_data_by_main, graphfolder, run_name
 
 
 
-def plot_compare_throughput_rate_interval(unit_data_by_main, graphfolder, run_name):
+def plot_compare_throughput_rate_interval(compare_entries, graphfolder, run_name):
     print(f">> Generating compare interval throughput rate plot for {run_name}!")
     graphname = "compare_throughput_rate_interval.png"
 
     plt.figure(figsize=(12, 6))
     plotted = False
-    for main_name, unit_data in unit_data_by_main:
-        x_days, y_values = _calc_throughput_rate_interval_series(unit_data)
+
+    for entry in compare_entries[:2]:
+        avg_rate = entry.get("avg_rate")
+        if avg_rate is None:
+            continue
+        plt.axhline(y=avg_rate, linewidth=1.8, linestyle=":", label=f"{entry['main_name']} average")
+        plotted = True
+
+    color_offset = 0
+    for entry in compare_entries[2:]:
+        x_days, y_values = _calc_throughput_rate_interval_series(entry["unit_data"])
         if not x_days:
             continue
-        plt.step(x_days, y_values, where="post", linewidth=2, label=main_name)
+        plt.step(x_days, y_values, where="post", linewidth=2, label=entry["main_name"])
+        _add_disruption_lines(entry.get("disruptions", []), color_offset=color_offset)
+        color_offset += len(entry.get("disruptions", []))
         plotted = True
 
     if not plotted:
@@ -1398,12 +1513,12 @@ def generate_compare_graphs(mainfolders, post_processing_folder, starttime):
     compare_root = post_processing_folder / "COMPARE"
     compare_root.mkdir(parents=True, exist_ok=True)
 
-    run_maps = {}
+    run_maps = []
     common_runs = None
     for mainfolder in mainfolders:
         runs = list_run_folders(mainfolder)
         run_map = {run.name: run / "results" for run in runs if (run / "results").exists()}
-        run_maps[mainfolder.name] = run_map
+        run_maps.append((mainfolder, run_map))
         run_names = set(run_map.keys())
         common_runs = run_names if common_runs is None else (common_runs & run_names)
 
@@ -1419,18 +1534,26 @@ def generate_compare_graphs(mainfolders, post_processing_folder, starttime):
         graph_folder = compare_folder / "graphs"
         graph_folder.mkdir(exist_ok=True)
 
-        unit_data_by_main = []
-        for main_name, run_map in run_maps.items():
+        compare_entries = []
+        cumulative_entries = []
+        for mainfolder, run_map in run_maps:
             resultfolder = run_map[run_name]
             station_schedule, station_summary, transport_data, unit_data, material_data, order_data = load_all_data(resultfolder)
-            unit_data_by_main.append((main_name, unit_data))
+            compare_entries.append({
+                "main_name": mainfolder.name,
+                "unit_data": unit_data,
+                "avg_rate": _load_throughput_rate_per_hour(resultfolder),
+                "disruptions": _load_disruption_events(mainfolder, run_name, resultfolder),
+            })
+            cumulative_entries.append((mainfolder.name, unit_data))
 
-        plot_compare_throughput_rate_moving(unit_data_by_main, graph_folder, run_name)
+        plot_compare_throughput_rate_moving(compare_entries, graph_folder, run_name)
         print("Time spent: " + str(time.perf_counter() - starttime))
-        plot_compare_throughput_rate_interval(unit_data_by_main, graph_folder, run_name)
+        plot_compare_throughput_rate_interval(compare_entries, graph_folder, run_name)
         print("Time spent: " + str(time.perf_counter() - starttime))
-        plot_compare_cumulative_completed_units(unit_data_by_main, graph_folder, run_name)
+        plot_compare_cumulative_completed_units(cumulative_entries, graph_folder, run_name)
         print("Time spent: " + str(time.perf_counter() - starttime))
+
 
 
 def main(starttime=time.perf_counter()):
@@ -1494,9 +1617,9 @@ def main(starttime=time.perf_counter()):
             print("Time spent: " + str(time.perf_counter() - starttime))
             plot_station_availability(station_summary, graph_folder)
 
-    compare_choice = input("Do you want to compare three mains? [y/N] >> ").strip().lower()
+    compare_choice = input("Do you want to compare five mains? [y/N] >> ").strip().lower()
     if compare_choice in ("y", "yes"):
-        compare_mainfolders = prompt_for_compare_main_folders(output_dir, count=3)
+        compare_mainfolders = prompt_for_compare_main_folders(output_dir, count=5)
         generate_compare_graphs(compare_mainfolders, post_processing_folder, starttime)
 
 
