@@ -708,6 +708,13 @@ def plot_order_lateness(order_data, graphfolder):
 
 
 
+
+def _apply_fitness_symlog(values):
+    """Apply a symmetric log y-scale so fitness plots can handle negative, zero, and positive values."""
+    nonzero = [abs(float(v)) for v in values if float(v) != 0.0]
+    linthresh = min(nonzero) / 10.0 if nonzero else 1.0
+    plt.yscale("symlog", linthresh=linthresh)
+
 def _plot_order_fitness_variant(valid_rows, graphfolder, graphname, title):
     if not valid_rows:
         print(f">> No valid fitness data found. Skipping {graphname}.")
@@ -759,7 +766,8 @@ def _plot_order_fitness_variant(valid_rows, graphfolder, graphname, title):
         labels=orders[::step],
         rotation=90
     )
-    plt.ylabel("Fitness [-]")
+    _apply_fitness_symlog(fitness_values)
+    plt.ylabel("Fitness [-] (log)")
     plt.title(title)
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
@@ -861,8 +869,9 @@ def plot_order_fitness_boxplot(order_data, graphfolder):
         flierprops=dict(marker="o", markerfacecolor="#31a354", markersize=4, markeredgecolor="black")
     )
     plt.axhline(y=0, linestyle="--", linewidth=1, color="black", label="Zero fitness")
+    _apply_fitness_symlog(fitness_values)
     plt.xticks([1], ["orders"])
-    plt.ylabel("Fitness [-]")
+    plt.ylabel("Fitness [-] (log)")
     plt.title("Distribution of order fitness")
     plt.legend(loc="upper left")
     plt.tight_layout()
