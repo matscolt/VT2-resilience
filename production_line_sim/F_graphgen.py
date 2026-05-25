@@ -430,9 +430,9 @@ def plot_cumulative_completed_units_by_station(station_data, graphfolder):
 
         plt.figure(figsize=(12, 6))
         plt.step(finish_times, cumulative_units, where="post", linewidth=2, color="#1f77b4")
-        plt.xlabel("time [s]")
-        plt.ylabel("completed units [-]")
-        plt.title(f"cumulative completed units over time\n{station_name}")
+        plt.xlabel("Time [s]")
+        plt.ylabel("Completed units [-]")
+        plt.title(f"Cumulative completed units over time\n{station_name}")
         plt.grid(True, linestyle="--", alpha=0.5)
         plt.tight_layout()
         plt.savefig(station_folder / graphname, dpi=200, bbox_inches="tight")
@@ -469,8 +469,8 @@ def plot_throughput_times(unit_data, graphfolder):
         labels=units[::step],
         rotation=90
     )
-    plt.ylabel("throughput time [s]")
-    plt.title("throughput time per unit")
+    plt.ylabel("Throughput time [s]")
+    plt.title("Throughput time per unit")
 
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
@@ -503,9 +503,9 @@ def plot_cumulative_completed_units(unit_data, graphfolder):
 
     plt.figure(figsize=(12, 6))
     plt.step(completion_times, cumulative_units, where="post", linewidth=2, color="#1f77b4")
-    plt.xlabel("time [s]")
-    plt.ylabel("completed units [-]")
-    plt.title("cumulative completed units over time")
+    plt.xlabel("Time [s]")
+    plt.ylabel("Completed units [-]")
+    plt.title("Cumulative completed units over time")
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
@@ -626,7 +626,7 @@ def _plot_order_lateness_variant(valid_rows, graphfolder, graphname, title):
         rotation=90
     )
 
-    plt.ylabel("lateness [h]")
+    plt.ylabel("Lateness [h]")
     plt.title(title)
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
@@ -689,21 +689,21 @@ def plot_order_lateness(order_data, graphfolder):
         by_order_id,
         graphfolder,
         graphname="order_lateness.png",
-        title="lateness per order (sorted by order id)"
+        title="Lateness per order (sorted by order id)"
     )
 
     _plot_order_lateness_variant(
         by_due_date,
         graphfolder,
         graphname="order_lateness_due_date.png",
-        title="lateness per order (sorted by due date)"
+        title="Lateness per order (sorted by due date)"
     )
 
     _plot_order_lateness_variant(
         by_lateness,
         graphfolder,
         graphname="order_lateness_lateness.png",
-        title="lateness per order (sorted by lateness)"
+        title="Lateness per order (sorted by lateness)"
     )
 
 
@@ -759,7 +759,7 @@ def _plot_order_fitness_variant(valid_rows, graphfolder, graphname, title):
         labels=orders[::step],
         rotation=90
     )
-    plt.ylabel("fitness [-]")
+    plt.ylabel("Fitness [-]")
     plt.title(title)
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
@@ -818,19 +818,19 @@ def plot_order_fitness(order_data, graphfolder):
         by_order_id,
         graphfolder,
         graphname="order_fitness.png",
-        title="fitness per order (sorted by order id)"
+        title="Fitness per order (sorted by order id)"
     )
     _plot_order_fitness_variant(
         by_due_date,
         graphfolder,
         graphname="order_fitness_due_date.png",
-        title="fitness per order (sorted by due date)"
+        title="Fitness per order (sorted by due date)"
     )
     _plot_order_fitness_variant(
         by_fitness,
         graphfolder,
         graphname="order_fitness_fitness.png",
-        title="fitness per order (sorted by fitness)"
+        title="Fitness per order (sorted by fitness)"
     )
 
 
@@ -862,8 +862,8 @@ def plot_order_fitness_boxplot(order_data, graphfolder):
     )
     plt.axhline(y=0, linestyle="--", linewidth=1, color="black", label="Zero fitness")
     plt.xticks([1], ["orders"])
-    plt.ylabel("fitness [-]")
-    plt.title("distribution of order fitness")
+    plt.ylabel("Fitness [-]")
+    plt.title("Distribution of order fitness")
     plt.legend(loc="upper left")
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
