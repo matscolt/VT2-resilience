@@ -1,0 +1,49 @@
+﻿disruption_type,estimated_duration,station_id,efficiency_loss,start_time,end_time
+Bottom Cover Misaligned,2288.0,1.1,0.0,3222.0,5047.0
+emergency_order,0.0,,0.0,3485.0,
+emergency_order,0.0,,0.0,7501.0,
+Misaligned Material,10440.0,3.1,0.0,21619.0,28413.0
+emergency_order,0.0,,0.0,29495.0,
+PLC Failure,3312.0,5,0.0,51736.0,54518.0
+emergency_order,0.0,,0.0,100454.0,
+emergency_order,0.0,,0.0,107503.0,
+Drill To Dull,9152.0,2.1,0.0,109341.0,116770.0
+emergency_order,0.0,,0.0,115644.0,
+efficiency_loss,0.0,2,54.0,122277.0,122849.0
+efficiency_loss,0.0,6.1,66.0,123324.0,123713.0
+efficiency_loss,0.0,4,65.0,127539.0,128285.0
+inspection_failure,0.0,,0.0,128703.0,
+efficiency_loss,0.0,2.1,66.0,132863.0,133505.0
+emergency_order,0.0,,0.0,133103.0,
+Top Cover Misaligned,2288.0,5.1,0.0,135439.0,137029.0
+efficiency_loss,0.0,6,58.0,158683.0,159073.0
+emergency_order,0.0,,0.0,159601.0,
+efficiency_loss,0.0,5,30.0,188066.0,189493.0
+Top Cover Misaligned,2288.0,5,0.0,204218.0,206235.0
+Top Cover Stuck,2392.0,5,0.0,221415.0,223597.0
+inspection_failure,0.0,,0.0,224019.0,
+efficiency_loss,0.0,1.1,83.0,247608.0,248541.0
+Drill Broke,20800.0,2.1,0.0,262509.0,276870.0
+efficiency_loss,0.0,4.1,71.0,266331.0,267005.0
+Bottom Cover Stuck,2392.0,1.1,0.0,276179.0,278153.0
+Camera Dirty,2496.0,4,0.0,295888.0,297754.0
+inspection_failure,0.0,,0.0,300700.0,
+Camera Dirty,2496.0,4.1,0.0,331900.0,333787.0
+emergency_order,0.0,,0.0,335318.0,
+emergency_order,0.0,,0.0,349359.0,
+Bottom Cover Stuck,2392.0,1,0.0,351754.0,353776.0
+Misaligned Material,10440.0,3.2,0.0,392144.0,398558.0
+efficiency_loss,0.0,5.1,38.0,393581.0,394614.0
+efficiency_loss,0.0,5.1,41.0,396121.0,397438.0
+efficiency_loss,0.0,5,31.0,396381.0,397997.0
+Misaligned Material,10440.0,3.4,0.0,407653.0,413374.0
+Drill To Dull,9152.0,2,0.0,443615.0,451451.0
+emergency_order,0.0,,0.0,449342.0,
+PLC Failure,3312.0,4,0.0,456640.0,459623.0
+efficiency_loss,0.0,4,24.0,502220.0,502957.0
+PLC Failure,3312.0,1,0.0,504274.0,507286.0
+Top Cover Stuck,2392.0,5.1,0.0,519102.0,521207.0
+Misaligned Material,10440.0,3.3,0.0,521939.0,529785.0
+PLC Failure,3312.0,2.1,0.0,550069.0,552813.0
+inspection_failure,0.0,,0.0,560880.0,
+Bottom Cover Misaligned,2288.0,1,0.0,568692.0,570325.0

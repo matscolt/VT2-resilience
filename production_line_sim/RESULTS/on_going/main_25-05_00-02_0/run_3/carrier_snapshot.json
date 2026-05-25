@@ -1,0 +1,9 @@
+{
+    "snapshot_time_s": 72000.0,
+    "max_units_in_system": 16,
+    "available_system_slots": 0,
+    "occupied_carriers": 16,
+    "future_cart_return_times_s": [
+        72007.6
+    ]
+}
