@@ -151,9 +151,7 @@ def find_results_folder(
             chosen_main = candidates[0][2]
 
     runs = list_run_folders(chosen_main)
-    chosen_run = prompt_for_run_folder(chosen_main, runs)
-
-    return chosen_main, chosen_run
+    return chosen_main, runs
 
 
 def clear_folder(folder: Path):
@@ -525,7 +523,7 @@ def plot_order_lateness_boxplot(order_data, graphfolder):
         if value in ("", None):
             continue
         try:
-            lateness_values.append(float(value))
+            lateness_values.append(float(value) / 3600.0)
         except ValueError:
             pass
 
@@ -547,7 +545,7 @@ def plot_order_lateness_boxplot(order_data, graphfolder):
     )
     plt.axhline(y=0, linestyle="--", linewidth=1, color="black", label="Due date")
     plt.xticks([1], ["orders"])
-    plt.ylabel("lateness [s]")
+    plt.ylabel("lateness [h]")
     plt.title("distribution of order lateness")
     plt.legend(loc="upper left")
     plt.tight_layout()
@@ -582,7 +580,7 @@ def _plot_order_lateness_variant(valid_rows, graphfolder, graphname, title):
         return
 
     orders = [row["order_id"] for row in valid_rows]
-    lateness = [row["lateness"] for row in valid_rows]
+    lateness = [row["lateness"] / 3600.0 for row in valid_rows]
     priorities = [row.get("priority") for row in valid_rows]
     avg_lateness = sum(lateness) / len(lateness)
     colors = [_priority_color(p) for p in priorities]
@@ -603,7 +601,7 @@ def _plot_order_lateness_variant(valid_rows, graphfolder, graphname, title):
         linestyle=":",
         linewidth=1,
         color="blue",
-        label=f"Average lateness = {avg_lateness:.2f} s"
+        label=f"Average lateness = {avg_lateness:.2f} h"
     )
 
     legend_handles = [
@@ -615,7 +613,7 @@ def _plot_order_lateness_variant(valid_rows, graphfolder, graphname, title):
     ]
     plt.legend(handles=legend_handles + [
         plt.Line2D([0], [0], color="black", linestyle="-", linewidth=1, label="Due date"),
-        plt.Line2D([0], [0], color="blue", linestyle=":", linewidth=1, label=f"Average lateness = {avg_lateness:.2f} s"),
+        plt.Line2D([0], [0], color="blue", linestyle=":", linewidth=1, label=f"Average lateness = {avg_lateness:.2f} h"),
     ], loc="lower left")
 
     max_labels = 30
@@ -628,7 +626,7 @@ def _plot_order_lateness_variant(valid_rows, graphfolder, graphname, title):
         rotation=90
     )
 
-    plt.ylabel("lateness [s]")
+    plt.ylabel("lateness [h]")
     plt.title(title)
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
@@ -925,54 +923,111 @@ def plot_station_utilization(station_data, graphfolder):
     print(f">> Generated {graphname}")
 
 
+
+def plot_station_availability(station_data, graphfolder):
+    print(">> Generating station availability!")
+    graphname = "Station_availability.png"
+
+    stations = [row["station_name"] for row in station_data]
+    times = [float(row["availability"]) * 100 for row in station_data]
+
+    lower = 40
+    higher = 80
+
+    def color_for(u):
+        if u < lower:
+            return "#d62728"
+        elif u < higher:
+            return "#fceb31"
+        else:
+            return "#2ca02c"
+
+    colors = [color_for(u) for u in times]
+
+    fig, ax = plt.subplots(figsize=(9, max(3, 0.5 * len(stations))))
+    bars = ax.barh(stations, times, color=colors)
+
+    ax.set_xlabel("Availability [%]")
+    ax.set_title("Station availability")
+
+    try:
+        ax.bar_label(bars, labels=[f"{t:.1f}%" for t in times], padding=3)
+    except AttributeError:
+        for bar, val in zip(bars, times):
+            ax.text(
+                val + 1,
+                bar.get_y() + bar.get_height() / 2,
+                f"{val:.1f}%",
+                va="center", ha="left", fontsize=9
+            )
+
+    right = max(times) if times else 1
+    ax.set_xlim(0, right * 1.15)
+
+    legend_handles = [
+        mpatches.Patch(color="#d62728", label=f"Low (<{lower}%)"),
+        mpatches.Patch(color="#fceb31", label=f"Medium ({lower}–{higher}%)"),
+        mpatches.Patch(color="#2ca02c", label=f"High (≥{higher}%)"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower right")
+
+    plt.tight_layout()
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f">> Generated {graphname}")
+
 def main(starttime=time.perf_counter()):
     output_dir = RESULTSDIR / "output"
-    mainfolder, runfolder = find_results_folder(output_dir)
-    resultfolder = runfolder / "results"
-    chosenrun = runfolder.name
+    mainfolder, runs = find_results_folder(output_dir)
 
     post_processing_folder = RESULTSDIR / "post_processing"
     post_processing_folder.mkdir(parents=True, exist_ok=True)
-
     mainfoldername = str(mainfolder).split("\\")[-1]
-    ppfolder = post_processing_folder / mainfoldername / chosenrun
-    ppfolder.mkdir(parents=True, exist_ok=True)
 
-    print(f"placing graphs and so on inside {mainfoldername}")
-    clear_folder(ppfolder)
+    for chosenrun in runs:
+        resultfolder = chosenrun / "results"
+        chosenrun = chosenrun.name
+        print(f"----creating graphs for {chosenrun}----")
+        ppfolder = post_processing_folder / mainfoldername / chosenrun
+        ppfolder.mkdir(parents=True, exist_ok=True)
 
-    station_schedule, station_summary, transport_data, unit_data, material_data, order_data = load_all_data(resultfolder)
+        print(f"placing graphs and so on inside {mainfoldername}")
+        clear_folder(ppfolder)
 
-    graph_folder = ppfolder / "graphs"
-    graph_folder.mkdir(exist_ok=True)
+        station_schedule, station_summary, transport_data, unit_data, material_data, order_data = load_all_data(resultfolder)
 
-    starttime_gantt = float(input("where do you want your gantt chart to start from? >>"))
-    endtime_gantt = float(input("where do you want your gantt chart to end from? >>"))
-    if endtime_gantt - starttime_gantt <= 0:
-        print("time invalid therefore skipping")
-    else:
-        plot_gantt(station_schedule, transport_data, graph_folder, starttime_gantt, endtime_gantt)
+        graph_folder = ppfolder / "graphs"
+        graph_folder.mkdir(exist_ok=True)
+
+        starttime_gantt =0 #float(input("where do you want your gantt chart to start from? >>"))
+        endtime_gantt = 0  #float(input("where do you want your gantt chart to end from? >>"))
+        if endtime_gantt - starttime_gantt <= 0:
+            print("time invalid therefore skipping")
+        else:
+            plot_gantt(station_schedule, transport_data, graph_folder, starttime_gantt, endtime_gantt)
+            print("Time spent: " + str(time.perf_counter() - starttime))
+
+        plot_throughput_times(unit_data, graph_folder)
         print("Time spent: " + str(time.perf_counter() - starttime))
 
-    plot_throughput_times(unit_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_cumulative_completed_units(unit_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_cumulative_completed_units_by_station(station_schedule, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
 
-    plot_cumulative_completed_units(unit_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
-    plot_cumulative_completed_units_by_station(station_schedule, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_order_lateness(order_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
 
-    plot_order_lateness(order_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_order_lateness_boxplot(order_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
 
-    plot_order_lateness_boxplot(order_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
-
-    plot_order_fitness(order_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
-    plot_order_fitness_boxplot(order_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
-    plot_station_utilization(station_summary, graph_folder)
+        plot_order_fitness(order_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_order_fitness_boxplot(order_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_station_utilization(station_summary, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_station_availability(station_summary, graph_folder)
 
 
 if __name__ == "__main__":
