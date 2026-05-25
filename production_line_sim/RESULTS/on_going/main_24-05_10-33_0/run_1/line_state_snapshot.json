@@ -1,0 +1,514 @@
+{
+    "snapshot_time_s": 541761.0,
+    "max_units_in_system": 16,
+    "processing_units": [
+        {
+            "unit_id": "U5888",
+            "order_id": "235",
+            "variant": "FUSE1",
+            "root_index": 38,
+            "attempt": 1,
+            "first_arrival_time_s": 541295.9460093143,
+            "first_start_time_s": 541295.9460093143,
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 4
+            },
+            "chosen_route_stage_count": 3,
+            "station_index": 4,
+            "station_name": "Station 3: Robot cell",
+            "arrival_time_s": 541390.9460093143,
+            "original_start_time_s": 541628.9838629845,
+            "remaining_process_time_s": 173.5838629845166,
+            "remaining_base_process_time_s": 173.5838629845167,
+            "queue_length_on_arrival": 0
+        },
+        {
+            "unit_id": "U5890",
+            "order_id": "235",
+            "variant": "FUSE1",
+            "root_index": 40,
+            "attempt": 1,
+            "first_arrival_time_s": 541328.7460093142,
+            "first_start_time_s": 541328.7460093142,
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 5
+            },
+            "chosen_route_stage_count": 3,
+            "station_index": 5,
+            "station_name": "Station 3.1: Robot cell",
+            "arrival_time_s": 541445.9460093143,
+            "original_start_time_s": 541588.1460093142,
+            "remaining_process_time_s": 132.74600931423265,
+            "remaining_base_process_time_s": 132.74600931423254,
+            "queue_length_on_arrival": 0
+        },
+        {
+            "unit_id": "U5891",
+            "order_id": "235",
+            "variant": "FUSE1",
+            "root_index": 41,
+            "attempt": 1,
+            "first_arrival_time_s": 541418.7838629845,
+            "first_start_time_s": 541418.7838629845,
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 6
+            },
+            "chosen_route_stage_count": 3,
+            "station_index": 6,
+            "station_name": "Station 3.2: Robot cell",
+            "arrival_time_s": 541573.7838629845,
+            "original_start_time_s": 541614.9838629846,
+            "remaining_process_time_s": 159.58386298452933,
+            "remaining_base_process_time_s": 159.58386298452945,
+            "queue_length_on_arrival": 0
+        },
+        {
+            "unit_id": "U5884",
+            "order_id": "235",
+            "variant": "FUSE0",
+            "root_index": 34,
+            "attempt": 1,
+            "first_arrival_time_s": 540990.3460093142,
+            "first_start_time_s": 540990.3460093142,
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 7
+            },
+            "chosen_route_stage_count": 3,
+            "station_index": 7,
+            "station_name": "Station 3.3: Robot cell",
+            "arrival_time_s": 541145.7838629845,
+            "original_start_time_s": 541566.5460093142,
+            "remaining_process_time_s": 49.14600931423365,
+            "remaining_base_process_time_s": 49.14600931423374,
+            "queue_length_on_arrival": 1
+        },
+        {
+            "unit_id": "U5887",
+            "order_id": "235",
+            "variant": "FUSE1",
+            "root_index": 37,
+            "attempt": 1,
+            "first_arrival_time_s": 541277.5460093142,
+            "first_start_time_s": 541277.5460093142,
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 8
+            },
+            "chosen_route_stage_count": 3,
+            "station_index": 8,
+            "station_name": "Station 3.4: Robot cell",
+            "arrival_time_s": 541481.3460093142,
+            "original_start_time_s": 541484.9460093142,
+            "remaining_process_time_s": 29.546009314199637,
+            "remaining_base_process_time_s": 29.54600931419975,
+            "queue_length_on_arrival": 0
+        }
+    ],
+    "station_queue_units": [
+        {
+            "unit_id": "U5892",
+            "order_id": "235",
+            "variant": "FUSE1",
+            "root_index": 42,
+            "attempt": 1,
+            "first_arrival_time_s": 541572.3460093142,
+            "first_start_time_s": 541572.3460093142,
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 4
+            },
+            "chosen_route_stage_count": 3,
+            "station_index": 4,
+            "station_name": "Station 3: Robot cell",
+            "arrival_time_s": 541667.3460093142,
+            "queue_length_on_arrival": 0,
+            "queue_position": 0
+        },
+        {
+            "unit_id": "U5889",
+            "order_id": "235",
+            "variant": "FUSE1",
+            "root_index": 39,
+            "attempt": 1,
+            "first_arrival_time_s": 541300.5460093142,
+            "first_start_time_s": 541300.5460093142,
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 7
+            },
+            "chosen_route_stage_count": 3,
+            "station_index": 7,
+            "station_name": "Station 3.3: Robot cell",
+            "arrival_time_s": 541475.5460093142,
+            "queue_length_on_arrival": 1,
+            "queue_position": 0
+        }
+    ],
+    "arrival_events": [
+        {
+            "unit_id": "U5895",
+            "order_id": "235",
+            "variant": "FUSE1",
+            "root_index": 45,
+            "attempt": 1,
+            "first_arrival_time_s": 541638.5460093142,
+            "first_start_time_s": 541638.5460093142,
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 5
+            },
+            "chosen_route_stage_count": 3,
+            "station_index": 5,
+            "station_name": "Station 3.1: Robot cell",
+            "time_s": 541773.5460093142
+        },
+        {
+            "unit_id": "U5885",
+            "order_id": "235",
+            "variant": "FUSE0",
+            "root_index": 35,
+            "attempt": 1,
+            "first_arrival_time_s": 540994.9460093143,
+            "first_start_time_s": 540994.9460093143,
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 5,
+                "3": 10,
+                "4": 12
+            },
+            "chosen_route_stage_count": 5,
+            "station_index": 12,
+            "station_name": "Station 5.1: Top cover",
+            "time_s": 541780.2460093142
+        },
+        {
+            "unit_id": "U5883",
+            "order_id": "235",
+            "variant": "FUSE0",
+            "root_index": 33,
+            "attempt": 1,
+            "first_arrival_time_s": 540960.3838629845,
+            "first_start_time_s": 540960.3838629845,
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 8,
+                "3": 9,
+                "4": 12,
+                "5": 14
+            },
+            "chosen_route_stage_count": 6,
+            "route_taken": "p:2.1.5.1.2.2",
+            "station_index": 14,
+            "station_name": "Station 6.1: Packaging",
+            "time_s": 541780.6460093142
+        },
+        {
+            "unit_id": "U5880",
+            "order_id": "235",
+            "variant": "FUSE0",
+            "root_index": 30,
+            "attempt": 1,
+            "first_arrival_time_s": 540684.7460093142,
+            "first_start_time_s": 540684.7460093142,
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 7,
+                "3": 9,
+                "4": 12
+            },
+            "chosen_route_stage_count": 5,
+            "station_index": 12,
+            "station_name": "Station 5.1: Top cover",
+            "time_s": 541798.6460093142
+        },
+        {
+            "unit_id": "U5896",
+            "order_id": "235",
+            "variant": "FUSE2",
+            "root_index": 46,
+            "attempt": 1,
+            "first_arrival_time_s": 541662.3838629845,
+            "first_start_time_s": 541662.3838629845,
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 6
+            },
+            "chosen_route_stage_count": 3,
+            "station_index": 6,
+            "station_name": "Station 3.2: Robot cell",
+            "time_s": 541803.9460093143
+        },
+        {
+            "unit_id": "U5893",
+            "order_id": "235",
+            "variant": "FUSE1",
+            "root_index": 43,
+            "attempt": 1,
+            "first_arrival_time_s": 541615.5460093142,
+            "first_start_time_s": 541615.5460093142,
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 7
+            },
+            "chosen_route_stage_count": 3,
+            "station_index": 7,
+            "station_name": "Station 3.3: Robot cell",
+            "time_s": 541799.3460093142
+        },
+        {
+            "unit_id": "U5881",
+            "order_id": "235",
+            "variant": "FUSE0",
+            "root_index": 31,
+            "attempt": 1,
+            "first_arrival_time_s": 540837.1838629845,
+            "first_start_time_s": 540837.1838629845,
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 4,
+                "3": 10,
+                "4": 12
+            },
+            "chosen_route_stage_count": 5,
+            "station_index": 12,
+            "station_name": "Station 5.1: Top cover",
+            "time_s": 541801.0838629846
+        },
+        {
+            "unit_id": "U5886",
+            "order_id": "235",
+            "variant": "FUSE0",
+            "root_index": 36,
+            "attempt": 1,
+            "first_arrival_time_s": 541175.1838629845,
+            "first_start_time_s": 541175.1838629845,
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 6,
+                "3": 9,
+                "4": 12
+            },
+            "chosen_route_stage_count": 5,
+            "station_index": 12,
+            "station_name": "Station 5.1: Top cover",
+            "time_s": 541827.0838629846
+        },
+        {
+            "unit_id": "U5894",
+            "order_id": "235",
+            "variant": "FUSE1",
+            "root_index": 44,
+            "attempt": 1,
+            "first_arrival_time_s": 541633.9460093143,
+            "first_start_time_s": 541633.9460093143,
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 8
+            },
+            "chosen_route_stage_count": 3,
+            "station_index": 8,
+            "station_name": "Station 3.4: Robot cell",
+            "time_s": 541808.9460093143
+        }
+    ],
+    "cart_return_events": [],
+    "carried_base_process_time_by_unit_id": {
+        "U5888": 149.016137,
+        "U5890": 189.853991,
+        "U5891": 163.016137,
+        "U5884": 211.453991,
+        "U5887": 293.053991,
+        "U5880": 262.7,
+        "U5881": 262.7,
+        "U5883": 267.3,
+        "U5885": 262.7,
+        "U5886": 262.7,
+        "U5889": 17.0,
+        "U5892": 17.0,
+        "U5893": 17.0,
+        "U5894": 17.0,
+        "U5895": 17.0,
+        "U5896": 17.0
+    },
+    "route_state_by_unit_id": {
+        "U5880": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 7,
+                "3": 9,
+                "4": 12
+            },
+            "chosen_route_stage_count": 5
+        },
+        "U5881": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 4,
+                "3": 10,
+                "4": 12
+            },
+            "chosen_route_stage_count": 5
+        },
+        "U5883": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 8,
+                "3": 9,
+                "4": 12,
+                "5": 14
+            },
+            "chosen_route_stage_count": 6,
+            "route_taken": "p:2.1.5.1.2.2"
+        },
+        "U5884": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 7
+            },
+            "chosen_route_stage_count": 3
+        },
+        "U5885": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 5,
+                "3": 10,
+                "4": 12
+            },
+            "chosen_route_stage_count": 5
+        },
+        "U5886": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 6,
+                "3": 9,
+                "4": 12
+            },
+            "chosen_route_stage_count": 5
+        },
+        "U5887": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 8
+            },
+            "chosen_route_stage_count": 3
+        },
+        "U5888": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 4
+            },
+            "chosen_route_stage_count": 3
+        },
+        "U5889": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 7
+            },
+            "chosen_route_stage_count": 3
+        },
+        "U5890": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 5
+            },
+            "chosen_route_stage_count": 3
+        },
+        "U5891": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 6
+            },
+            "chosen_route_stage_count": 3
+        },
+        "U5892": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 4
+            },
+            "chosen_route_stage_count": 3
+        },
+        "U5893": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 7
+            },
+            "chosen_route_stage_count": 3
+        },
+        "U5894": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 8
+            },
+            "chosen_route_stage_count": 3
+        },
+        "U5895": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 1,
+                "1": 2,
+                "2": 5
+            },
+            "chosen_route_stage_count": 3
+        },
+        "U5896": {
+            "chosen_route_station_indices_by_stage": {
+                "0": 0,
+                "1": 2,
+                "2": 6
+            },
+            "chosen_route_stage_count": 3
+        }
+    },
+    "active_unit_ids": [
+        "U5880",
+        "U5881",
+        "U5883",
+        "U5884",
+        "U5885",
+        "U5886",
+        "U5887",
+        "U5888",
+        "U5889",
+        "U5890",
+        "U5891",
+        "U5892",
+        "U5893",
+        "U5894",
+        "U5895",
+        "U5896"
+    ],
+    "occupied_carriers": 16
+}

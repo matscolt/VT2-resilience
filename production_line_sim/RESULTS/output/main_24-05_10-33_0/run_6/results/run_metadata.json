@@ -1,0 +1,11 @@
+{
+  "order_text": "2_1_1_1__scheduled_1units__segment_from_571640__remaining_1units",
+  "expanded_order_sequence": [
+    "FUSE2"
+  ],
+  "data_directory": "C:\\Users\\mikke\\OneDrive - Aalborg Universitet\\Skrivebord\\VT2 Project\\Github mappe\\VT2-resilience\\production_line_sim\\data",
+  "output_directory": "C:\\Users\\mikke\\OneDrive - Aalborg Universitet\\Skrivebord\\VT2 Project\\Github mappe\\VT2-resilience\\production_line_sim\\output\\main_24-05_10-33_0\\run_6\\results",
+  "created_at": "2026-05-24T10:56:29",
+  "main_settings_json": "C:\\Users\\mikke\\OneDrive - Aalborg Universitet\\Skrivebord\\VT2 Project\\Github mappe\\VT2-resilience\\production_line_sim\\input\\main_24-05_10-33_0\\runs\\run_6\\main_settings.json",
+  "input_current_schedule": "c:\\Users\\mikke\\OneDrive - Aalborg Universitet\\Skrivebord\\VT2 Project\\Github mappe\\VT2-resilience\\production_line_sim\\on_going\\main_24-05_10-33_0\\run_6\\current_schedule.csv"
+}
