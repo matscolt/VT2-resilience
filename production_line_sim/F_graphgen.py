@@ -15,6 +15,9 @@ from typing import List, Optional, Tuple
 ROOTDIR = Path(__file__).parent
 RESULTSDIR = ROOTDIR / "RESULTS"
 SIM_DAY_SECONDS = 8 * 60 * 60
+THROUGHPUT_RATE_WINDOW_S = 7200
+THROUGHPUT_RATE_SAMPLE_S = 600
+THROUGHPUT_RATE_INTERVAL_S = 1800
 
 
 def display_station_name(name: str) -> str:
@@ -534,6 +537,104 @@ def plot_cumulative_completed_units(unit_data, graphfolder):
     plt.xlabel("Time [days]")
     plt.ylabel("Completed units [-]")
     plt.title("Cumulative completed units over time")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close()
+
+    print(f">> Generated {graphname}")
+
+
+def plot_throughput_rate_moving(unit_data, graphfolder):
+    print(">> Generating moving throughput rate plot!")
+
+    completion_times = []
+    for row in unit_data:
+        value = row.get("completion_time_s", row.get("completion_time", ""))
+        if value in ("", None):
+            continue
+        try:
+            completion_times.append(float(value))
+        except ValueError:
+            pass
+
+    if not completion_times:
+        print(">> No valid completion times found. Skipping moving throughput rate plot.")
+        return
+
+    completion_times.sort()
+    window_s = float(THROUGHPUT_RATE_WINDOW_S)
+    sample_s = float(THROUGHPUT_RATE_SAMPLE_S)
+    max_time = max(completion_times)
+    n_steps = int(max_time // sample_s) + 1
+    sample_times = [i * sample_s for i in range(n_steps + 1)]
+
+    rates_per_hour = []
+    left = 0
+    right = 0
+    n = len(completion_times)
+
+    for t in sample_times:
+        while left < n and completion_times[left] < t - window_s:
+            left += 1
+        while right < n and completion_times[right] <= t:
+            right += 1
+        count_in_window = right - left
+        rates_per_hour.append(count_in_window * 3600.0 / window_s)
+
+    sample_days = [_seconds_to_sim_days(t) for t in sample_times]
+    graphname = "throughput_rate_moving.png"
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(sample_days, rates_per_hour, linewidth=0.8, color="#1f77b4")
+    plt.xlabel("Time [days]")
+    plt.ylabel("Throughput rate [units/hour]")
+    plt.title(f"Moving throughput rate over time (trailing window = {int(window_s)} s, sampling = {int(sample_s)} s)")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close()
+
+    print(f">> Generated {graphname}")
+
+
+
+def plot_throughput_rate_interval(unit_data, graphfolder):
+    print(">> Generating interval throughput rate plot!")
+
+    completion_times = []
+    for row in unit_data:
+        value = row.get("completion_time_s", row.get("completion_time", ""))
+        if value in ("", None):
+            continue
+        try:
+            completion_times.append(float(value))
+        except ValueError:
+            pass
+
+    if not completion_times:
+        print(">> No valid completion times found. Skipping interval throughput rate plot.")
+        return
+
+    completion_times.sort()
+    interval_s = float(THROUGHPUT_RATE_INTERVAL_S)
+    max_time = max(completion_times)
+    n_bins = int(max_time // interval_s) + 1
+    bin_starts = [i * interval_s for i in range(n_bins)]
+    bin_rates = [0.0 for _ in range(n_bins)]
+
+    for t in completion_times:
+        idx = min(int(t // interval_s), n_bins - 1)
+        bin_rates[idx] += 3600.0 / interval_s
+
+    bin_days = [_seconds_to_sim_days(t) for t in bin_starts]
+    graphname = "throughput_rate_interval.png"
+
+    plt.figure(figsize=(12, 6))
+    plt.step(bin_days, bin_rates, where="post", linewidth=2, color="#ff7f0e")
+    plt.xlabel("Time [days]")
+    plt.ylabel("Throughput rate [units/hour]")
+    plt.title(f"Interval throughput rate over time (interval = {int(interval_s)} s)")
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
@@ -1142,10 +1243,13 @@ def main(starttime=time.perf_counter()):
             plot_gantt(station_schedule, transport_data, graph_folder, starttime_gantt, endtime_gantt)
             print("Time spent: " + str(time.perf_counter() - starttime))
 
-        plot_throughput_times(unit_data, graph_folder)
+        #plot_throughput_times(unit_data, graph_folder)
         print("Time spent: " + str(time.perf_counter() - starttime))
-
-        plot_cumulative_completed_units(unit_data, graph_folder)
+        plot_throughput_rate_moving(unit_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_throughput_rate_interval(unit_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        """plot_cumulative_completed_units(unit_data, graph_folder)
         print("Time spent: " + str(time.perf_counter() - starttime))
         plot_cumulative_completed_units_by_station(station_schedule, graph_folder)
         print("Time spent: " + str(time.perf_counter() - starttime))
@@ -1166,7 +1270,7 @@ def main(starttime=time.perf_counter()):
         print("Time spent: " + str(time.perf_counter() - starttime))
         plot_station_utilization(station_summary, graph_folder)
         print("Time spent: " + str(time.perf_counter() - starttime))
-        plot_station_availability(station_summary, graph_folder)
+        plot_station_availability(station_summary, graph_folder)"""
 
 
 if __name__ == "__main__":
