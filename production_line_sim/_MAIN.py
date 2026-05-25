@@ -208,13 +208,14 @@ def main():
     elif base_settings["random based disruptions"]["enabled"]==0:
         dis ="Disabled"
         if base_settings["segment_time"]==1:
-            seg = f"Enabled \nSegment interval: {base_settings["segment_interval"]}"
+            seg = f"Enabled \nSegment interval: {base_settings['segment_interval']}"
         if base_settings["rescheduling_enabled"] == 1:
             if base_settings["segment_time"]==0:
                 warning = "With segments disabled you will have problems with the GA while there are no disruptions"
         if base_settings["rescheduling_enabled"] == 0:
             if base_settings["segment_time"]==1:
-                seg = f"Enabled \nSegment interval: {base_settings["segment_interval"]}"
+                seg_set = base_settings['segment_interval']
+                seg = f"Enabled \nSegment interval: {seg_set}"
 
     if warning is None:
         terminal_print(algo,react,dis,seg)
@@ -356,15 +357,16 @@ def main():
             if i == 0 or reaction_enabled:
                 print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
                 C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
+                GAend = ti.perf_counter()
             else:
                 print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
 
             print(f"----MAIN.py: running main sim from {t_start} until {t_stop}\n day {t_start/(3600*8):.4f} to {t_stop/(3600*8):.4f}")
             D_production_line_sim.main(main_settings_dir, t_stop, t_start)
-            end = ti.perf_counter()
-            print(f"[MAIN] segment wall time: {end - start}\n\n\n - - - - - \n")
-            print(f"the simulation has run for {int(end - run_time_start)} seconds")
-            ctotal_time = int(end-main_start_time)
+            simend = ti.perf_counter()
+            print(f"[MAIN] segment wall time: {simend - start}\n\n\n - - - - - \n")
+            print(f"the simulation has run for {int(simend - run_time_start)} seconds")
+            ctotal_time = int(simend-main_start_time)
             ch = ctotal_time // 3600
             cm = (ctotal_time % 3600) // 60
             cs = ctotal_time % 60
@@ -389,7 +391,7 @@ def main():
     m = (total_time % 3600) // 60
     s = total_time % 60
     clock_time = f"{h:d}:{m:02d}:{s:02d}"if h > 0 else f"{m:02d}:{s:02d}"
-    print(f"TOTAL TIME RUNNING MAIN\n{clock_time}")
+    print(f"\nTOTAL TIME RUNNING MAIN\n{clock_time}")
     terminal_print_after(algo,react,dis,seg)
 
 if __name__ == "__main__":
