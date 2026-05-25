@@ -1,0 +1,59 @@
+﻿disruption_type,estimated_duration,station_id,efficiency_loss,start_time,end_time
+emergency_order,0.0,,0.0,1052.0,
+Bottom Cover Misaligned,2288.0,1,0.0,14996.0,16747.0
+emergency_order,0.0,,0.0,23623.0,
+emergency_order,0.0,,0.0,35116.0,
+efficiency_loss,0.0,2.1,42.0,41152.0,41667.0
+efficiency_loss,0.0,4.1,16.0,45626.0,46398.0
+emergency_order,0.0,,0.0,51137.0,
+inspection_failure,0.0,,0.0,66147.0,
+Drill To Dull,9152.0,2.2,0.0,69444.0,76837.0
+inspection_failure,0.0,,0.0,74346.0,
+Bottom Cover Stuck,2392.0,1.1,0.0,87615.0,89593.0
+PLC Failure,3312.0,1,0.0,88015.0,91155.0
+efficiency_loss,0.0,5,45.0,100517.0,102116.0
+emergency_order,0.0,,0.0,116883.0,
+efficiency_loss,0.0,5.2,49.0,150587.0,152075.0
+Top Cover Stuck,2392.0,5.2,0.0,161441.0,163595.0
+Drill To Dull,9152.0,2,0.0,162058.0,169548.0
+Misaligned Material,10440.0,3,0.0,173098.0,180434.0
+Misaligned Material,10440.0,3.3,0.0,175235.0,182594.0
+emergency_order,0.0,,0.0,179398.0,
+emergency_order,0.0,,0.0,188801.0,
+efficiency_loss,0.0,2,73.0,193313.0,193912.0
+Top Cover Stuck,2392.0,5.1,0.0,210519.0,212673.0
+emergency_order,0.0,,0.0,230669.0,
+emergency_order,0.0,,0.0,238363.0,
+efficiency_loss,0.0,5.2,52.0,251779.0,253119.0
+Camera Dirty,2496.0,4.1,0.0,253785.0,255603.0
+emergency_order,0.0,,0.0,266624.0,
+Top Cover Misaligned,2288.0,5,0.0,278920.0,280624.0
+Misaligned Material,10440.0,3.1,0.0,290185.0,296632.0
+emergency_order,0.0,,0.0,291055.0,
+Cover Wrong Orientation,8736.0,3.3,0.0,303722.0,311124.0
+efficiency_loss,0.0,6.1,77.0,317429.0,317817.0
+efficiency_loss,0.0,5.1,54.0,318967.0,320291.0
+efficiency_loss,0.0,4.1,50.0,329766.0,330572.0
+Top Cover Misaligned,2288.0,5.2,0.0,331388.0,333324.0
+emergency_order,0.0,,0.0,367319.0,
+Top Cover Misaligned,2288.0,5.1,0.0,379693.0,381606.0
+efficiency_loss,0.0,4,71.0,387034.0,387760.0
+PLC Failure,3312.0,5.1,0.0,429299.0,432039.0
+Drill To Dull,9152.0,2.1,0.0,457241.0,463999.0
+efficiency_loss,0.0,6,12.0,465849.0,466219.0
+Bottom Cover Misaligned,2288.0,1.1,0.0,475411.0,477113.0
+inspection_failure,0.0,,0.0,490783.0,
+emergency_order,0.0,,0.0,494668.0,
+efficiency_loss,0.0,2.2,39.0,494984.0,495658.0
+emergency_order,0.0,,0.0,501920.0,
+emergency_order,0.0,,0.0,520694.0,
+emergency_order,0.0,,0.0,526994.0,
+Camera Dirty,2496.0,4,0.0,529534.0,531813.0
+inspection_failure,0.0,,0.0,543552.0,
+efficiency_loss,0.0,5.1,47.0,553807.0,555029.0
+emergency_order,0.0,,0.0,555971.0,
+Top Cover Stuck,2392.0,5.1,0.0,559992.0,562140.0
+Top Cover Stuck,2392.0,5,0.0,562269.0,564489.0
+efficiency_loss,0.0,5,80.0,567261.0,568676.0
+efficiency_loss,0.0,4,53.0,568917.0,569668.0
+Bottom Cover Stuck,2392.0,1,0.0,569470.0,571640.0
