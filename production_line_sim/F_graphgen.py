@@ -497,6 +497,8 @@ def plot_throughput_times(unit_data, graphfolder):
     plt.ylabel("Throughput time [s]")
     plt.title("Throughput time per unit")
 
+    plt.ylim(0,2000)
+
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
     plt.close()
