@@ -2,7 +2,7 @@ PP wo dis = main_25-05_16-53_0
 PP w dis wo react = 24-05_11-33_0
 PP w dis w react = main_24-05_10-33_0 (MF)
 GA wo dis = main_25-05_13-10_0
-GA w dis w react= main_25-05_00-00_2 - uploaded to teams
+GA w dis w react= main_25-05_00-00_2
 GA random w dis w react high settings = 
 GA random w dis w react standard settings = 
 
