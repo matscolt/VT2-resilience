@@ -19,7 +19,6 @@ THROUGHPUT_RATE_WINDOW_S = 7200
 THROUGHPUT_RATE_SAMPLE_S = 600
 THROUGHPUT_RATE_INTERVAL_S = 1800
 
-
 def display_station_name(name: str) -> str:
     if name in (None, ""):
         return name
@@ -125,6 +124,29 @@ def prompt_for_run_folder(main_dir: Path, runs: List[Path]) -> Path:
         if candidate.exists() and candidate.is_dir():
             return candidate
         print("Invalid selection. Enter a number from the list or paste the folder name.")
+
+
+def prompt_for_compare_main_folders(output_dir: Path, count: int = 3) -> List[Path]:
+    """Interactively select multiple distinct main folders for comparison."""
+    outputs = list_output_runs(output_dir)
+    if len(outputs) < count:
+        raise FileNotFoundError(f"Need at least {count} main folders in: {output_dir}")
+
+    selected: List[Path] = []
+    available = outputs[:]
+    for idx in range(count):
+        print(f"Select compare main folder {idx + 1}/{count}:")
+        chosen = prompt_for_data_folder(output_dir, available)
+        selected.append(chosen)
+        available = [p for p in available if p != chosen]
+    return selected
+
+
+def _run_sort_key(run_name: str):
+    m = re.match(r"run_(\d+)$", str(run_name))
+    if m:
+        return int(m.group(1))
+    return str(run_name)
 
 
 def find_results_folder(
@@ -1212,65 +1234,270 @@ def plot_station_availability(station_data, graphfolder):
     plt.close(fig)
     print(f">> Generated {graphname}")
 
-def main(starttime=time.perf_counter()):
-    output_dir = RESULTSDIR / "output"
-    mainfolder, runs = find_results_folder(output_dir)
+def _extract_completion_times(unit_data):
+    completion_times = []
+    for row in unit_data:
+        value = row.get("completion_time_s", row.get("completion_time", ""))
+        if value in ("", None):
+            continue
+        try:
+            completion_times.append(float(value))
+        except ValueError:
+            pass
+    completion_times.sort()
+    return completion_times
 
-    post_processing_folder = RESULTSDIR / "post_processing"
-    post_processing_folder.mkdir(parents=True, exist_ok=True)
-    mainfoldername = str(mainfolder).split("\\")[-1]
 
-    for chosenrun in runs:
-        resultfolder = chosenrun / "results"
-        chosenrun = chosenrun.name
-        print(f"----creating graphs for {chosenrun}----")
-        ppfolder = post_processing_folder / mainfoldername / chosenrun
-        ppfolder.mkdir(parents=True, exist_ok=True)
+def _calc_cumulative_completed_series(unit_data):
+    completion_times = _extract_completion_times(unit_data)
+    if not completion_times:
+        return [], []
+    completion_days = [_seconds_to_sim_days(t) for t in completion_times]
+    cumulative_units = list(range(1, len(completion_times) + 1))
+    return completion_days, cumulative_units
 
-        print(f"placing graphs and so on inside {mainfoldername}")
-        clear_folder(ppfolder)
 
-        station_schedule, station_summary, transport_data, unit_data, material_data, order_data = load_all_data(resultfolder)
+def _calc_throughput_rate_moving_series(unit_data):
+    completion_times = _extract_completion_times(unit_data)
+    if not completion_times:
+        return [], []
 
-        graph_folder = ppfolder / "graphs"
+    window_s = float(THROUGHPUT_RATE_WINDOW_S)
+    sample_s = float(THROUGHPUT_RATE_SAMPLE_S)
+    max_time = max(completion_times)
+    n_steps = int(max_time // sample_s) + 1
+    sample_times = [i * sample_s for i in range(n_steps + 1)]
+
+    rates_per_hour = []
+    left = 0
+    right = 0
+    n = len(completion_times)
+
+    for t in sample_times:
+        while left < n and completion_times[left] < t - window_s:
+            left += 1
+        while right < n and completion_times[right] <= t:
+            right += 1
+        count_in_window = right - left
+        rates_per_hour.append(count_in_window * 3600.0 / window_s)
+
+    sample_days = [_seconds_to_sim_days(t) for t in sample_times]
+    return sample_days, rates_per_hour
+
+
+def _calc_throughput_rate_interval_series(unit_data):
+    completion_times = _extract_completion_times(unit_data)
+    if not completion_times:
+        return [], []
+
+    interval_s = float(THROUGHPUT_RATE_INTERVAL_S)
+    max_time = max(completion_times)
+    n_bins = int(max_time // interval_s) + 1
+    bin_starts = [i * interval_s for i in range(n_bins)]
+    bin_rates = [0.0 for _ in range(n_bins)]
+
+    for t in completion_times:
+        idx = min(int(t // interval_s), n_bins - 1)
+        bin_rates[idx] += 3600.0 / interval_s
+
+    bin_days = [_seconds_to_sim_days(t) for t in bin_starts]
+    return bin_days, bin_rates
+
+
+def plot_compare_throughput_rate_moving(unit_data_by_main, graphfolder, run_name):
+    print(f">> Generating compare moving throughput rate plot for {run_name}!")
+    graphname = "compare_throughput_rate_moving.png"
+
+    plt.figure(figsize=(12, 6))
+    plotted = False
+    for main_name, unit_data in unit_data_by_main:
+        x_days, y_values = _calc_throughput_rate_moving_series(unit_data)
+        if not x_days:
+            continue
+        plt.plot(x_days, y_values, linewidth=0.8, label=main_name)
+        plotted = True
+
+    if not plotted:
+        plt.close()
+        print(f">> No valid moving throughput data found for {run_name}. Skipping compare moving throughput plot.")
+        return
+
+    plt.xlabel("Time [days]")
+    plt.ylabel("Throughput rate [units/hour]")
+    plt.title(f"Moving throughput rate comparison ({run_name})")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.legend(loc="upper left")
+    plt.tight_layout()
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f">> Generated {graphname}")
+
+
+
+def plot_compare_throughput_rate_interval(unit_data_by_main, graphfolder, run_name):
+    print(f">> Generating compare interval throughput rate plot for {run_name}!")
+    graphname = "compare_throughput_rate_interval.png"
+
+    plt.figure(figsize=(12, 6))
+    plotted = False
+    for main_name, unit_data in unit_data_by_main:
+        x_days, y_values = _calc_throughput_rate_interval_series(unit_data)
+        if not x_days:
+            continue
+        plt.step(x_days, y_values, where="post", linewidth=2, label=main_name)
+        plotted = True
+
+    if not plotted:
+        plt.close()
+        print(f">> No valid interval throughput data found for {run_name}. Skipping compare interval throughput plot.")
+        return
+
+    plt.xlabel("Time [days]")
+    plt.ylabel("Throughput rate [units/hour]")
+    plt.title(f"Interval throughput rate comparison ({run_name})")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.legend(loc="upper left")
+    plt.tight_layout()
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f">> Generated {graphname}")
+
+
+
+def plot_compare_cumulative_completed_units(unit_data_by_main, graphfolder, run_name):
+    print(f">> Generating compare cumulative completed units plot for {run_name}!")
+    graphname = "compare_cumulative_completed_units.png"
+
+    plt.figure(figsize=(12, 6))
+    plotted = False
+    for main_name, unit_data in unit_data_by_main:
+        x_days, y_values = _calc_cumulative_completed_series(unit_data)
+        if not x_days:
+            continue
+        plt.step(x_days, y_values, where="post", linewidth=2, label=main_name)
+        plotted = True
+
+    if not plotted:
+        plt.close()
+        print(f">> No valid cumulative data found for {run_name}. Skipping compare cumulative plot.")
+        return
+
+    plt.xlabel("Time [days]")
+    plt.ylabel("Completed units [-]")
+    plt.title(f"Cumulative completed units comparison ({run_name})")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.legend(loc="upper left")
+    plt.tight_layout()
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f">> Generated {graphname}")
+
+
+
+def generate_compare_graphs(mainfolders, post_processing_folder, starttime):
+    compare_root = post_processing_folder / "COMPARE"
+    compare_root.mkdir(parents=True, exist_ok=True)
+
+    run_maps = {}
+    common_runs = None
+    for mainfolder in mainfolders:
+        runs = list_run_folders(mainfolder)
+        run_map = {run.name: run / "results" for run in runs if (run / "results").exists()}
+        run_maps[mainfolder.name] = run_map
+        run_names = set(run_map.keys())
+        common_runs = run_names if common_runs is None else (common_runs & run_names)
+
+    if not common_runs:
+        print(">> No common runs found across the selected main folders. Skipping compare plots.")
+        return
+
+    for run_name in sorted(common_runs, key=_run_sort_key):
+        print(f"----creating compare graphs for {run_name}----")
+        compare_folder = compare_root / run_name
+        compare_folder.mkdir(parents=True, exist_ok=True)
+        clear_folder(compare_folder)
+        graph_folder = compare_folder / "graphs"
         graph_folder.mkdir(exist_ok=True)
 
-        starttime_gantt =0 #float(input("where do you want your gantt chart to start from? >>"))
-        endtime_gantt = 0  #float(input("where do you want your gantt chart to end from? >>"))
-        if endtime_gantt - starttime_gantt <= 0:
-            print("time invalid therefore skipping")
-        else:
-            plot_gantt(station_schedule, transport_data, graph_folder, starttime_gantt, endtime_gantt)
+        unit_data_by_main = []
+        for main_name, run_map in run_maps.items():
+            resultfolder = run_map[run_name]
+            station_schedule, station_summary, transport_data, unit_data, material_data, order_data = load_all_data(resultfolder)
+            unit_data_by_main.append((main_name, unit_data))
+
+        plot_compare_throughput_rate_moving(unit_data_by_main, graph_folder, run_name)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_compare_throughput_rate_interval(unit_data_by_main, graph_folder, run_name)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_compare_cumulative_completed_units(unit_data_by_main, graph_folder, run_name)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+
+
+def main(starttime=time.perf_counter()):
+    output_dir = RESULTSDIR / "output"
+    post_processing_folder = RESULTSDIR / "post_processing"
+    post_processing_folder.mkdir(parents=True, exist_ok=True)
+
+    choice = input("Do you want to plot data from one main? [y/N] >> ").strip().lower()
+    if choice in ("y", "yes"):
+        mainfolder, runs = find_results_folder(output_dir)
+        mainfoldername = str(mainfolder).split("\\")[-1]
+        for chosenrun in runs:
+            resultfolder = chosenrun / "results"
+            chosenrun = chosenrun.name
+            print(f"----creating graphs for {chosenrun}----")
+            ppfolder = post_processing_folder / mainfoldername / chosenrun
+            ppfolder.mkdir(parents=True, exist_ok=True)
+
+            print(f"placing graphs and so on inside {mainfoldername}")
+            clear_folder(ppfolder)
+
+            station_schedule, station_summary, transport_data, unit_data, material_data, order_data = load_all_data(resultfolder)
+
+            graph_folder = ppfolder / "graphs"
+            graph_folder.mkdir(exist_ok=True)
+
+            starttime_gantt =0 #float(input("where do you want your gantt chart to start from? >>"))
+            endtime_gantt = 0  #float(input("where do you want your gantt chart to end from? >>"))
+            if endtime_gantt - starttime_gantt <= 0:
+                print("time invalid therefore skipping")
+            else:
+                plot_gantt(station_schedule, transport_data, graph_folder, starttime_gantt, endtime_gantt)
+                print("Time spent: " + str(time.perf_counter() - starttime))
+
+            #plot_throughput_times(unit_data, graph_folder)
+            print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_throughput_rate_moving(unit_data, graph_folder)
+            print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_throughput_rate_interval(unit_data, graph_folder)
+            print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_cumulative_completed_units(unit_data, graph_folder)
+            print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_cumulative_completed_units_by_station(station_schedule, graph_folder)
             print("Time spent: " + str(time.perf_counter() - starttime))
 
-        #plot_throughput_times(unit_data, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
-        plot_throughput_rate_moving(unit_data, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
-        plot_throughput_rate_interval(unit_data, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
-        """plot_cumulative_completed_units(unit_data, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
-        plot_cumulative_completed_units_by_station(station_schedule, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_order_lateness(order_data, graph_folder)
+            print("Time spent: " + str(time.perf_counter() - starttime))
 
-        plot_order_lateness(order_data, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_order_lateness_boxplot(order_data, graph_folder)
+            print("Time spent: " + str(time.perf_counter() - starttime))
 
-        plot_order_lateness_boxplot(order_data, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_order_fitness(order_data, graph_folder)
+            print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_order_fitness_boxplot(order_data, graph_folder)
+            print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_station_waiting_time(station_summary, graph_folder)
+            print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_station_queue_size(station_summary, graph_folder)
+            print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_station_utilization(station_summary, graph_folder)
+            print("Time spent: " + str(time.perf_counter() - starttime))
+            plot_station_availability(station_summary, graph_folder)
 
-        plot_order_fitness(order_data, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
-        plot_order_fitness_boxplot(order_data, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
-        plot_station_waiting_time(station_summary, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
-        plot_station_queue_size(station_summary, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
-        plot_station_utilization(station_summary, graph_folder)
-        print("Time spent: " + str(time.perf_counter() - starttime))
-        plot_station_availability(station_summary, graph_folder)"""
+    compare_choice = input("Do you want to compare three mains? [y/N] >> ").strip().lower()
+    if compare_choice in ("y", "yes"):
+        compare_mainfolders = prompt_for_compare_main_folders(output_dir, count=3)
+        generate_compare_graphs(compare_mainfolders, post_processing_folder, starttime)
 
 
 if __name__ == "__main__":
