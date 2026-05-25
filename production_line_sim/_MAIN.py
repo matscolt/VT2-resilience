@@ -159,6 +159,12 @@ def main():
         subfolder.mkdir(exist_ok=True)
     
     dirs = [dir / main_loop_name for dir in dirs]
+
+    simulation_performance_path = dirs[2] / "simulation_performance.csv"
+    if not simulation_performance_path.exists():
+        with simulation_performance_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["time", "run number", " GA_calculation", " main_simulation_runtime"])
     
     #create input subfolders
     disruption_dir = dirs[0] / "disruptions"
@@ -358,6 +364,11 @@ def main():
                 print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
                 C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
                 GAend = ti.perf_counter()
+                GAcalctime = GAend - start
+                GAcalcattime = GAend - main_start_time
+                with simulation_performance_path.open("a", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([t_start, run_idx, GAcalctime, GAcalcattime])
             else:
                 print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
 
