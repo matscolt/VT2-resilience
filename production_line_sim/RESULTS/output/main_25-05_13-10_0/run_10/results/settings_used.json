@@ -1,0 +1,32 @@
+{
+    "run number": 10,
+    "settings": {
+        "Scenarios": "layout_2_3_5_2_3_2.json",
+        "pressure_of_capacity": 1,
+        "order_units_ratio": 25,
+        "algorithms": "genetic algortihm",
+        "weightage": null,
+        "seed": 5678
+    },
+    "label": "2_1_1_5",
+    "pathlist": {
+        "input": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\input\\main_25-05_13-10_0",
+        "input_disruptions": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\input\\main_25-05_13-10_0\\disruptions",
+        "input_disruptions_csv": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\input\\main_25-05_13-10_0\\disruptions\\disruptions_2_1_1_5.csv",
+        "input_disruptions_json": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\input\\main_25-05_13-10_0\\disruptions\\disruption.json",
+        "input_orders": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\input\\main_25-05_13-10_0\\orders",
+        "input_orders_csv": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\input\\main_25-05_13-10_0\\orders\\unsorted_orders_2_1_1_5.csv",
+        "input_runs": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\input\\main_25-05_13-10_0\\runs",
+        "input_runs_run": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\input\\main_25-05_13-10_0\\runs\\run_10",
+        "on_going": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\on_going\\main_25-05_13-10_0",
+        "on_going_run": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\on_going\\main_25-05_13-10_0\\run_10",
+        "on_going_run_current_schedule": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\on_going\\main_25-05_13-10_0\\run_10\\current_schedule.csv",
+        "on_going_run_dis_his": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\on_going\\main_25-05_13-10_0\\run_10\\disruption_his.csv",
+        "on_going_run_production_plan": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\on_going\\main_25-05_13-10_0\\run_10\\production_plan_2_1_1_5.csv",
+        "on_going_run_unit_summary": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\on_going\\main_25-05_13-10_0\\run_10\\unit_summary.csv",
+        "output": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\output\\main_25-05_13-10_0",
+        "output_run": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\output\\main_25-05_13-10_0\\run_10",
+        "output_run_results": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\output\\main_25-05_13-10_0\\run_10\\results",
+        "post_processing": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\post_processing\\main_25-05_13-10_0"
+    }
+}
