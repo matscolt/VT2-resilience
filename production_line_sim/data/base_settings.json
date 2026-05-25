@@ -27,14 +27,14 @@
     "sim_time [s]": 800000,
     "plan_time [s]": 576000,
 
-    "rescheduling_enabled":1,
-    "reaction_enabled":1,
+    "rescheduling_enabled":0,
+    "reaction_enabled":0,
 
     "fast_GA":0,
-    "segment_time":1,
-    "segment_interval":1.3,
+    "segment_time":0,
+    "segment_interval":2.5,
     "random based disruptions": {
-        "enabled": 0
+        "enabled": 2
     },
     "carriers": {
         "number of carriers": 8
