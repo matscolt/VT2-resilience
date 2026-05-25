@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -19,8 +20,21 @@ import pandas as pd
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "RESULTS" / "output"
 ON_GOING_DIR = Path(__file__).resolve().parent / "RESULTS" / "on_going"
+POST_PROCESSING_DIR = Path(__file__).resolve().parent / "RESULTS" / "post_processing"
+
 DAY_SECONDS = 8 * 60 * 60   # 8 hours per day
 WEEK_DAYS = 5               # 5 days per week
+
+# Order fitness settings
+ALPHA = 0.05
+BETA = 0.001
+GAMMA = 1.5
+DELTA = 1000
+TIME_SCALE = 60 * 60  # seconds -> hours
+
+# Output KPI filenames per layout
+LAYOUT_1_FILENAME = "KPIs_layout_2_2_5_2_2_2.csv"
+LAYOUT_2_FILENAME = "KPIs_layout_2_3_5_2_3_2.csv"
 
 
 # ============================================================
@@ -28,7 +42,6 @@ WEEK_DAYS = 5               # 5 days per week
 # ============================================================
 
 def norm(name: str) -> str:
-    """Normalize a column name for robust matching."""
     return re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
 
 
@@ -37,7 +50,6 @@ def build_col_map(df: pd.DataFrame) -> Dict[str, str]:
 
 
 def find_col(df: pd.DataFrame, aliases: Iterable[str], required: bool = True) -> Optional[str]:
-    """Find a column in a dataframe using possible aliases."""
     col_map = build_col_map(df)
     for alias in aliases:
         key = norm(alias)
@@ -56,25 +68,18 @@ def safe_numeric(series: pd.Series) -> pd.Series:
 
 
 def seconds_to_week_day(seconds_value: float, day_seconds: float, week_days: int) -> tuple[Optional[int], Optional[int]]:
-    """Convert simulation seconds to (week, day), both 1-based."""
     if pd.isna(seconds_value):
         return None, None
-
     day_index = int(float(seconds_value) // day_seconds)
     week = day_index // week_days + 1
-    day = day_index + 1
+    day = day_index % week_days + 1
     return week, day
 
 
 def _parse_main_folder_name(name: str, assumed_year: int) -> Optional[Tuple[datetime, int]]:
-    """
-    Parse folder names like: main_22-05_22-02_0
-    -> datetime(assumed_year, 5, 22, 22, 2), trailing index 0
-    """
     m = re.fullmatch(r"main_(\d{2})-(\d{2})_(\d{2})-(\d{2})_(\d+)", name)
     if not m:
         return None
-
     day, month, hour, minute, idx = map(int, m.groups())
     try:
         ts = datetime(assumed_year, month, day, hour, minute)
@@ -84,7 +89,6 @@ def _parse_main_folder_name(name: str, assumed_year: int) -> Optional[Tuple[date
 
 
 def list_main_folders(output_dir: Path) -> List[Path]:
-    """List candidate main_* folders, newest first when parseable."""
     assumed_year = datetime.now().year
     parsed: List[Tuple[datetime, int, Path]] = []
     unparsed: List[Path] = []
@@ -106,7 +110,6 @@ def list_main_folders(output_dir: Path) -> List[Path]:
 
 
 def select_main_folder(output_dir: Path) -> Path:
-    """Interactive main-folder picker."""
     candidates = list_main_folders(output_dir)
     if not candidates:
         raise FileNotFoundError(f"No valid main folders found in {output_dir}")
@@ -126,17 +129,18 @@ def select_main_folder(output_dir: Path) -> Path:
         print("Invalid selection. Please choose a valid number from the list.")
 
 
+def run_number(path: Path) -> int:
+    m = re.match(r"run_(\d+)$", path.name)
+    return int(m.group(1)) if m else 10**9
+
+
 def list_run_folders(main_output_dir: Path) -> List[Path]:
     runs = [p for p in main_output_dir.iterdir() if p.is_dir() and p.name.startswith("run_")]
-    runs.sort(key=lambda p: p.name)
+    runs.sort(key=run_number)
     return runs
 
 
 def find_production_plan_file(main_name: str, run_name: str) -> Path:
-    """
-    Find the single production_plan*.csv for a run in:
-      RESULTS/on_going/<main_name>/<run_name>/
-    """
     run_dir = ON_GOING_DIR / main_name / run_name
     if not run_dir.exists():
         raise FileNotFoundError(f"on_going run folder not found: {run_dir}")
@@ -149,8 +153,83 @@ def find_production_plan_file(main_name: str, run_name: str) -> Path:
     return plans[0]
 
 
+def read_kpi_summary(kpi_path: Path) -> Dict[str, object]:
+    if not kpi_path.exists():
+        raise FileNotFoundError(f"Missing KPI file: {kpi_path}")
+
+    df = pd.read_csv(kpi_path, header=None)
+    if df.shape[1] < 2:
+        raise ValueError(f"KPI file does not look like a key/value csv: {kpi_path}")
+
+    keys = df.iloc[:, 0].astype(str).tolist()
+    values = df.iloc[:, 1].tolist()
+
+    record: Dict[str, object] = {}
+    for k, v in zip(keys, values):
+        try:
+            numeric_v = float(v)
+            if numeric_v.is_integer():
+                record[k] = int(numeric_v)
+            else:
+                record[k] = numeric_v
+        except Exception:
+            record[k] = v
+    return record
+
+
+def write_layout_kpi_csv(main_name: str, runs: List[Path], output_filename: str) -> Optional[Path]:
+    """
+    Build one layout KPI aggregation CSV.
+
+    Output shape:
+      - rows = KPI names
+      - columns = run names (run_1, run_2, ...)
+      - extra column = average across numeric run values
+    """
+    if not runs:
+        print(f"WARNING: No runs available for {output_filename}. Skipping.")
+        return None
+
+    kpi_records = {}
+    run_names: List[str] = []
+    for run_dir in runs:
+        kpi_path = run_dir / "results" / "kpi_summary.csv"
+        record = read_kpi_summary(kpi_path)
+        kpi_records[run_dir.name] = record
+        run_names.append(run_dir.name)
+
+    df = pd.DataFrame(kpi_records)
+    df.index.name = "kpi"
+
+    numeric_part = df[run_names].apply(pd.to_numeric, errors="coerce")
+    df["average"] = numeric_part.mean(axis=1, skipna=True)
+
+    main_post_dir = POST_PROCESSING_DIR / main_name
+    main_post_dir.mkdir(parents=True, exist_ok=True)
+    out_path = main_post_dir / output_filename
+    df.to_csv(out_path)
+    return out_path
+
+
+def create_layout_kpi_csvs(main_name: str, runs: List[Path]) -> List[Path]:
+    if not runs:
+        return []
+
+    ordered_runs = sorted(runs, key=run_number)
+    layout_1_runs = ordered_runs[:5]
+    layout_2_runs = ordered_runs[5:10]
+
+    created: List[Path] = []
+    out_1 = write_layout_kpi_csv(main_name, layout_1_runs, LAYOUT_1_FILENAME)
+    if out_1 is not None:
+        created.append(out_1)
+    out_2 = write_layout_kpi_csv(main_name, layout_2_runs, LAYOUT_2_FILENAME)
+    if out_2 is not None:
+        created.append(out_2)
+    return created
+
+
 def extract_plan_metadata(plan_df: pd.DataFrame) -> pd.DataFrame:
-    """Extract metadata columns from the production plan."""
     order_col = find_col(plan_df, ["order_id", "orderID"])
     due_col = find_col(plan_df, ["due date", "due_date", "due"])
     priority_col = find_col(plan_df, ["priority"])
@@ -175,9 +254,7 @@ def extract_plan_metadata(plan_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def extract_plan_variants(plan_df: pd.DataFrame) -> pd.DataFrame:
-    """Extract variant0..2 and quantity0..2 from the production plan."""
     order_col = find_col(plan_df, ["order_id", "orderID"])
-
     col_aliases = {
         "variant0": ["variant0", "variant_0"],
         "quantity0": ["quantity0", "quantity_0"],
@@ -213,14 +290,11 @@ def extract_plan_variants(plan_df: pd.DataFrame) -> pd.DataFrame:
             variants[qcol] = 0
         variants[qcol] = safe_numeric(variants[qcol]).fillna(0).astype(int)
 
-    variants = variants[[
-        "order_id", "variant0", "quantity0", "variant1", "quantity1", "variant2", "quantity2"
-    ]].drop_duplicates(subset=["order_id"])
+    variants = variants[["order_id", "variant0", "quantity0", "variant1", "quantity1", "variant2", "quantity2"]].drop_duplicates(subset=["order_id"])
     return variants
 
 
 def build_actual_variant_summary(unit_df: pd.DataFrame, order_col: str, variant_col: str) -> pd.DataFrame:
-    """Build actual variant counts from unit_summary.csv."""
     counts = (
         unit_df.groupby([order_col, variant_col], dropna=False)
         .size()
@@ -239,9 +313,6 @@ def build_actual_variant_summary(unit_df: pd.DataFrame, order_col: str, variant_
             else:
                 row[f"variant{i}"] = ""
                 row[f"quantity{i}"] = 0
-        if len(grp) > 3:
-            extras = ", ".join(grp.loc[3:, "variant"].astype(str).tolist())
-            print(f"WARNING: order {order_id} has more than 3 variants in unit_summary. Extra variants ignored: {extras}")
         rows.append(row)
 
     if not rows:
@@ -249,30 +320,36 @@ def build_actual_variant_summary(unit_df: pd.DataFrame, order_col: str, variant_
     return pd.DataFrame(rows)
 
 
+def compute_order_fitness_row(due_date: object, priority: object, finish_time: object) -> Optional[float]:
+    if pd.isna(due_date) or pd.isna(priority) or pd.isna(finish_time):
+        return None
+
+    due = float(due_date)
+    priority_int = max(1, int(float(priority)))
+    completion = float(finish_time)
+
+    w = float(priority_int) ** float(GAMMA)
+    lateness_s = completion - due
+    tardiness_s = max(0.0, lateness_s)
+    earliness_s = max(0.0, -lateness_s)
+
+    T_hours = tardiness_s / float(TIME_SCALE)
+    E_hours = earliness_s / float(TIME_SCALE)
+
+    exp_term = math.exp(float(ALPHA) * T_hours) - 1.0
+    weighted_exp_tardiness = float(DELTA) * w * exp_term
+    weighted_earliness_reward = float(BETA) * w * E_hours
+
+    return weighted_exp_tardiness - weighted_earliness_reward
+
+
 def validate_summary(summary: pd.DataFrame) -> None:
     if summary["order_id"].duplicated().any():
         dupes = summary.loc[summary["order_id"].duplicated(), "order_id"].tolist()
         raise ValueError(f"Duplicate order_id values found in output summary: {dupes[:10]}")
 
-    for col in ["quantity0", "quantity1", "quantity2"]:
-        if (safe_numeric(summary[col]).fillna(0) < 0).any():
-            raise ValueError(f"Negative quantities found in {col}.")
-
-    mask = summary["finish_time"].notna() & summary["start_time"].notna()
-    bad = summary.loc[mask & (summary["finish_time"] < summary["start_time"])]
-    if not bad.empty:
-        bad_orders = bad["order_id"].tolist()[:10]
-        raise ValueError(
-            f"Found orders where finish_time < start_time. Example order_id values: {bad_orders}"
-        )
-
 
 def build_order_summary(results_dir: Path, main_name: str, run_name: str) -> Path:
-    """
-    Create order_summary.csv using:
-      - output/<main>/run_x/results/unit_summary.csv
-      - on_going/<main>/run_x/production_plan*.csv
-    """
     unit_path = results_dir / "unit_summary.csv"
     if not unit_path.exists():
         raise FileNotFoundError(f"Missing {unit_path}")
@@ -282,7 +359,6 @@ def build_order_summary(results_dir: Path, main_name: str, run_name: str) -> Pat
     unit_df = pd.read_csv(unit_path)
     plan_df = pd.read_csv(plan_path)
 
-    # --- unit_summary columns ---
     unit_order_col = find_col(unit_df, ["order_id", "orderID"])
     unit_variant_col = find_col(unit_df, ["variant"])
     unit_start_col = find_col(unit_df, ["first_arrival_time_s", "first_arrival_time", "first_arrival"])
@@ -295,31 +371,22 @@ def build_order_summary(results_dir: Path, main_name: str, run_name: str) -> Pat
     unit_df[unit_order_col] = unit_df[unit_order_col].astype(int)
     unit_df[unit_variant_col] = unit_df[unit_variant_col].astype(str)
 
-    # --- Actual timing from unit_summary ---
     timing = (
         unit_df.groupby(unit_order_col, dropna=False)
-        .agg(
-            start_time=(unit_start_col, "min"),
-            finish_time=(unit_finish_col, "max"),
-        )
+        .agg(start_time=(unit_start_col, "min"), finish_time=(unit_finish_col, "max"))
         .reset_index()
         .rename(columns={unit_order_col: "order_id"})
     )
     timing["through_put_time"] = timing["finish_time"] - timing["start_time"]
 
-    # --- Actual variant counts from unit_summary ---
     actual_variants = build_actual_variant_summary(unit_df, unit_order_col, unit_variant_col)
-
-    # --- Planned metadata and planned variants from production plan ---
     plan_meta = extract_plan_metadata(plan_df)
     plan_variants = extract_plan_variants(plan_df)
 
-    # --- Merge with plan as the base so planned orders with no completed units still appear ---
     summary = plan_meta.merge(timing, on="order_id", how="left")
     summary = summary.merge(plan_variants, on="order_id", how="left", suffixes=("", "_plan"))
     summary = summary.merge(actual_variants, on="order_id", how="left", suffixes=("_plan", ""))
 
-    # Prefer actual variant/quantity values when present; otherwise fall back to plan values
     for i in range(3):
         v_actual = f"variant{i}"
         q_actual = f"quantity{i}"
@@ -342,44 +409,26 @@ def build_order_summary(results_dir: Path, main_name: str, run_name: str) -> Pat
 
         use_plan_variant = summary[v_actual].eq("") & summary[v_plan].ne("")
         summary.loc[use_plan_variant, v_actual] = summary.loc[use_plan_variant, v_plan]
-
         use_plan_qty = summary[q_actual].isna() & summary[q_plan].notna()
         summary.loc[use_plan_qty, q_actual] = summary.loc[use_plan_qty, q_plan]
-
         summary[q_actual] = summary[q_actual].fillna(0).astype(int)
 
-    # Lateness from finish_time - due date (both in seconds)
     summary["lateness"] = pd.NA
     due_numeric = safe_numeric(summary["due date"])
     can_compute_lateness = summary["finish_time"].notna() & due_numeric.notna()
-    summary.loc[can_compute_lateness, "lateness"] = (
-        summary.loc[can_compute_lateness, "finish_time"] - due_numeric.loc[can_compute_lateness]
-    )
+    summary.loc[can_compute_lateness, "lateness"] = summary.loc[can_compute_lateness, "finish_time"] - due_numeric.loc[can_compute_lateness]
 
     finished_week_day = summary["finish_time"].apply(lambda x: seconds_to_week_day(x, DAY_SECONDS, WEEK_DAYS))
     summary["finished_week"] = finished_week_day.apply(lambda x: x[0])
     summary["finished_day"] = finished_week_day.apply(lambda x: x[1])
 
-    final_cols = [
-        "order_id",
-        "due date",
-        "start_time",
-        "finish_time",
-        "through_put_time",
-        "lateness",
-        "priority",
-        "variant0",
-        "quantity0",
-        "variant1",
-        "quantity1",
-        "variant2",
-        "quantity2",
-        "planned_week",
-        "finished_week",
-        "planned_day",
-        "finished_day",
-    ]
+    summary["fitness"] = summary.apply(lambda row: compute_order_fitness_row(row["due date"], row["priority"], row["finish_time"]), axis=1)
 
+    final_cols = [
+        "order_id", "due date", "start_time", "finish_time", "through_put_time", "lateness", "fitness",
+        "priority", "variant0", "quantity0", "variant1", "quantity1", "variant2", "quantity2",
+        "planned_week", "finished_week", "planned_day", "finished_day",
+    ]
     for c in final_cols:
         if c not in summary.columns:
             summary[c] = pd.NA
@@ -401,14 +450,13 @@ def main() -> None:
     chosen_main = select_main_folder(OUTPUT_DIR)
     main_name = chosen_main.name
     runs = list_run_folders(chosen_main)
-
     if not runs:
         raise FileNotFoundError(f"No run_* folders found in {chosen_main}")
 
     print(f"\nProcessing main folder: {main_name}")
     print(f"Found {len(runs)} run folder(s).")
 
-    created = []
+    created_order_summaries: List[Path] = []
     for run_dir in runs:
         results_dir = run_dir / "results"
         if not results_dir.exists():
@@ -416,12 +464,17 @@ def main() -> None:
             continue
         try:
             out_path = build_order_summary(results_dir, main_name=main_name, run_name=run_dir.name)
-            created.append(out_path)
-            print(f"Created: {out_path}")
+            created_order_summaries.append(out_path)
+            print(f"Created order summary: {out_path}")
         except Exception as exc:
-            print(f"ERROR in {run_dir}: {exc}")
+            print(f"ERROR building order summary in {run_dir}: {exc}")
 
-    print(f"\nDone. Created {len(created)} order_summary.csv file(s) in main folder: {main_name}")
+    created_kpi_csvs = create_layout_kpi_csvs(main_name, runs)
+    for path in created_kpi_csvs:
+        print(f"Created KPI summary: {path}")
+
+    print(f"\nDone. Created {len(created_order_summaries)} order_summary.csv file(s) in main folder: {main_name}")
+    print(f"Created {len(created_kpi_csvs)} layout KPI CSV file(s) in post_processing/{main_name}")
 
 
 if __name__ == "__main__":

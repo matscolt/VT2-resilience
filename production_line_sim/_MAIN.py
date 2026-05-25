@@ -357,15 +357,16 @@ def main():
             if i == 0 or reaction_enabled:
                 print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
                 C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
+                GAend = ti.perf_counter()
             else:
                 print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
 
             print(f"----MAIN.py: running main sim from {t_start} until {t_stop}\n day {t_start/(3600*8):.4f} to {t_stop/(3600*8):.4f}")
             D_production_line_sim.main(main_settings_dir, t_stop, t_start)
-            end = ti.perf_counter()
-            print(f"[MAIN] segment wall time: {end - start}\n\n\n - - - - - \n")
-            print(f"the simulation has run for {int(end - run_time_start)} seconds")
-            ctotal_time = int(end-main_start_time)
+            simend = ti.perf_counter()
+            print(f"[MAIN] segment wall time: {simend - start}\n\n\n - - - - - \n")
+            print(f"the simulation has run for {int(simend - run_time_start)} seconds")
+            ctotal_time = int(simend-main_start_time)
             ch = ctotal_time // 3600
             cm = (ctotal_time % 3600) // 60
             cs = ctotal_time % 60
