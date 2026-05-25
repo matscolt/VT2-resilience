@@ -447,34 +447,36 @@ def main() -> None:
     if not ON_GOING_DIR.exists():
         raise FileNotFoundError(f"on_going folder does not exist: {ON_GOING_DIR}")
 
-    chosen_main = select_main_folder(OUTPUT_DIR)
-    main_name = chosen_main.name
-    runs = list_run_folders(chosen_main)
-    if not runs:
-        raise FileNotFoundError(f"No run_* folders found in {chosen_main}")
+    #chosen_main = select_main_folder(OUTPUT_DIR)
+    candidates = list_main_folders(OUTPUT_DIR)
+    for chosen_main in candidates:
+        main_name = chosen_main.name
+        runs = list_run_folders(chosen_main)
+        if not runs:
+            raise FileNotFoundError(f"No run_* folders found in {chosen_main}")
 
-    print(f"\nProcessing main folder: {main_name}")
-    print(f"Found {len(runs)} run folder(s).")
+        print(f"\nProcessing main folder: {main_name}")
+        print(f"Found {len(runs)} run folder(s).")
 
-    created_order_summaries: List[Path] = []
-    for run_dir in runs:
-        results_dir = run_dir / "results"
-        if not results_dir.exists():
-            print(f"WARNING: No results folder in {run_dir}. Skipping.")
-            continue
-        try:
-            out_path = build_order_summary(results_dir, main_name=main_name, run_name=run_dir.name)
-            created_order_summaries.append(out_path)
-            print(f"Created order summary: {out_path}")
-        except Exception as exc:
-            print(f"ERROR building order summary in {run_dir}: {exc}")
+        created_order_summaries: List[Path] = []
+        for run_dir in runs:
+            results_dir = run_dir / "results"
+            if not results_dir.exists():
+                print(f"WARNING: No results folder in {run_dir}. Skipping.")
+                continue
+            try:
+                out_path = build_order_summary(results_dir, main_name=main_name, run_name=run_dir.name)
+                created_order_summaries.append(out_path)
+                print(f"Created order summary: {out_path}")
+            except Exception as exc:
+                print(f"ERROR building order summary in {run_dir}: {exc}")
 
-    created_kpi_csvs = create_layout_kpi_csvs(main_name, runs)
-    for path in created_kpi_csvs:
-        print(f"Created KPI summary: {path}")
+        created_kpi_csvs = create_layout_kpi_csvs(main_name, runs)
+        for path in created_kpi_csvs:
+            print(f"Created KPI summary: {path}")
 
-    print(f"\nDone. Created {len(created_order_summaries)} order_summary.csv file(s) in main folder: {main_name}")
-    print(f"Created {len(created_kpi_csvs)} layout KPI CSV file(s) in post_processing/{main_name}")
+        print(f"\nDone. Created {len(created_order_summaries)} order_summary.csv file(s) in main folder: {main_name}")
+        print(f"Created {len(created_kpi_csvs)} layout KPI CSV file(s) in post_processing/{main_name}")
 
 
 if __name__ == "__main__":
