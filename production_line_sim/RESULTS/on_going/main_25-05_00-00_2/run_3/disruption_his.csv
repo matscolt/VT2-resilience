@@ -1,0 +1,57 @@
+﻿disruption_type,estimated_duration,station_id,efficiency_loss,start_time,end_time
+Drill To Dull,9152.0,2,0.0,16188.0,22898.0
+PLC Failure,3312.0,6,0.0,20249.0,23004.0
+emergency_order,0.0,,0.0,29362.0,
+Drill To Dull,9152.0,2.1,0.0,31278.0,38730.0
+emergency_order,0.0,,0.0,52337.0,
+Bottom Cover Misaligned,2288.0,1.1,0.0,57944.0,59715.0
+efficiency_loss,0.0,4,88.0,59069.0,59861.0
+PLC Failure,3312.0,2.1,0.0,96055.0,98721.0
+emergency_order,0.0,,0.0,114469.0,
+efficiency_loss,0.0,6,24.0,118184.0,118609.0
+efficiency_loss,0.0,2,83.0,123594.0,124281.0
+emergency_order,0.0,,0.0,132782.0,
+inspection_failure,0.0,,0.0,151712.0,
+Top Cover Misaligned,2288.0,5.1,0.0,167426.0,168969.0
+PLC Failure,3312.0,1,0.0,176157.0,178821.0
+efficiency_loss,0.0,5.1,24.0,202948.0,204143.0
+efficiency_loss,0.0,4,30.0,204690.0,205436.0
+emergency_order,0.0,,0.0,221686.0,
+efficiency_loss,0.0,6.1,12.0,235312.0,235668.0
+Top Cover Stuck,2392.0,5.1,0.0,235420.0,237519.0
+Camera Dirty,2496.0,4.1,0.0,246779.0,248726.0
+emergency_order,0.0,,0.0,248809.0,
+Bottom Cover Misaligned,2288.0,1,0.0,258799.0,260446.0
+emergency_order,0.0,,0.0,263300.0,
+efficiency_loss,0.0,2.1,69.0,269395.0,270019.0
+efficiency_loss,0.0,5.1,68.0,274581.0,276228.0
+Top Cover Misaligned,2288.0,5,0.0,279294.0,280945.0
+Misaligned Material,10440.0,3.2,0.0,279948.0,286699.0
+PLC Failure,3312.0,2,0.0,280372.0,283453.0
+Top Cover Stuck,2392.0,5,0.0,286226.0,288442.0
+emergency_order,0.0,,0.0,288025.0,
+emergency_order,0.0,,0.0,297852.0,
+Camera Dirty,2496.0,4,0.0,304512.0,306547.0
+efficiency_loss,0.0,1,12.0,310045.0,311084.0
+Misaligned Material,10440.0,3.1,0.0,310638.0,315636.0
+efficiency_loss,0.0,1.1,66.0,347380.0,348391.0
+PLC Failure,3312.0,6.1,0.0,361520.0,364236.0
+efficiency_loss,0.0,4.1,34.0,374635.0,375348.0
+inspection_failure,0.0,,0.0,378821.0,
+inspection_failure,0.0,,0.0,380987.0,
+Cover Wrong Orientation,8736.0,3.2,0.0,383120.0,389337.0
+Bottom Cover Stuck,2392.0,1.1,0.0,392356.0,394374.0
+PLC Failure,3312.0,5.1,0.0,393350.0,396131.0
+inspection_failure,0.0,,0.0,404218.0,
+emergency_order,0.0,,0.0,407861.0,
+emergency_order,0.0,,0.0,412001.0,
+emergency_order,0.0,,0.0,414505.0,
+PLC Failure,3312.0,4,0.0,417530.0,420413.0
+efficiency_loss,0.0,5,65.0,476772.0,478101.0
+PLC Failure,3312.0,4.1,0.0,485983.0,488967.0
+emergency_order,0.0,,0.0,487094.0,
+emergency_order,0.0,,0.0,504738.0,
+emergency_order,0.0,,0.0,541562.0,
+Bottom Cover Stuck,2392.0,1,0.0,544871.0,546786.0
+efficiency_loss,0.0,4.1,86.0,553703.0,554529.0
+emergency_order,0.0,,0.0,554137.0,
