@@ -164,7 +164,7 @@ def main():
     if not simulation_performance_path.exists():
         with simulation_performance_path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["time", "run number", " GA_calculation", " main_simulation_runtime"])
+            writer.writerow(["start of run", "run number", "schedule_calculation", "simulation_runtime"])
     
     #create input subfolders
     disruption_dir = dirs[0] / "disruptions"
@@ -208,7 +208,7 @@ def main():
         react = "Disabled"
     
     if base_settings["random based disruptions"]["enabled"]==2:
-        dis ="enabled"
+        dis ="Enabled"
         if base_settings["segment_time"]==1:
             warning= "Segment_time is enabled while disruptions also are enabled"
     elif base_settings["random based disruptions"]["enabled"]==0:
@@ -356,25 +356,29 @@ def main():
             t_stop = event_times[i + 1]
             if t_stop <= t_start:
                 continue
-
             start = ti.perf_counter()
             print(f"[MAIN] Segment {i+1}/{len(event_times)-1}: t={t_start} -> {t_stop}\n day {t_start/(3600*8):.4f} to {t_stop/(3600*8):.4f}")
 
             if i == 0 or reaction_enabled:
                 print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
+                GAstart = ti.perf_counter()
                 C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
                 GAend = ti.perf_counter()
-                GAcalctime = GAend - start
-                GAcalcattime = GAend - main_start_time
-                with simulation_performance_path.open("a", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerow([t_start, run_idx, GAcalctime, GAcalcattime])
+                GAcalctime = GAend - GAstart
             else:
                 print(f"----MAIN.py: keeping existing schedule in run {run_idx} at t={t_start}")
+                GAcalctime = 0
 
             print(f"----MAIN.py: running main sim from {t_start} until {t_stop}\n day {t_start/(3600*8):.4f} to {t_stop/(3600*8):.4f}")
+            simstart = ti.perf_counter()
             D_production_line_sim.main(main_settings_dir, t_stop, t_start)
             simend = ti.perf_counter()
+            sim_run_time = simend - simstart
+            
+            runtime = start - run_time_start
+            with simulation_performance_path.open("a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([runtime, run_idx, GAcalctime, sim_run_time])
             print(f"[MAIN] segment wall time: {simend - start}\n\n\n - - - - - \n")
             print(f"the simulation has run for {int(simend - run_time_start)} seconds")
             ctotal_time = int(simend-main_start_time)

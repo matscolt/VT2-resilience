@@ -936,11 +936,11 @@ def plot_station_availability(station_data, graphfolder):
 
     def color_for(u):
         if u < lower:
-            return "#2ca02c"
+            return "#d62728"
         elif u < higher:
             return "#fceb31"
         else:
-            return "#d62728"
+            return "#2ca02c"
 
     colors = [color_for(u) for u in times]
 
@@ -965,9 +965,9 @@ def plot_station_availability(station_data, graphfolder):
     ax.set_xlim(0, right * 1.15)
 
     legend_handles = [
-        mpatches.Patch(color="#2ca02c", label=f"Low (<{lower}%)"),
+        mpatches.Patch(color="#d62728", label=f"Low (<{lower}%)"),
         mpatches.Patch(color="#fceb31", label=f"Medium ({lower}–{higher}%)"),
-        mpatches.Patch(color="#d62728", label=f"High (≥{higher}%)"),
+        mpatches.Patch(color="#2ca02c", label=f"High (≥{higher}%)"),
     ]
     ax.legend(handles=legend_handles, loc="lower right")
 
@@ -1026,7 +1026,8 @@ def main(starttime=time.perf_counter()):
         plot_order_fitness_boxplot(order_data, graph_folder)
         print("Time spent: " + str(time.perf_counter() - starttime))
         plot_station_utilization(station_summary, graph_folder)
-    plot_station_availability(station_summary, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_station_availability(station_summary, graph_folder)
 
 
 if __name__ == "__main__":
