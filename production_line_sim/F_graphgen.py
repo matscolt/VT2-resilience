@@ -14,6 +14,21 @@ from typing import List, Optional, Tuple
 
 ROOTDIR = Path(__file__).parent
 RESULTSDIR = ROOTDIR / "RESULTS"
+SIM_DAY_SECONDS = 8 * 60 * 60
+
+
+def display_station_name(name: str) -> str:
+    if name in (None, ""):
+        return name
+    s = str(name).strip()
+    m = re.match(r'^(Station\s+6(?:\.\d+)?)(?:\s*:\s*|\s+)(Packaging)$', s, flags=re.IGNORECASE)
+    if m:
+        return f"{m.group(1)}: Unloading"
+    return s
+
+
+def _seconds_to_sim_days(seconds_value: float) -> float:
+    return float(seconds_value) / float(SIM_DAY_SECONDS)
 
 
 def _parse_main_folder_name(name: str, assumed_year: int) -> Optional[Tuple[datetime, int]]:
@@ -221,6 +236,18 @@ def load_all_data(data_folder):
         "lateness", "fitness", "priority", "planned_week", "finished_week", "planned_day", "finished_day"
     ])
 
+    for row in station_schedule:
+        if "station_name" in row:
+            row["station_name"] = display_station_name(row["station_name"])
+    for row in station_summary:
+        if "station_name" in row:
+            row["station_name"] = display_station_name(row["station_name"])
+    for row in transport_data:
+        if "from_station" in row:
+            row["from_station"] = display_station_name(row["from_station"])
+        if "to_station" in row:
+            row["to_station"] = display_station_name(row["to_station"])
+
     return station_schedule, station_summary, transport_data, unit_data, material_data, order_data
 
 
@@ -420,6 +447,7 @@ def plot_cumulative_completed_units_by_station(station_data, graphfolder):
     station_folder.mkdir(parents=True, exist_ok=True)
 
     for station_name, finish_times in sorted(station_rows.items()):
+        station_name = display_station_name(station_name)
         if not finish_times:
             continue
 
@@ -429,8 +457,9 @@ def plot_cumulative_completed_units_by_station(station_data, graphfolder):
         graphname = f"cumulative_completed_units_{_safe_filename(station_name)}.png"
 
         plt.figure(figsize=(12, 6))
-        plt.step(finish_times, cumulative_units, where="post", linewidth=2, color="#1f77b4")
-        plt.xlabel("Time [s]")
+        finish_days = [_seconds_to_sim_days(t) for t in finish_times]
+        plt.step(finish_days, cumulative_units, where="post", linewidth=2, color="#1f77b4")
+        plt.xlabel("Time [days]")
         plt.ylabel("Completed units [-]")
         plt.title(f"Cumulative completed units over time\n{station_name}")
         plt.grid(True, linestyle="--", alpha=0.5)
@@ -464,11 +493,7 @@ def plot_throughput_times(unit_data, graphfolder):
     n_units = len(units)
     step = max(1, n_units // max_labels)
 
-    plt.xticks(
-        ticks=range(0, n_units, step),
-        labels=units[::step],
-        rotation=90
-    )
+    plt.xticks([])
     plt.ylabel("Throughput time [s]")
     plt.title("Throughput time per unit")
 
@@ -502,8 +527,9 @@ def plot_cumulative_completed_units(unit_data, graphfolder):
     graphname = "cumulative_completed_units.png"
 
     plt.figure(figsize=(12, 6))
-    plt.step(completion_times, cumulative_units, where="post", linewidth=2, color="#1f77b4")
-    plt.xlabel("Time [s]")
+    completion_days = [_seconds_to_sim_days(t) for t in completion_times]
+    plt.step(completion_days, cumulative_units, where="post", linewidth=2, color="#1f77b4")
+    plt.xlabel("Time [days]")
     plt.ylabel("Completed units [-]")
     plt.title("Cumulative completed units over time")
     plt.grid(True, linestyle="--", alpha=0.5)
@@ -574,7 +600,7 @@ def _priority_color(priority_value):
     return mapping.get(p)
 
 
-def _plot_order_lateness_variant(valid_rows, graphfolder, graphname, title):
+def _plot_order_lateness_variant(valid_rows, graphfolder, graphname, title, show_order_ids=True):
     if not valid_rows:
         print(f">> No valid lateness data found. Skipping {graphname}.")
         return
@@ -620,11 +646,7 @@ def _plot_order_lateness_variant(valid_rows, graphfolder, graphname, title):
     n_orders = len(orders)
     step = max(1, n_orders // max_labels)
 
-    plt.xticks(
-        ticks=range(0, n_orders, step),
-        labels=orders[::step],
-        rotation=90
-    )
+    plt.xticks([])
 
     plt.ylabel("Lateness [h]")
     plt.title(title)
@@ -650,6 +672,7 @@ def plot_order_lateness(order_data, graphfolder):
                 "lateness": float(lateness_val),
                 "priority": row.get("priority", None),
                 "due date": row.get("due date", None),
+                "finish_time": row.get("finish_time", None),
             }
 
             due_val = row.get("due date", None)
@@ -657,6 +680,12 @@ def plot_order_lateness(order_data, graphfolder):
                 record["due date"] = float(due_val)
             else:
                 record["due date"] = None
+
+            finish_val = row.get("finish_time", None)
+            if finish_val not in ("", None):
+                record["finish_time"] = float(finish_val)
+            else:
+                record["finish_time"] = None
 
             valid_rows.append(record)
         except ValueError:
@@ -681,15 +710,23 @@ def plot_order_lateness(order_data, graphfolder):
     def sort_by_lateness(row):
         return row["lateness"]
 
+    def sort_by_finish_time(row):
+        finish_time = row.get("finish_time")
+        if finish_time is None:
+            return float("inf")
+        return finish_time
+
     by_order_id = sorted(valid_rows, key=sort_by_order_id)
     by_due_date = sorted(valid_rows, key=sort_by_due_date)
     by_lateness = sorted(valid_rows, key=sort_by_lateness, reverse=True)
+    by_finish_time = sorted(valid_rows, key=sort_by_finish_time)
 
     _plot_order_lateness_variant(
         by_order_id,
         graphfolder,
         graphname="order_lateness.png",
-        title="Lateness per order (sorted by order id)"
+        title="Lateness per order (sorted by order id)",
+        show_order_ids=False
     )
 
     _plot_order_lateness_variant(
@@ -706,7 +743,12 @@ def plot_order_lateness(order_data, graphfolder):
         title="Lateness per order (sorted by lateness)"
     )
 
-
+    _plot_order_lateness_variant(
+        by_finish_time,
+        graphfolder,
+        graphname="order_lateness_finish_time.png",
+        title="Lateness per order (sorted by finish time)"
+    )
 
 
 def _apply_fitness_symlog(values):
@@ -715,7 +757,7 @@ def _apply_fitness_symlog(values):
     linthresh = min(nonzero) / 10.0 if nonzero else 1.0
     plt.yscale("symlog", linthresh=linthresh)
 
-def _plot_order_fitness_variant(valid_rows, graphfolder, graphname, title):
+def _plot_order_fitness_variant(valid_rows, graphfolder, graphname, title, show_order_ids=True):
     if not valid_rows:
         print(f">> No valid fitness data found. Skipping {graphname}.")
         return
@@ -761,11 +803,7 @@ def _plot_order_fitness_variant(valid_rows, graphfolder, graphname, title):
     n_orders = len(orders)
     step = max(1, n_orders // max_labels)
 
-    plt.xticks(
-        ticks=range(0, n_orders, step),
-        labels=orders[::step],
-        rotation=90
-    )
+    plt.xticks([])
     _apply_fitness_symlog(fitness_values)
     plt.ylabel("Fitness [-] (log)")
     plt.title(title)
@@ -789,12 +827,18 @@ def plot_order_fitness(order_data, graphfolder):
                 "fitness": float(fitness_val),
                 "priority": row.get("priority", None),
                 "due date": row.get("due date", None),
+                "finish_time": row.get("finish_time", None),
             }
             due_val = row.get("due date", None)
             if due_val not in ("", None):
                 record["due date"] = float(due_val)
             else:
                 record["due date"] = None
+            finish_val = row.get("finish_time", None)
+            if finish_val not in ("", None):
+                record["finish_time"] = float(finish_val)
+            else:
+                record["finish_time"] = None
             valid_rows.append(record)
         except ValueError:
             pass
@@ -818,15 +862,23 @@ def plot_order_fitness(order_data, graphfolder):
     def sort_by_fitness(row):
         return row["fitness"]
 
+    def sort_by_finish_time(row):
+        finish_time = row.get("finish_time")
+        if finish_time is None:
+            return float("inf")
+        return finish_time
+
     by_order_id = sorted(valid_rows, key=sort_by_order_id)
     by_due_date = sorted(valid_rows, key=sort_by_due_date)
     by_fitness = sorted(valid_rows, key=sort_by_fitness, reverse=True)
+    by_finish_time = sorted(valid_rows, key=sort_by_finish_time)
 
     _plot_order_fitness_variant(
         by_order_id,
         graphfolder,
         graphname="order_fitness.png",
-        title="Fitness per order (sorted by order id)"
+        title="Fitness per order (sorted by order id)",
+        show_order_ids=False
     )
     _plot_order_fitness_variant(
         by_due_date,
@@ -839,6 +891,12 @@ def plot_order_fitness(order_data, graphfolder):
         graphfolder,
         graphname="order_fitness_fitness.png",
         title="Fitness per order (sorted by fitness)"
+    )
+    _plot_order_fitness_variant(
+        by_finish_time,
+        graphfolder,
+        graphname="order_fitness_finish_time.png",
+        title="Fitness per order (sorted by finish time)"
     )
 
 
@@ -878,6 +936,72 @@ def plot_order_fitness_boxplot(order_data, graphfolder):
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
     plt.close()
     print(f">> Generated {graphname}")
+
+def plot_station_waiting_time(station_data, graphfolder):
+    print(">> Generating station waiting time!")
+    graphname = "Station_waiting_time.png"
+
+    stations = [row["station_name"] for row in station_data]
+    times = [float(row["average_wait_time_s"]) for row in station_data]
+
+    fig, ax = plt.subplots(figsize=(9, max(3, 0.5 * len(stations))))
+    bars = ax.barh(stations, times, color="#1f77b4")
+
+    ax.set_xlabel("Average wait time [s]")
+    ax.set_title("Station waiting time")
+
+    try:
+        ax.bar_label(bars, labels=[f"{t:.1f} s" for t in times], padding=3)
+    except AttributeError:
+        for bar, val in zip(bars, times):
+            ax.text(
+                val + max(times) * 0.01 if times else 0.1,
+                bar.get_y() + bar.get_height() / 2,
+                f"{val:.1f} s",
+                va="center", ha="left", fontsize=9
+            )
+
+    right = max(times) if times else 1
+    ax.set_xlim(0, right * 1.15 if right > 0 else 1)
+
+    plt.tight_layout()
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f">> Generated {graphname}")
+
+
+def plot_station_queue_size(station_data, graphfolder):
+    print(">> Generating station queue size!")
+    graphname = "Station_queue_size.png"
+
+    stations = [row["station_name"] for row in station_data]
+    times = [float(row["average_queue_length"]) for row in station_data]
+
+    fig, ax = plt.subplots(figsize=(9, max(3, 0.5 * len(stations))))
+    bars = ax.barh(stations, times, color="#9467bd")
+
+    ax.set_xlabel("Average queue size [-]")
+    ax.set_title("Station queue size")
+
+    try:
+        ax.bar_label(bars, labels=[f"{t:.2f}" for t in times], padding=3)
+    except AttributeError:
+        for bar, val in zip(bars, times):
+            ax.text(
+                val + max(times) * 0.01 if times else 0.1,
+                bar.get_y() + bar.get_height() / 2,
+                f"{val:.2f}",
+                va="center", ha="left", fontsize=9
+            )
+
+    right = max(times) if times else 1
+    ax.set_xlim(0, right * 1.15 if right > 0 else 1)
+
+    plt.tight_layout()
+    plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f">> Generated {graphname}")
+
 
 def plot_station_utilization(station_data, graphfolder):
     print(">> Generating station utilization!")
@@ -1033,6 +1157,10 @@ def main(starttime=time.perf_counter()):
         plot_order_fitness(order_data, graph_folder)
         print("Time spent: " + str(time.perf_counter() - starttime))
         plot_order_fitness_boxplot(order_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_station_waiting_time(station_summary, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_station_queue_size(station_summary, graph_folder)
         print("Time spent: " + str(time.perf_counter() - starttime))
         plot_station_utilization(station_summary, graph_folder)
         print("Time spent: " + str(time.perf_counter() - starttime))
