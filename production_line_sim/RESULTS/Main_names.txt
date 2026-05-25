@@ -40,7 +40,7 @@ PP w dis w react =
 
 GA wo dis =
     "rescheduling_enabled":1,
-    "reaction_enabled":0,
+    "reaction_enabled":1,
     "fast_GA":0,
     "segment_time":1,
     "segment_interval":2.5,
