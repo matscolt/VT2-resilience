@@ -1376,12 +1376,17 @@ def _load_disruption_events(mainfolder: Path, run_name: str, resultfolder: Path)
                     end_val = float(end_raw)
                 except ValueError:
                     continue
+                label = row.get("disruption_name", row.get("event_name", row.get("disruption", f"Disruption {idx + 1}")))
+                label_normalized = str(label).strip().lower()
+                if label_normalized in ("emergency_order", "inspection_failure"):
+                    continue
                 events.append({
                     "start": start_val,
                     "end": end_val,
-                    "label": row.get("disruption_name", row.get("event_name", row.get("disruption", f"Disruption {idx + 1}"))),
+                    "label": label,
                 })
-            return events
+            events.sort(key=lambda event: event["end"] - event["start"], reverse=True)
+            return events[:10]
         except Exception:
             continue
     return []
@@ -1393,8 +1398,8 @@ def _add_disruption_lines(disruptions, color_offset=0):
         color = plt.cm.tab20((color_offset + idx) % 20)
         start_day = _seconds_to_sim_days(event["start"])
         end_day = _seconds_to_sim_days(event["end"])
-        plt.axvline(x=start_day, color=color, linestyle="-", linewidth=1.2, alpha=0.9)
-        plt.axvline(x=end_day, color=color, linestyle="--", linewidth=1.2, alpha=0.9)
+        plt.axvline(x=start_day, color=color, linestyle="-", linewidth=0.5, alpha=0.9)
+        plt.axvline(x=end_day, color=color, linestyle="--", linewidth=0.5, alpha=0.9)
 
 
 def plot_compare_throughput_rate_moving(compare_entries, graphfolder, run_name):
@@ -1431,6 +1436,7 @@ def plot_compare_throughput_rate_moving(compare_entries, graphfolder, run_name):
     plt.title(f"Moving throughput rate comparison ({run_name})")
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.legend(loc="lower right")
+    plt.xlim(left=_seconds_to_sim_days(100))
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
     plt.close()
@@ -1472,6 +1478,7 @@ def plot_compare_throughput_rate_interval(compare_entries, graphfolder, run_name
     plt.title(f"Interval throughput rate comparison ({run_name})")
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.legend(loc="lower right")
+    plt.xlim(left=_seconds_to_sim_days(100))
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
     plt.close()
@@ -1617,7 +1624,7 @@ def main(starttime=time.perf_counter()):
             print("Time spent: " + str(time.perf_counter() - starttime))
             plot_station_availability(station_summary, graph_folder)
 
-    compare_choice = input("Do you want to compare five mains? [y/N] >> ").strip().lower()
+    compare_choice = input("Do you want to compare five mains (2 average lines + 3 dynamic mains)? [y/N] >> ").strip().lower()
     if compare_choice in ("y", "yes"):
         compare_mainfolders = prompt_for_compare_main_folders(output_dir, count=5)
         generate_compare_graphs(compare_mainfolders, post_processing_folder, starttime)
