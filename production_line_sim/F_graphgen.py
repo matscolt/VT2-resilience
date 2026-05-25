@@ -151,9 +151,7 @@ def find_results_folder(
             chosen_main = candidates[0][2]
 
     runs = list_run_folders(chosen_main)
-    chosen_run = prompt_for_run_folder(chosen_main, runs)
-
-    return chosen_main, chosen_run
+    return chosen_main, runs
 
 
 def clear_folder(folder: Path):
@@ -927,52 +925,54 @@ def plot_station_utilization(station_data, graphfolder):
 
 def main(starttime=time.perf_counter()):
     output_dir = RESULTSDIR / "output"
-    mainfolder, runfolder = find_results_folder(output_dir)
-    resultfolder = runfolder / "results"
-    chosenrun = runfolder.name
+    mainfolder, runs = find_results_folder(output_dir)
 
     post_processing_folder = RESULTSDIR / "post_processing"
     post_processing_folder.mkdir(parents=True, exist_ok=True)
-
     mainfoldername = str(mainfolder).split("\\")[-1]
-    ppfolder = post_processing_folder / mainfoldername / chosenrun
-    ppfolder.mkdir(parents=True, exist_ok=True)
 
-    print(f"placing graphs and so on inside {mainfoldername}")
-    clear_folder(ppfolder)
+    for chosenrun in runs:
+        resultfolder = chosenrun / "results"
+        chosenrun = chosenrun.name
+        print(f"----creating graphs for {chosenrun}----")
+        ppfolder = post_processing_folder / mainfoldername / chosenrun
+        ppfolder.mkdir(parents=True, exist_ok=True)
 
-    station_schedule, station_summary, transport_data, unit_data, material_data, order_data = load_all_data(resultfolder)
+        print(f"placing graphs and so on inside {mainfoldername}")
+        clear_folder(ppfolder)
 
-    graph_folder = ppfolder / "graphs"
-    graph_folder.mkdir(exist_ok=True)
+        station_schedule, station_summary, transport_data, unit_data, material_data, order_data = load_all_data(resultfolder)
 
-    starttime_gantt = float(input("where do you want your gantt chart to start from? >>"))
-    endtime_gantt = float(input("where do you want your gantt chart to end from? >>"))
-    if endtime_gantt - starttime_gantt <= 0:
-        print("time invalid therefore skipping")
-    else:
-        plot_gantt(station_schedule, transport_data, graph_folder, starttime_gantt, endtime_gantt)
+        graph_folder = ppfolder / "graphs"
+        graph_folder.mkdir(exist_ok=True)
+
+        starttime_gantt =0 #float(input("where do you want your gantt chart to start from? >>"))
+        endtime_gantt = 0  #float(input("where do you want your gantt chart to end from? >>"))
+        if endtime_gantt - starttime_gantt <= 0:
+            print("time invalid therefore skipping")
+        else:
+            plot_gantt(station_schedule, transport_data, graph_folder, starttime_gantt, endtime_gantt)
+            print("Time spent: " + str(time.perf_counter() - starttime))
+
+        plot_throughput_times(unit_data, graph_folder)
         print("Time spent: " + str(time.perf_counter() - starttime))
 
-    plot_throughput_times(unit_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_cumulative_completed_units(unit_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_cumulative_completed_units_by_station(station_schedule, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
 
-    plot_cumulative_completed_units(unit_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
-    plot_cumulative_completed_units_by_station(station_schedule, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_order_lateness(order_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
 
-    plot_order_lateness(order_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_order_lateness_boxplot(order_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
 
-    plot_order_lateness_boxplot(order_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
-
-    plot_order_fitness(order_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
-    plot_order_fitness_boxplot(order_data, graph_folder)
-    print("Time spent: " + str(time.perf_counter() - starttime))
-    plot_station_utilization(station_summary, graph_folder)
+        plot_order_fitness(order_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_order_fitness_boxplot(order_data, graph_folder)
+        print("Time spent: " + str(time.perf_counter() - starttime))
+        plot_station_utilization(station_summary, graph_folder)
 
 
 if __name__ == "__main__":
