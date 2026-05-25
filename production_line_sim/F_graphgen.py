@@ -1349,58 +1349,6 @@ def _load_throughput_rate_per_hour(resultfolder: Path):
 
 
 
-def _load_disruption_events(mainfolder: Path, run_name: str, resultfolder: Path):
-    candidates = [
-        Path(resultfolder) / "disruption_history.csv",
-        Path(resultfolder) / "disruption_his.csv",
-        Path(resultfolder).parent / "disruption_history.csv",
-        Path(resultfolder).parent / "disruption_his.csv",
-        RESULTSDIR / "on_going" / mainfolder.name / run_name / "disruption_his.csv",
-        RESULTSDIR / "on_going" / mainfolder.name / run_name / "disruption_history.csv",
-    ]
-    for path in candidates:
-        if not path.exists():
-            continue
-        try:
-            with path.open("r", newline="", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
-                rows = list(reader)
-            events = []
-            for idx, row in enumerate(rows):
-                start_raw = row.get("start_time_s", row.get("start_time", ""))
-                end_raw = row.get("end_time_s", row.get("end_time", ""))
-                if start_raw in ("", None) or end_raw in ("", None):
-                    continue
-                try:
-                    start_val = float(start_raw)
-                    end_val = float(end_raw)
-                except ValueError:
-                    continue
-                label = row.get("disruption_name", row.get("event_name", row.get("disruption", f"Disruption {idx + 1}")))
-                label_normalized = str(label).strip().lower()
-                if label_normalized in ("emergency_order", "inspection_failure"):
-                    continue
-                events.append({
-                    "start": start_val,
-                    "end": end_val,
-                    "label": label,
-                })
-            events.sort(key=lambda event: event["end"] - event["start"], reverse=True)
-            return events[:10]
-        except Exception:
-            continue
-    return []
-
-
-
-def _add_disruption_lines(disruptions, color_offset=0):
-    for idx, event in enumerate(disruptions):
-        color = plt.cm.tab20((color_offset + idx) % 20)
-        start_day = _seconds_to_sim_days(event["start"])
-        end_day = _seconds_to_sim_days(event["end"])
-        plt.axvline(x=start_day, color=color, linestyle="-", linewidth=0.5, alpha=0.9)
-        plt.axvline(x=end_day, color=color, linestyle="--", linewidth=0.5, alpha=0.9)
-
 
 def plot_compare_throughput_rate_moving(compare_entries, graphfolder, run_name):
     print(f">> Generating compare moving throughput rate plot for {run_name}!")
@@ -1422,7 +1370,6 @@ def plot_compare_throughput_rate_moving(compare_entries, graphfolder, run_name):
         if not x_days:
             continue
         plt.plot(x_days, y_values, linewidth=0.8, label=entry["main_name"])
-        _add_disruption_lines(entry.get("disruptions", []), color_offset=color_offset)
         color_offset += len(entry.get("disruptions", []))
         plotted = True
 
@@ -1464,7 +1411,6 @@ def plot_compare_throughput_rate_interval(compare_entries, graphfolder, run_name
         if not x_days:
             continue
         plt.step(x_days, y_values, where="post", linewidth=2, label=entry["main_name"])
-        _add_disruption_lines(entry.get("disruptions", []), color_offset=color_offset)
         color_offset += len(entry.get("disruptions", []))
         plotted = True
 
@@ -1484,6 +1430,97 @@ def plot_compare_throughput_rate_interval(compare_entries, graphfolder, run_name
     plt.close()
     print(f">> Generated {graphname}")
 
+
+
+def _find_disruptions_used_csv(resultfolder: Path):
+    candidates = [
+        Path(resultfolder) / "disruptions_used.csv",
+        Path(resultfolder).parent / "disruptions_used.csv",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+
+def plot_compare_disruption_gantt(graphfolder, disruptions_csv: str | Path, main_name: str, run_name: str):
+    disruptions_csv = Path(disruptions_csv)
+    events = []
+
+    with disruptions_csv.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                station_raw = row.get("station_id", row.get("station_index", row.get("station", "")))
+                start_raw = row.get("start_time", row.get("start_time_s", ""))
+                end_raw = row.get("end_time", row.get("end_time_s", ""))
+                dtype = str(row.get("disruption_type", row.get("type", row.get("disruption", ""))) or "").strip().lower()
+                if dtype in ("emergency_order", "inspection_failure"):
+                    continue
+                if station_raw in ("", None) or start_raw in ("", None) or end_raw in ("", None):
+                    continue
+                station = int(float(station_raw))
+                start = float(start_raw)
+                end = float(end_raw)
+            except (TypeError, ValueError):
+                continue
+
+            if end <= start:
+                continue
+
+            events.append({"station": station, "start": start, "end": end, "type": dtype})
+
+    if not events:
+        print(f">> No valid disruptions found in {disruptions_csv}. Skipping compare disruption Gantt chart.")
+        return
+
+    stations = sorted({e["station"] for e in events})
+    station_to_y = {st: i for i, st in enumerate(stations)}
+    plan_time = max(e["end"] for e in events)
+
+    def color_for(dtype: str) -> str:
+        if "break" in dtype:
+            return "green"
+        if "eff" in dtype or "reduc" in dtype or "loss" in dtype:
+            return "red"
+        return "gray"
+
+    events.sort(key=lambda e: (e["start"], e["station"]))
+
+    fig, ax = plt.subplots(figsize=(14, 6))
+    lane_height = 0.8
+    for event in events:
+        y = station_to_y[event["station"]]
+        y0 = y - lane_height / 2
+        ax.broken_barh(
+            [(event["start"], event["end"] - event["start"])],
+            (y0, lane_height),
+            facecolors=color_for(event["type"]),
+            edgecolors="black",
+            linewidth=0.3,
+        )
+
+    ax.set_title(f"Disruptions Gantt Chart ({main_name}, {run_name})")
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Station")
+    ax.set_yticks([station_to_y[st] for st in stations])
+    ax.set_yticklabels([str(st) for st in stations])
+    ax.invert_yaxis()
+    ax.set_xlim(0, plan_time)
+
+    legend_items = [
+        mpatches.Patch(facecolor="green", edgecolor="black", label="Breakdown"),
+        mpatches.Patch(facecolor="red", edgecolor="black", label="Efficiency reduction"),
+        mpatches.Patch(facecolor="gray", edgecolor="black", label="Other disruption"),
+    ]
+    ax.legend(handles=legend_items, loc="upper right")
+    ax.grid(True, axis="x", linestyle="--", alpha=0.3)
+    fig.tight_layout()
+    graphname = "compare_disruptions_gantt.png"
+    fig.savefig(graphfolder / graphname, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f">> Generated {graphname}")
 
 
 def plot_compare_cumulative_completed_units(unit_data_by_main, graphfolder, run_name):
@@ -1543,16 +1580,20 @@ def generate_compare_graphs(mainfolders, post_processing_folder, starttime):
 
         compare_entries = []
         cumulative_entries = []
-        for mainfolder, run_map in run_maps:
+        first_dynamic_disruptions_csv = None
+        first_dynamic_main_name = None
+        for idx, (mainfolder, run_map) in enumerate(run_maps):
             resultfolder = run_map[run_name]
             station_schedule, station_summary, transport_data, unit_data, material_data, order_data = load_all_data(resultfolder)
             compare_entries.append({
                 "main_name": mainfolder.name,
                 "unit_data": unit_data,
                 "avg_rate": _load_throughput_rate_per_hour(resultfolder),
-                "disruptions": _load_disruption_events(mainfolder, run_name, resultfolder),
             })
             cumulative_entries.append((mainfolder.name, unit_data))
+            if idx == 2:
+                first_dynamic_disruptions_csv = _find_disruptions_used_csv(resultfolder)
+                first_dynamic_main_name = mainfolder.name
 
         plot_compare_throughput_rate_moving(compare_entries, graph_folder, run_name)
         print("Time spent: " + str(time.perf_counter() - starttime))
@@ -1560,6 +1601,11 @@ def generate_compare_graphs(mainfolders, post_processing_folder, starttime):
         print("Time spent: " + str(time.perf_counter() - starttime))
         plot_compare_cumulative_completed_units(cumulative_entries, graph_folder, run_name)
         print("Time spent: " + str(time.perf_counter() - starttime))
+        if first_dynamic_disruptions_csv is None:
+            print(f"first_dynamic_disruptions_csv is none :(")
+        if first_dynamic_disruptions_csv is not None:
+            plot_compare_disruption_gantt(graph_folder, first_dynamic_disruptions_csv, first_dynamic_main_name, run_name)
+            print("Time spent: " + str(time.perf_counter() - starttime))
 
 
 
