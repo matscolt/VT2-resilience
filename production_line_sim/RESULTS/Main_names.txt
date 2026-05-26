@@ -4,7 +4,7 @@ PP w dis w react = main_25-05_18-48_4
 GA wo dis = main_25-05_13-10_2
 GA w dis w react= main_25-05_21-25_0
 GA random w dis w react high settings = 
-GA random w dis w react standard settings =
+GA random w dis w react standard settings = main_26-05_10-00_0
 
 PP wo dis = 
     "rescheduling_enabled":0,

@@ -399,7 +399,7 @@ def main():
         #pipeline(settings, num_orders=num_orders, num_units=num_units, algo_choice=algo_choice)
         print("----------------------------------------------------------------------------------------------------")
         next_pct = G_after_movie.progress_update(run_idx, max_idx, next_pct,action=action)
-        #stop the loop
+        break #stop the loop
     main_stop_time = ti.perf_counter()
     total_time = int(main_stop_time-main_start_time)
     h = total_time // 3600
