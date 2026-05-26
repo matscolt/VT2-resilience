@@ -29,6 +29,20 @@ def display_station_name(name: str) -> str:
     return s
 
 
+def display_main_name(name: str) -> str:
+    if name in (None, ""):
+        return name
+    s = str(name).strip()
+    mapping = {
+        "main_25-05_16-53_1": "EDD no disruptions",
+        "main_24-05_13-10_2": "Rescheduling no disruptions",
+        "main_23-05_21-25_3": "Rescheduling with rerouting and disruptions",
+        "main_22-05_17-35_4": "EDD with disruptions",
+        "main_21-05_18-48_5": "EDD with rerouting and disruptions",
+    }
+    return mapping.get(s, s)
+
+
 def _seconds_to_sim_days(seconds_value: float) -> float:
     return float(seconds_value) / float(SIM_DAY_SECONDS)
 
@@ -1938,14 +1952,14 @@ def generate_compare_graphs(mainfolders, post_processing_folder, starttime):
             resultfolder = run_map[run_name]
             station_schedule, station_summary, transport_data, unit_data, material_data, order_data = load_all_data(resultfolder)
             compare_entries.append({
-                "main_name": mainfolder.name,
+                "main_name": display_main_name(mainfolder.name),
                 "unit_data": unit_data,
                 "avg_rate": _load_throughput_rate_per_hour(resultfolder),
             })
-            cumulative_entries.append((mainfolder.name, unit_data))
+            cumulative_entries.append((display_main_name(mainfolder.name), unit_data))
             if idx == 2:
                 first_dynamic_disruptions_csv = _find_disruptions_used_csv(resultfolder)
-                first_dynamic_main_name = mainfolder.name
+                first_dynamic_main_name = display_main_name(mainfolder.name)
 
         plot_compare_throughput_rate_moving(compare_entries, graph_folder, run_name)
         print("Time spent: " + str(time.perf_counter() - starttime))
