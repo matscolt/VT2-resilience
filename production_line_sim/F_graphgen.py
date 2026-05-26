@@ -1350,12 +1350,48 @@ def _load_throughput_rate_per_hour(resultfolder: Path):
 
 
 
-def _combine_compare_average_rate(compare_entries):
-    avg_rates = [entry.get("avg_rate") for entry in compare_entries[:2] if entry.get("avg_rate") is not None]
+def _calc_average_rate_from_unit_data_within_limits(unit_data, x_min_days=None, x_max_days=None):
+    completion_times = _extract_completion_times(unit_data)
+    if not completion_times:
+        return None
+
+    x_min_s = None if x_min_days is None else float(x_min_days) * float(SIM_DAY_SECONDS)
+    x_max_s = None if x_max_days is None else float(x_max_days) * float(SIM_DAY_SECONDS)
+
+    filtered_completion_times = []
+    for completion_time in completion_times:
+        if x_min_s is not None and completion_time < x_min_s:
+            continue
+        if x_max_s is not None and completion_time > x_max_s:
+            continue
+        filtered_completion_times.append(float(completion_time))
+
+    if len(filtered_completion_times) < 2:
+        return None
+
+    earliest_finish = min(filtered_completion_times)
+    latest_finish = max(filtered_completion_times)
+    if latest_finish <= earliest_finish:
+        return None
+
+    elapsed_time_s = latest_finish - earliest_finish
+    units_finished = len(filtered_completion_times)
+    return units_finished * 3600.0 / elapsed_time_s
+
+
+
+def _combine_compare_average_rate(compare_entries, x_min_days=None, x_max_days=None):
+    avg_rates = []
+    for entry in compare_entries[:2]:
+        unit_data = entry.get("unit_data")
+        if not unit_data:
+            continue
+        avg_rate = _calc_average_rate_from_unit_data_within_limits(unit_data, x_min_days=x_min_days, x_max_days=x_max_days)
+        if avg_rate is not None:
+            avg_rates.append(avg_rate)
     if not avg_rates:
         return None
     return float(sum(avg_rates)) / float(len(avg_rates))
-
 
 
 def _calc_signed_rl_t_line(x_values, y_values, average_rate, x_min=None, x_max=None):
@@ -1410,9 +1446,9 @@ def plot_compare_throughput_rate_moving(compare_entries, graphfolder, run_name):
 
     plt.figure(figsize=(12, 6))
     plotted = False
-    average_rate = _combine_compare_average_rate(compare_entries)
     x_min = _seconds_to_sim_days(7200)
     x_max = None
+    average_rate = _combine_compare_average_rate(compare_entries, x_min_days=x_min, x_max_days=x_max)
     rl_entries = []
 
     if average_rate is not None:
@@ -1474,9 +1510,9 @@ def plot_compare_throughput_rate_interval(compare_entries, graphfolder, run_name
 
     plt.figure(figsize=(12, 6))
     plotted = False
-    average_rate = _combine_compare_average_rate(compare_entries)
     x_min = _seconds_to_sim_days(7200)
     x_max = None
+    average_rate = _combine_compare_average_rate(compare_entries, x_min_days=x_min, x_max_days=x_max)
     rl_entries = []
 
     if average_rate is not None:
