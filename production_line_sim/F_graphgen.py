@@ -1427,7 +1427,7 @@ def plot_compare_throughput_rate_moving(compare_entries, graphfolder, run_name):
     total_rl = 0.0
 
     if average_rate is not None:
-        plt.axhline(y=average_rate, linewidth=1.8, linestyle=":", color="black", label="Average")
+        plt.axhline(y=average_rate, linewidth=1.8, linestyle=":", color="black", label="Average without disruptions")
         plotted = True
 
     color_offset = 0
@@ -1488,7 +1488,7 @@ def plot_compare_throughput_rate_interval(compare_entries, graphfolder, run_name
     total_rl = 0.0
 
     if average_rate is not None:
-        plt.axhline(y=average_rate, linewidth=1.8, linestyle=":", color="black", label="Average")
+        plt.axhline(y=average_rate, linewidth=1.8, linestyle=":", color="black", label="Average without disruptions")
         plotted = True
 
     color_offset = 0
