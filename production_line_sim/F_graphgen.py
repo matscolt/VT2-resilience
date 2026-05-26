@@ -1474,7 +1474,7 @@ def _extract_emergency_order_duration_s(row):
     for key in count_keys:
         parsed = _parse_positive_float(row.get(key))
         if parsed is not None:
-            return parsed * 60.0
+            return parsed * 720.0
 
     list_keys = [
         "unit_ids",
@@ -1488,9 +1488,9 @@ def _extract_emergency_order_duration_s(row):
             continue
         tokens = [token.strip() for token in re.split(r'[;,|]+', str(raw)) if token.strip() != ""]
         if tokens:
-            return float(len(tokens)) * 60.0
+            return float(len(tokens)) * 720.0
 
-    return 60.0
+    return 720.0
 
 
 
@@ -1708,8 +1708,10 @@ def plot_compare_disruption_gantt(graphfolder, disruptions_csv: str | Path, main
     for event in events:
         y = lane_to_y[event["lane_key"]]
         y0 = y - lane_height / 2
+        start_day = _seconds_to_sim_days(event["start"])
+        duration_days = _seconds_to_sim_days(event["end"] - event["start"])
         ax.broken_barh(
-            [(event["start"], event["end"] - event["start"])],
+            [(start_day, duration_days)],
             (y0, lane_height),
             facecolors=color_for(event),
             edgecolors="black",
@@ -1717,12 +1719,12 @@ def plot_compare_disruption_gantt(graphfolder, disruptions_csv: str | Path, main
         )
 
     ax.set_title(f"Disruptions Gantt Chart ({main_name}, {run_name})")
-    ax.set_xlabel("Time [s]")
+    ax.set_xlabel("Time [days]")
     ax.set_ylabel("Station")
     ax.set_yticks([lane_to_y[lane] for lane in lanes])
     ax.set_yticklabels([lane_label_map.get(lane, lane) for lane in lanes])
     ax.invert_yaxis()
-    ax.set_xlim(0, plan_time)
+    ax.set_xlim(0, _seconds_to_sim_days(plan_time))
     legend_items = [
         mpatches.Patch(facecolor="green", edgecolor="black", label="Machine breakdown"),
         mpatches.Patch(facecolor="red", edgecolor="black", label="Efficiency reduction"),
