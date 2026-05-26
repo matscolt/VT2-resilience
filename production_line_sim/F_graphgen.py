@@ -1432,10 +1432,166 @@ def plot_compare_throughput_rate_interval(compare_entries, graphfolder, run_name
 
 
 
+def _normalize_disruption_text(value) -> str:
+    return str(value or "").strip().lower()
+
+
+
+def _first_present(row, keys, default=""):
+    for key in keys:
+        if key in row and row.get(key) not in ("", None):
+            return row.get(key)
+    return default
+
+
+
+def _parse_positive_float(value):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed > 0:
+        return parsed
+    return None
+
+
+
+def _extract_emergency_order_duration_s(row):
+    count_keys = [
+        "units_in_order",
+        "amount_of_units",
+        "amount_units",
+        "unit_count",
+        "units",
+        "n_units",
+        "num_units",
+        "number_of_units",
+        "qty",
+        "quantity",
+        "order_size",
+        "amount",
+    ]
+    for key in count_keys:
+        parsed = _parse_positive_float(row.get(key))
+        if parsed is not None:
+            return parsed * 60.0
+
+    list_keys = [
+        "unit_ids",
+        "units_included",
+        "order_units",
+        "unit_list",
+    ]
+    for key in list_keys:
+        raw = row.get(key, "")
+        if raw in ("", None):
+            continue
+        tokens = [token.strip() for token in re.split(r'[;,|]+', str(raw)) if token.strip() != ""]
+        if tokens:
+            return float(len(tokens)) * 60.0
+
+    return 60.0
+
+
+
+def _load_station_type_names(disruption_config_path: Path | None = None):
+    if disruption_config_path is None:
+        disruption_config_path = ROOTDIR / "data" / "disruption_v2.json"
+    path = Path(disruption_config_path)
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+
+    station_types = {}
+    stations = data.get("Stations", {}) if isinstance(data, dict) else {}
+    for station_id, station_info in stations.items():
+        try:
+            station_key = int(float(station_id))
+        except (TypeError, ValueError):
+            continue
+        if isinstance(station_info, dict):
+            station_type = station_info.get("station_type", "")
+            if station_type not in ("", None):
+                station_types[station_key] = str(station_type).strip()
+    return station_types
+
+
+
+def _format_station_instance_label(station_instance_value, station_type_names=None):
+    s = str(station_instance_value or "").strip()
+    if s == "":
+        return s
+    if s.lower().startswith("station "):
+        return display_station_name(s)
+    try:
+        numeric_value = float(s)
+    except ValueError:
+        return s
+    base_station = int(numeric_value)
+    if station_type_names is None:
+        station_type_names = {}
+    station_type = station_type_names.get(base_station, "")
+    if station_type:
+        return f"Station {s}: {station_type}"
+    return f"Station {s}"
+
+
+
+def _station_instance_sort_key(value):
+    s = str(value or "").strip()
+    if s.lower().startswith("station "):
+        s = s[8:]
+        s = s.split(":", 1)[0].strip()
+    try:
+        parts = s.split(".")
+        major = int(parts[0]) if parts[0] != "" else 10**9
+        minor = int(parts[1]) if len(parts) > 1 and parts[1] != "" else 0
+        return (major, minor, s)
+    except Exception:
+        return (10**9, 0, s)
+
+
+def _load_machine_breakdown_names(disruption_config_path: Path | None = None):
+    if disruption_config_path is None:
+        disruption_config_path = ROOTDIR / "data" / "disruption_v2.json"
+    path = Path(disruption_config_path)
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+
+    station_breakdowns = {}
+    stations = data.get("Stations", {}) if isinstance(data, dict) else {}
+    for station_id, station_info in stations.items():
+        try:
+            station_key = int(station_id)
+        except (TypeError, ValueError):
+            continue
+        breakdowns = station_info.get("machine breakdowns", []) if isinstance(station_info, dict) else []
+        names = set()
+        for entry in breakdowns:
+            if not isinstance(entry, dict):
+                continue
+            normalized_name = _normalize_disruption_text(entry.get("name", ""))
+            if normalized_name:
+                names.add(normalized_name)
+        station_breakdowns[station_key] = names
+    return station_breakdowns
+
+
 def _find_disruptions_used_csv(resultfolder: Path):
     candidates = [
         Path(resultfolder) / "disruptions_used.csv",
+        Path(resultfolder) / "disruption_used.csv",
         Path(resultfolder).parent / "disruptions_used.csv",
+        Path(resultfolder).parent / "disruption_used.csv",
     ]
     for path in candidates:
         if path.exists():
@@ -1446,57 +1602,116 @@ def _find_disruptions_used_csv(resultfolder: Path):
 
 def plot_compare_disruption_gantt(graphfolder, disruptions_csv: str | Path, main_name: str, run_name: str):
     disruptions_csv = Path(disruptions_csv)
+    machine_breakdown_names = _load_machine_breakdown_names()
+    station_type_names = _load_station_type_names()
     events = []
+    emergency_lane_key = "__emergency_orders__"
+    emergency_lane_label = "Emergency orders"
 
     with disruptions_csv.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            dtype_raw = _first_present(row, ["disruption_type", "type", "disruption"], "")
+            label_raw = _first_present(row, ["name", "disruption_name", "event_name"], dtype_raw)
+            dtype = _normalize_disruption_text(dtype_raw)
+            label = _normalize_disruption_text(label_raw)
+
+            is_emergency_order = dtype == "emergency_order" or label == "emergency_order"
+            is_inspection_failure = dtype == "inspection_failure" or label == "inspection_failure"
+
+            start_raw = _first_present(row, ["start_time", "start_time_s"], "")
+            end_raw = _first_present(row, ["end_time", "end_time_s"], "")
+            if start_raw in ("", None):
+                continue
             try:
-                station_raw = row.get("station_id", row.get("station_index", row.get("station", "")))
-                start_raw = row.get("start_time", row.get("start_time_s", ""))
-                end_raw = row.get("end_time", row.get("end_time_s", ""))
-                dtype = str(row.get("disruption_type", row.get("type", row.get("disruption", ""))) or "").strip().lower()
-                if dtype in ("emergency_order", "inspection_failure"):
-                    continue
-                if station_raw in ("", None) or start_raw in ("", None) or end_raw in ("", None):
-                    continue
-                station = int(float(station_raw))
-                start = float(start_raw)
-                end = float(end_raw)
+                start_time = float(start_raw)
             except (TypeError, ValueError):
                 continue
 
-            if end <= start:
+            if is_emergency_order:
+                lane_key = emergency_lane_key
+                lane_label = emergency_lane_label
+                base_station_id = None
+                duration_s = _extract_emergency_order_duration_s(row)
+                end_time = start_time + duration_s
+            else:
+                station_id_raw = _first_present(row, ["station_id", "station"], "")
+                station_instance_raw = _first_present(
+                    row,
+                    ["station_index", "station_instance", "station_instance_index"],
+                    station_id_raw,
+                )
+                if station_instance_raw in ("", None):
+                    continue
+                lane_key = str(station_instance_raw).strip()
+                if lane_key == "":
+                    continue
+                lane_label = _format_station_instance_label(lane_key, station_type_names)
+                try:
+                    base_station_id = int(float(station_id_raw)) if station_id_raw not in ("", None) else int(float(lane_key))
+                except (TypeError, ValueError):
+                    continue
+
+                if is_inspection_failure:
+                    end_time = start_time + 500.0
+                else:
+                    if end_raw in ("", None):
+                        continue
+                    try:
+                        end_time = float(end_raw)
+                    except (TypeError, ValueError):
+                        continue
+
+            if end_time <= start_time:
                 continue
 
-            events.append({"station": station, "start": start, "end": end, "type": dtype})
+            events.append({
+                "lane_key": lane_key,
+                "lane_label": lane_label,
+                "base_station_id": base_station_id,
+                "start": start_time,
+                "end": end_time,
+                "type": dtype,
+                "label": label,
+                "is_emergency_order": is_emergency_order,
+                "is_inspection_failure": is_inspection_failure,
+            })
 
     if not events:
         print(f">> No valid disruptions found in {disruptions_csv}. Skipping compare disruption Gantt chart.")
         return
 
-    stations = sorted({e["station"] for e in events})
-    station_to_y = {st: i for i, st in enumerate(stations)}
+    lane_label_map = {event["lane_key"]: event["lane_label"] for event in events}
+    normal_lanes = sorted(
+        {e["lane_key"] for e in events if e["lane_key"] != emergency_lane_key},
+        key=_station_instance_sort_key,
+    )
+    lanes = normal_lanes + ([emergency_lane_key] if emergency_lane_key in lane_label_map else [])
+    lane_to_y = {lane: i for i, lane in enumerate(lanes)}
     plan_time = max(e["end"] for e in events)
 
-    def color_for(dtype: str) -> str:
-        if "break" in dtype:
+    def color_for(event) -> str:
+        if event["is_emergency_order"]:
+            return "#9467bd"
+        if event["is_inspection_failure"]:
+            return "#1f77b4"
+        station_breakdowns = machine_breakdown_names.get(event["base_station_id"], set())
+        if event["label"] in station_breakdowns:
             return "green"
-        if "eff" in dtype or "reduc" in dtype or "loss" in dtype:
+        if "eff" in event["type"] or "reduc" in event["type"] or "loss" in event["type"] or "eff" in event["label"] or "reduc" in event["label"] or "loss" in event["label"]:
             return "red"
         return "gray"
 
-    events.sort(key=lambda e: (e["start"], e["station"]))
-
+    events.sort(key=lambda e: (e["start"], lane_to_y[e["lane_key"]]))
     fig, ax = plt.subplots(figsize=(14, 6))
     lane_height = 0.8
     for event in events:
-        y = station_to_y[event["station"]]
+        y = lane_to_y[event["lane_key"]]
         y0 = y - lane_height / 2
         ax.broken_barh(
             [(event["start"], event["end"] - event["start"])],
             (y0, lane_height),
-            facecolors=color_for(event["type"]),
+            facecolors=color_for(event),
             edgecolors="black",
             linewidth=0.3,
         )
@@ -1504,15 +1719,15 @@ def plot_compare_disruption_gantt(graphfolder, disruptions_csv: str | Path, main
     ax.set_title(f"Disruptions Gantt Chart ({main_name}, {run_name})")
     ax.set_xlabel("Time [s]")
     ax.set_ylabel("Station")
-    ax.set_yticks([station_to_y[st] for st in stations])
-    ax.set_yticklabels([str(st) for st in stations])
+    ax.set_yticks([lane_to_y[lane] for lane in lanes])
+    ax.set_yticklabels([lane_label_map.get(lane, lane) for lane in lanes])
     ax.invert_yaxis()
     ax.set_xlim(0, plan_time)
-
     legend_items = [
-        mpatches.Patch(facecolor="green", edgecolor="black", label="Breakdown"),
+        mpatches.Patch(facecolor="green", edgecolor="black", label="Machine breakdown"),
         mpatches.Patch(facecolor="red", edgecolor="black", label="Efficiency reduction"),
-        mpatches.Patch(facecolor="gray", edgecolor="black", label="Other disruption"),
+        mpatches.Patch(facecolor="#1f77b4", edgecolor="black", label="Inspection failure"),
+        mpatches.Patch(facecolor="#9467bd", edgecolor="black", label="Emergency order"),
     ]
     ax.legend(handles=legend_items, loc="upper right")
     ax.grid(True, axis="x", linestyle="--", alpha=0.3)
@@ -1521,7 +1736,6 @@ def plot_compare_disruption_gantt(graphfolder, disruptions_csv: str | Path, main
     fig.savefig(graphfolder / graphname, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f">> Generated {graphname}")
-
 
 def plot_compare_cumulative_completed_units(unit_data_by_main, graphfolder, run_name):
     print(f">> Generating compare cumulative completed units plot for {run_name}!")
