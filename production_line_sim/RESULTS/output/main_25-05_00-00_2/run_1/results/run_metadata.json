@@ -1,9 +1,0 @@
-{
-  "order_text": "1_1_1_1__scheduled_335units__segment_from_571640__remaining_0units",
-  "expanded_order_sequence": [],
-  "data_directory": "C:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\data",
-  "output_directory": "C:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\output\\main_25-05_00-00_2\\run_1\\results",
-  "created_at": "2026-05-25T00:38:26",
-  "main_settings_json": "C:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\input\\main_25-05_00-00_2\\runs\\run_1\\main_settings.json",
-  "input_current_schedule": "c:\\Users\\macie\\Desktop\\VT2-resilience\\production_line_sim\\on_going\\main_25-05_00-00_2\\run_1\\current_schedule.csv"
-}
