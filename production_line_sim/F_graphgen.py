@@ -1350,18 +1350,84 @@ def _load_throughput_rate_per_hour(resultfolder: Path):
 
 
 
+def _combine_compare_average_rate(compare_entries):
+    avg_rates = [entry.get("avg_rate") for entry in compare_entries[:2] if entry.get("avg_rate") is not None]
+    if not avg_rates:
+        return None
+    return float(sum(avg_rates)) / float(len(avg_rates))
+
+
+
+def _calc_resilience_loss_area_line(x_values, y_values, average_rate, x_min=None, x_max=None):
+    if average_rate is None or len(x_values) < 2:
+        return 0.0
+    area = 0.0
+    for i in range(len(x_values) - 1):
+        x0 = float(x_values[i])
+        x1 = float(x_values[i + 1])
+        y0 = float(y_values[i])
+        y1 = float(y_values[i + 1])
+        if x1 <= x0:
+            continue
+        seg_left = x0 if x_min is None else max(x0, x_min)
+        seg_right = x1 if x_max is None else min(x1, x_max)
+        if seg_right <= seg_left:
+            continue
+        dx = x1 - x0
+        left_ratio = (seg_left - x0) / dx
+        right_ratio = (seg_right - x0) / dx
+        yl = y0 + (y1 - y0) * left_ratio
+        yr = y0 + (y1 - y0) * right_ratio
+        dl = average_rate - yl
+        dr = average_rate - yr
+        width = seg_right - seg_left
+        if dl <= 0 and dr <= 0:
+            continue
+        if dl >= 0 and dr >= 0:
+            area += (dl + dr) * 0.5 * width
+            continue
+        if yr == yl:
+            continue
+        x_cross = seg_left + (average_rate - yl) * width / (yr - yl)
+        if dl > 0:
+            area += dl * max(0.0, x_cross - seg_left) * 0.5
+        if dr > 0:
+            area += dr * max(0.0, seg_right - x_cross) * 0.5
+    return area
+
+
+
+def _calc_resilience_loss_area_step(x_values, y_values, average_rate, x_min=None, x_max=None):
+    if average_rate is None or len(x_values) < 2:
+        return 0.0
+    area = 0.0
+    for i in range(len(x_values) - 1):
+        left = float(x_values[i])
+        right = float(x_values[i + 1])
+        if right <= left:
+            continue
+        seg_left = left if x_min is None else max(left, x_min)
+        seg_right = right if x_max is None else min(right, x_max)
+        if seg_right <= seg_left:
+            continue
+        gap = max(average_rate - float(y_values[i]), 0.0)
+        area += gap * (seg_right - seg_left)
+    return area
+
+
 def plot_compare_throughput_rate_moving(compare_entries, graphfolder, run_name):
     print(f">> Generating compare moving throughput rate plot for {run_name}!")
     graphname = "compare_throughput_rate_moving.png"
 
     plt.figure(figsize=(12, 6))
     plotted = False
+    average_rate = _combine_compare_average_rate(compare_entries)
+    x_min = _seconds_to_sim_days(7200)
+    x_max = None
+    total_rl = 0.0
 
-    for entry in compare_entries[:2]:
-        avg_rate = entry.get("avg_rate")
-        if avg_rate is None:
-            continue
-        plt.axhline(y=avg_rate, linewidth=1.8, linestyle=":", label=f"{entry['main_name']} average")
+    if average_rate is not None:
+        plt.axhline(y=average_rate, linewidth=1.8, linestyle=":", color="black", label="Average")
         plotted = True
 
     color_offset = 0
@@ -1369,7 +1435,21 @@ def plot_compare_throughput_rate_moving(compare_entries, graphfolder, run_name):
         x_days, y_values = _calc_throughput_rate_moving_series(entry["unit_data"])
         if not x_days:
             continue
-        plt.plot(x_days, y_values, linewidth=0.8, label=entry["main_name"])
+        line, = plt.plot(x_days, y_values, linewidth=0.8, label=entry["main_name"])
+        where_mask = [((x >= x_min) and (x_max is None or x <= x_max) and (y < average_rate)) for x, y in zip(x_days, y_values)] if average_rate is not None else None
+        if average_rate is not None:
+            plt.fill_between(
+                x_days,
+                y_values,
+                [average_rate] * len(x_days),
+                where=where_mask,
+                interpolate=True,
+                hatch='///',
+                facecolor='none',
+                edgecolor=line.get_color(),
+                linewidth=0.0,
+            )
+            total_rl += _calc_resilience_loss_area_line(x_days, y_values, average_rate, x_min=x_min, x_max=x_max)
         color_offset += len(entry.get("disruptions", []))
         plotted = True
 
@@ -1382,13 +1462,18 @@ def plot_compare_throughput_rate_moving(compare_entries, graphfolder, run_name):
     plt.ylabel("Throughput rate [units/hour]")
     plt.title(f"Moving throughput rate comparison ({run_name})")
     plt.grid(True, linestyle="--", alpha=0.5)
-    plt.legend(loc="lower right")
-    plt.xlim(left=_seconds_to_sim_days(7200))
+    legend = plt.legend(loc="lower right")
+    if average_rate is not None:
+        legend_handles = legend.legend_handles if hasattr(legend, 'legend_handles') else legend.legendHandles
+        legend_labels = [text.get_text() for text in legend.get_texts()]
+        legend_handles.append(mpatches.Patch(facecolor='none', edgecolor='black', hatch='///', label=f"Total R(L) = {total_rl:.2f}"))
+        legend_labels.append(f"Total R(L) = {total_rl:.2f}")
+        plt.legend(legend_handles, legend_labels, loc="lower right")
+    plt.xlim(left=x_min, right=x_max)
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
     plt.close()
     print(f">> Generated {graphname}")
-
 
 
 def plot_compare_throughput_rate_interval(compare_entries, graphfolder, run_name):
@@ -1397,12 +1482,13 @@ def plot_compare_throughput_rate_interval(compare_entries, graphfolder, run_name
 
     plt.figure(figsize=(12, 6))
     plotted = False
+    average_rate = _combine_compare_average_rate(compare_entries)
+    x_min = _seconds_to_sim_days(7200)
+    x_max = None
+    total_rl = 0.0
 
-    for entry in compare_entries[:2]:
-        avg_rate = entry.get("avg_rate")
-        if avg_rate is None:
-            continue
-        plt.axhline(y=avg_rate, linewidth=1.8, linestyle=":", label=f"{entry['main_name']} average")
+    if average_rate is not None:
+        plt.axhline(y=average_rate, linewidth=1.8, linestyle=":", color="black", label="Average")
         plotted = True
 
     color_offset = 0
@@ -1410,7 +1496,21 @@ def plot_compare_throughput_rate_interval(compare_entries, graphfolder, run_name
         x_days, y_values = _calc_throughput_rate_interval_series(entry["unit_data"])
         if not x_days:
             continue
-        plt.step(x_days, y_values, where="post", linewidth=2, label=entry["main_name"])
+        line = plt.step(x_days, y_values, where="post", linewidth=2, label=entry["main_name"])[0]
+        where_mask = [((x >= x_min) and (x_max is None or x <= x_max) and (y < average_rate)) for x, y in zip(x_days, y_values)] if average_rate is not None else None
+        if average_rate is not None:
+            plt.fill_between(
+                x_days,
+                y_values,
+                [average_rate] * len(x_days),
+                where=where_mask,
+                step='post',
+                hatch='///',
+                facecolor='none',
+                edgecolor=line.get_color(),
+                linewidth=0.0,
+            )
+            total_rl += _calc_resilience_loss_area_step(x_days, y_values, average_rate, x_min=x_min, x_max=x_max)
         color_offset += len(entry.get("disruptions", []))
         plotted = True
 
@@ -1423,13 +1523,18 @@ def plot_compare_throughput_rate_interval(compare_entries, graphfolder, run_name
     plt.ylabel("Throughput rate [units/hour]")
     plt.title(f"Interval throughput rate comparison ({run_name})")
     plt.grid(True, linestyle="--", alpha=0.5)
-    plt.legend(loc="lower right")
-    plt.xlim(left=_seconds_to_sim_days(7200))
+    legend = plt.legend(loc="lower right")
+    if average_rate is not None:
+        legend_handles = legend.legend_handles if hasattr(legend, 'legend_handles') else legend.legendHandles
+        legend_labels = [text.get_text() for text in legend.get_texts()]
+        legend_handles.append(mpatches.Patch(facecolor='none', edgecolor='black', hatch='///', label=f"Total R(L) = {total_rl:.2f}"))
+        legend_labels.append(f"Total R(L) = {total_rl:.2f}")
+        plt.legend(legend_handles, legend_labels, loc="lower right")
+    plt.xlim(left=x_min, right=x_max)
     plt.tight_layout()
     plt.savefig(graphfolder / graphname, dpi=200, bbox_inches="tight")
     plt.close()
     print(f">> Generated {graphname}")
-
 
 
 def _normalize_disruption_text(value) -> str:

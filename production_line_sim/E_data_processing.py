@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import csv
 import re
 from datetime import datetime
 from pathlib import Path
@@ -343,6 +344,54 @@ def compute_order_fitness_row(due_date: object, priority: object, finish_time: o
     return weighted_exp_tardiness - weighted_earliness_reward
 
 
+def update_total_fitness_kpi(order_summary_path: Path) -> Optional[Path]:
+    order_summary_path = Path(order_summary_path)
+    if not order_summary_path.exists():
+        return None
+
+    order_df = pd.read_csv(order_summary_path)
+    fitness_col = find_col(order_df, ["fitness"], required=False)
+    total_fitness = 0.0
+    if fitness_col is not None:
+        total_fitness = float(safe_numeric(order_df[fitness_col]).fillna(0).sum())
+
+    kpi_path = order_summary_path.with_name("kpi_summary.csv")
+    rows: List[List[str]] = []
+    header = None
+
+    if kpi_path.exists():
+        with kpi_path.open("r", encoding="utf-8-sig", newline="") as f:
+            rows = list(pd.read_csv(f, header=None, dtype=str, keep_default_na=False).itertuples(index=False, name=None))
+            rows = [list(row) for row in rows]
+
+    if rows:
+        first_row_norm = [norm(cell) for cell in rows[0][:2]]
+        if len(first_row_norm) >= 2 and first_row_norm[0] in {"kpi", "metric", "name"} and first_row_norm[1] in {"value", "val", "result"}:
+            header = rows.pop(0)
+        updated = False
+        for row in rows:
+            if row and norm(row[0]) == "total_fitness":
+                if len(row) < 2:
+                    row.append(str(total_fitness))
+                else:
+                    row[1] = str(total_fitness)
+                updated = True
+                break
+        if not updated:
+            rows.append(["total fitness", str(total_fitness)])
+    else:
+        header = ["kpi", "value"]
+        rows = [["total fitness", str(total_fitness)]]
+
+    with kpi_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        if header is not None:
+            writer.writerow(header)
+        writer.writerows(rows)
+
+    return kpi_path
+
+
 def validate_summary(summary: pd.DataFrame) -> None:
     if summary["order_id"].duplicated().any():
         dupes = summary.loc[summary["order_id"].duplicated(), "order_id"].tolist()
@@ -466,6 +515,7 @@ def main() -> None:
                 continue
             try:
                 out_path = build_order_summary(results_dir, main_name=main_name, run_name=run_dir.name)
+                update_total_fitness_kpi(out_path)
                 created_order_summaries.append(out_path)
                 print(f"Created order summary: {out_path}")
             except Exception as exc:
