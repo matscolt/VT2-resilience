@@ -585,11 +585,11 @@ def create_initial_order(orders: List[Order]):
             "planned_day": order.planned_day
         })
 
-    random.shuffle(order_scores)
+    #random.shuffle(order_scores)
 
-    """order_scores.sort(
+    order_scores.sort(
         key=lambda x: x["due_date"]
-    )"""
+    )
 
     initial = [
         row["order_id"]
