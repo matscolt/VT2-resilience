@@ -1,0 +1,49 @@
+disruption_type,station_id,start_time,end_time,efficiency_percentage,order_id,due_date,priority,variant0,quantity0,variant1,quantity1,variant2,quantity2
+Top Cover Stuck,5.1,45837,47942,0,,,,,,,,,
+Bottom Cover Stuck,1,53730,55787,0,,,,,,,,,
+Top Cover Stuck,5,74093,76083,0,,,,,,,,,
+Bottom Cover Misaligned,1,76762,78678,0,,,,,,,,,
+Top Cover Misaligned,5,95975,97900,0,,,,,,,,,
+efficiency_loss,4.1,104071,104755,85,,,,,,,,,
+Bottom Cover Misaligned,1.1,154713,156269,0,,,,,,,,,
+emergency_order,,170449,,,351,187987,5,FUSE0,15,FUSE1,16,FUSE2,15
+PLC Failure,5.1,175172,178369,0,,,,,,,,,
+Bottom Cover Misaligned,1.1,179821,181578,0,,,,,,,,,
+efficiency_loss,4,184600,185323,13,,,,,,,,,
+PLC Failure,6.1,191927,194520,0,,,,,,,,,
+Camera Dirty,4,206938,208661,0,,,,,,,,,
+emergency_order,,237592,,,352,268643,5,FUSE0,12,FUSE1,13,FUSE2,11
+PLC Failure,4,238809,241732,0,,,,,,,,,
+Misaligned Material,3.3,240463,247674,0,,,,,,,,,
+Drill To Dull,2,272836,281171,0,,,,,,,,,
+efficiency_loss,2,309630,310275,20,,,,,,,,,
+efficiency_loss,5.1,329737,330980,69,,,,,,,,,
+emergency_order,,331028,,,361,355244,5,FUSE0,18,FUSE1,17,FUSE2,15
+Drill To Dull,2.1,344459,351152,0,,,,,,,,,
+emergency_order,,354141,,,360,368057,5,FUSE0,14,FUSE1,13,FUSE2,16
+Bottom Cover Stuck,1.1,358110,360154,0,,,,,,,,,
+efficiency_loss,1,361771,362654,86,,,,,,,,,
+emergency_order,,369021,,,354,414206,5,FUSE0,13,FUSE1,14,FUSE2,15
+efficiency_loss,4.1,382812,383420,33,,,,,,,,,
+Misaligned Material,3,384064,391457,0,,,,,,,,,
+Camera Dirty,4.1,405439,407495,0,,,,,,,,,
+Top Cover Misaligned,5.1,424077,426203,0,,,,,,,,,
+efficiency_loss,5.1,436797,438285,38,,,,,,,,,
+emergency_order,,439450,,,355,461155,5,FUSE0,14,FUSE1,12,FUSE2,17
+emergency_order,,447848,,,356,462312,5,FUSE0,12,FUSE1,16,FUSE2,12
+inspection_failure,6,449497,,,,,,,,,,,
+Misaligned Material,3.2,455739,461494,0,,,,,,,,,
+inspection_failure,6.1,457340,,,,,,,,,,,
+Misaligned Material,3.4,458007,465902,0,,,,,,,,,
+inspection_failure,4.1,467559,,,,,,,,,,,
+emergency_order,,469836,,,357,498863,5,FUSE0,17,FUSE1,15,FUSE2,14
+efficiency_loss,6.1,478430,478853,30,,,,,,,,,
+efficiency_loss,2.1,488365,489022,42,,,,,,,,,
+emergency_order,,504645,,,359,533887,5,FUSE0,12,FUSE1,14,FUSE2,12
+emergency_order,,507639,,,353,524509,5,FUSE0,13,FUSE1,17,FUSE2,11
+efficiency_loss,5,519725,521116,43,,,,,,,,,
+inspection_failure,4,520568,,,,,,,,,,,
+PLC Failure,1,549962,552587,0,,,,,,,,,
+emergency_order,,553267,,,358,568055,5,FUSE0,17,FUSE1,15,FUSE2,13
+efficiency_loss,4,554422,554974,57,,,,,,,,,
+efficiency_loss,6,574530,574889,21,,,,,,,,,
