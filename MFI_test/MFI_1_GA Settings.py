@@ -1,7 +1,3 @@
-GA Settings fra CHATGPT
-
-GA Settings til 1 dag fra CHATGPT
-
 SWAPS             
 # Bruges kun til initial population creation ud fra initial chromosome f.eks. et swap [1,2,3] -> [3,2,1]
 # Swaps skal nok ikke være for højt hvis vi forventer at EDD er en god begyndelse!!!
