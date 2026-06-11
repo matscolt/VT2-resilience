@@ -41,8 +41,8 @@
     },
     "lowest acceptable standard deviation [std below]": 3,
     "ALLOWED_LOOKAHEAD_DAYS": {
-        "1":1,
-        "2":3
+        "1":3,
+        "2":5
     },
     "GENERATION_LIMIT" : 5,
     "CROSSOVER_RATE" : 0.9,
