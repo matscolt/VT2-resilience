@@ -1,12 +1,11 @@
-PP wo dis = MAIN_25-05_09-04_0
-PP w dis wo react = 24-05_11-33_0
-PP w dis w react = main_24-05_10-33_0 (MF)
-PP w dis w react = 
-GA wo dis =
-GA w dis w react= main_25-05_00-00_2
+PP wo dis = main_25-05_16-53_1
+PP w dis wo react = main_25-05_17-35_3
+PP w dis w react = main_25-05_18-48_4
+GA wo dis = main_25-05_13-10_2
+GA w dis w react= main_25-05_21-25_0
 GA random w dis w react high settings = 
-GA random w dis w react standard settings = 
-
+GA random w dis w react standard settings = main_26-05_10-00_0
+GA with new settings = main_19-05_13-28_0
 
 PP wo dis = 
     "rescheduling_enabled":0,
@@ -40,7 +39,7 @@ PP w dis w react =
 
 GA wo dis =
     "rescheduling_enabled":1,
-    "reaction_enabled":0,
+    "reaction_enabled":1,
     "fast_GA":0,
     "segment_time":1,
     "segment_interval":2.5,
