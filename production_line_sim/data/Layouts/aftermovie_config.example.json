@@ -1,0 +1,622 @@
+{
+  "version": 1,
+  "description": "Example config for the aftermovie renderer. Replace all coordinate values with measured pixels.",
+  "assets_base_dir": "Scenarios",
+  "defaults": {
+    "fps": 30,
+    "sim_seconds_per_frame": 0.5,
+    "save_every_nth_png": 100,
+    "draw_time_label": true,
+    "time_label_pos": [
+      20,
+      20
+    ],
+    "carrier_size_px": 63,
+    "queue_label_format": "Q: {count}",
+    "warn_on_processing_overlap": true,
+    "write_mp4": true
+  },
+  "layout_selection": {
+    "layout_2_2_5_2_2_2.json": "layout_2_2_5_2_2_2",
+    "layout_2_3_5_2_3_2.json": "layout_2_3_5_2_3_2"
+  },
+  "layouts": {
+    "layout_2_2_5_2_2_2": {
+      "background_png": "layout_2_2_5_2_2_2.png",
+      "carrier_png": "newcarrier.png",
+      "stations": {
+        "Station 1: Bottom cover": {
+          "processing_pos": [
+            450,
+            935
+          ],
+          "queue_label_pos": [
+            500,
+            1022
+          ],
+          "label_pos": [
+            500,
+            1022
+          ]
+        },
+        "Station 1.1: Bottom cover": {
+          "processing_pos": [
+            450,
+            845
+          ],
+          "queue_label_pos": [
+            500,
+            932
+          ],
+          "label_pos": [
+            500,
+            932
+          ]
+        },
+        "Station 2: Drill station": {
+          "processing_pos": [
+            930,
+            935
+          ],
+          "queue_label_pos": [
+            980,
+            1022
+          ],
+          "label_pos": [
+            980,
+            1022
+          ]
+        },
+        "Station 2.1: Drill station": {
+          "processing_pos": [
+            930,
+            845
+          ],
+          "queue_label_pos": [
+            980,
+            932
+          ],
+          "label_pos": [
+            980,
+            932
+          ]
+        },
+        "Station 3: Robot cell": {
+          "processing_pos": [
+            1715,
+            665
+          ],
+          "queue_label_pos": [
+            1765,
+            752
+          ],
+          "label_pos": [
+            1765,
+            752
+          ]
+        },
+        "Station 3.1: Robot cell": {
+          "processing_pos": [
+            1715,
+            755
+          ],
+          "queue_label_pos": [
+            1765,
+            842
+          ],
+          "label_pos": [
+            1765,
+            842
+          ]
+        },
+        "Station 3.2: Robot cell": {
+          "processing_pos": [
+            1715,
+            845
+          ],
+          "queue_label_pos": [
+            1765,
+            932
+          ],
+          "label_pos": [
+            1765,
+            932
+          ]
+        },
+        "Station 3.3: Robot cell": {
+          "processing_pos": [
+            1715,
+            935
+          ],
+          "queue_label_pos": [
+            1765,
+            1022
+          ],
+          "label_pos": [
+            1765,
+            1022
+          ]
+        },
+        "Station 3.4: Robot cell": {
+          "processing_pos": [
+            1715,
+            1025
+          ],
+          "queue_label_pos": [
+            1765,
+            1112
+          ],
+          "label_pos": [
+            1765,
+            1112
+          ]
+        },
+        "Station 4: Inspection": {
+          "processing_pos": [
+            1140,
+            665
+          ],
+          "queue_label_pos": [
+            1200,
+            752
+          ],
+          "label_pos": [
+            1200,
+            752
+          ]
+        },
+        "Station 4.1: Inspection": {
+          "processing_pos": [
+            1140,
+            755
+          ],
+          "queue_label_pos": [
+            1200,
+            842
+          ],
+          "label_pos": [
+            1200,
+            842
+          ]
+        },
+        "Station 5: Top cover": {
+          "processing_pos": [
+            640,
+            665
+          ],
+          "queue_label_pos": [
+            690,
+            752
+          ],
+          "label_pos": [
+            690,
+            752
+          ]
+        },
+        "Station 5.1: Top cover": {
+          "processing_pos": [
+            640,
+            755
+          ],
+          "queue_label_pos": [
+            690,
+            842
+          ],
+          "label_pos": [
+            690,
+            842
+          ]
+        },
+        "Station 6: Packaging": {
+          "processing_pos": [
+            145,
+            665
+          ],
+          "queue_label_pos": [
+            195,
+            752
+          ],
+          "label_pos": [
+            195,
+            752
+          ]
+        },
+        "Station 6.1: Packaging": {
+          "processing_pos": [
+            145,
+            755
+          ],
+          "queue_label_pos": [
+            195,
+            842
+          ],
+          "label_pos": [
+            195,
+            842
+          ]
+        }
+      },
+      "shared_segments": {
+        "s1_to_s2_main": {
+          "type": "polyline",
+          "points": [
+            [
+              515,
+              935
+            ],
+            [
+              650,
+              935
+            ],
+            [
+              770,
+              935
+            ],
+            [
+              895,
+              935
+            ]
+          ]
+        },
+        "s11_to_s2_alt": {
+          "type": "polyline",
+          "points": [
+            [
+              515,
+              845
+            ],
+            [
+              650,
+              845
+            ],
+            [
+              770,
+              845
+            ],
+            [
+              895,
+              935
+            ]
+          ]
+        },
+        "s2_to_robot_spine_enter": {
+          "type": "polyline",
+          "points": [
+            [
+              965,
+              935
+            ],
+            [
+              1175,
+              935
+            ],
+            [
+              1175,
+              755
+            ],
+            [
+              1525,
+              755
+            ]
+          ]
+        },
+        "robot_spine_vertical_0_to_4": {
+          "type": "polyline",
+          "points": [
+            [
+              1525,
+              755
+            ],
+            [
+              1525,
+              845
+            ],
+            [
+              1525,
+              935
+            ],
+            [
+              1525,
+              1025
+            ],
+            [
+              1525,
+              1115
+            ]
+          ]
+        },
+        "robot_spine_to_3_0": {
+          "type": "polyline",
+          "points": [
+            [
+              1525,
+              755
+            ],
+            [
+              1715,
+              755
+            ]
+          ]
+        },
+        "robot_spine_to_3_1": {
+          "type": "polyline",
+          "points": [
+            [
+              1525,
+              845
+            ],
+            [
+              1715,
+              845
+            ]
+          ]
+        },
+        "robot_spine_to_3_2": {
+          "type": "polyline",
+          "points": [
+            [
+              1525,
+              935
+            ],
+            [
+              1715,
+              935
+            ]
+          ]
+        },
+        "robot_spine_to_3_3": {
+          "type": "polyline",
+          "points": [
+            [
+              1525,
+              1025
+            ],
+            [
+              1715,
+              1025
+            ]
+          ]
+        },
+        "robot_spine_to_3_4": {
+          "type": "polyline",
+          "points": [
+            [
+              1525,
+              1115
+            ],
+            [
+              1715,
+              1115
+            ]
+          ]
+        },
+        "robot_to_inspection_branch_low": {
+          "type": "polyline",
+          "points": [
+            [
+              1810,
+              755
+            ],
+            [
+              2160,
+              755
+            ],
+            [
+              2160,
+              665
+            ],
+            [
+              2290,
+              665
+            ]
+          ]
+        },
+        "robot_to_inspection_branch_high": {
+          "type": "polyline",
+          "points": [
+            [
+              1810,
+              845
+            ],
+            [
+              2160,
+              845
+            ],
+            [
+              2160,
+              755
+            ],
+            [
+              2290,
+              755
+            ]
+          ]
+        },
+        "inspection_to_topcover": {
+          "type": "polyline",
+          "points": [
+            [
+              2365,
+              665
+            ],
+            [
+              2160,
+              665
+            ],
+            [
+              2160,
+              665
+            ],
+            [
+              1865,
+              665
+            ]
+          ]
+        },
+        "topcover_to_packaging_main": {
+          "type": "polyline",
+          "points": [
+            [
+              590,
+              665
+            ],
+            [
+              475,
+              665
+            ],
+            [
+              345,
+              665
+            ],
+            [
+              255,
+              665
+            ]
+          ]
+        },
+        "packaging_exit_turn": {
+          "type": "arc",
+          "start": [
+            105,
+            665
+          ],
+          "mid": [
+            25,
+            665
+          ],
+          "end": [
+            25,
+            745
+          ]
+        }
+      },
+      "routes": {
+        "Station 1: Bottom cover -> Station 2: Drill station": [
+          "s1_to_s2_main"
+        ],
+        "Station 1: Bottom cover -> Station 2.1: Drill station": [
+          "s1_to_s2_main"
+        ],
+        "Station 1.1: Bottom cover -> Station 2: Drill station": [
+          "s11_to_s2_alt"
+        ],
+        "Station 1.1: Bottom cover -> Station 2.1: Drill station": [
+          "s11_to_s2_alt"
+        ],
+        "Station 2: Drill station -> Station 3: Robot cell": [
+          "s2_to_robot_spine_enter",
+          "robot_spine_to_3_0"
+        ],
+        "Station 2: Drill station -> Station 3.1: Robot cell": [
+          "s2_to_robot_spine_enter",
+          "robot_spine_vertical_0_to_4",
+          "robot_spine_to_3_1"
+        ],
+        "Station 2: Drill station -> Station 3.2: Robot cell": [
+          "s2_to_robot_spine_enter",
+          "robot_spine_vertical_0_to_4",
+          "robot_spine_to_3_2"
+        ],
+        "Station 2: Drill station -> Station 3.3: Robot cell": [
+          "s2_to_robot_spine_enter",
+          "robot_spine_vertical_0_to_4",
+          "robot_spine_to_3_3"
+        ],
+        "Station 2: Drill station -> Station 3.4: Robot cell": [
+          "s2_to_robot_spine_enter",
+          "robot_spine_vertical_0_to_4",
+          "robot_spine_to_3_4"
+        ],
+        "Station 2.1: Drill station -> Station 3: Robot cell": [
+          "s2_to_robot_spine_enter",
+          "robot_spine_to_3_0"
+        ],
+        "Station 2.1: Drill station -> Station 3.1: Robot cell": [
+          "s2_to_robot_spine_enter",
+          "robot_spine_vertical_0_to_4",
+          "robot_spine_to_3_1"
+        ],
+        "Station 2.1: Drill station -> Station 3.2: Robot cell": [
+          "s2_to_robot_spine_enter",
+          "robot_spine_vertical_0_to_4",
+          "robot_spine_to_3_2"
+        ],
+        "Station 2.1: Drill station -> Station 3.3: Robot cell": [
+          "s2_to_robot_spine_enter",
+          "robot_spine_vertical_0_to_4",
+          "robot_spine_to_3_3"
+        ],
+        "Station 2.1: Drill station -> Station 3.4: Robot cell": [
+          "s2_to_robot_spine_enter",
+          "robot_spine_vertical_0_to_4",
+          "robot_spine_to_3_4"
+        ],
+        "Station 3: Robot cell -> Station 4: Inspection": [
+          "robot_to_inspection_branch_low"
+        ],
+        "Station 3.1: Robot cell -> Station 4: Inspection": [
+          "robot_to_inspection_branch_low"
+        ],
+        "Station 3.2: Robot cell -> Station 4.1: Inspection": [
+          "robot_to_inspection_branch_high"
+        ],
+        "Station 3.3: Robot cell -> Station 4.1: Inspection": [
+          "robot_to_inspection_branch_high"
+        ],
+        "Station 3.4: Robot cell -> Station 4.1: Inspection": [
+          "robot_to_inspection_branch_high"
+        ],
+        "Station 4: Inspection -> Station 5: Top cover": [
+          "inspection_to_topcover"
+        ],
+        "Station 4: Inspection -> Station 5.1: Top cover": [
+          "inspection_to_topcover"
+        ],
+        "Station 4.1: Inspection -> Station 5: Top cover": [
+          "inspection_to_topcover"
+        ],
+        "Station 4.1: Inspection -> Station 5.1: Top cover": [
+          "inspection_to_topcover"
+        ],
+        "Station 5: Top cover -> Station 6: Packaging": [
+          "topcover_to_packaging_main",
+          "packaging_exit_turn"
+        ],
+        "Station 5: Top cover -> Station 6.1: Packaging": [
+          "topcover_to_packaging_main",
+          "packaging_exit_turn"
+        ],
+        "Station 5.1: Top cover -> Station 6: Packaging": [
+          "topcover_to_packaging_main",
+          "packaging_exit_turn"
+        ],
+        "Station 5.1: Top cover -> Station 6.1: Packaging": [
+          "topcover_to_packaging_main",
+          "packaging_exit_turn"
+        ]
+      }
+    },
+    "layout_2_3_5_2_3_2": {
+      "background_png": "layout_2_3_5_2_3_2.png",
+      "carrier_png": "newcarrier.png",
+      "stations": {
+        "Station 1: Bottom cover": {
+          "processing_pos": [
+            450,
+            935
+          ],
+          "queue_label_pos": [
+            500,
+            1022
+          ],
+          "label_pos": [
+            500,
+            1022
+          ]
+        }
+      },
+      "shared_segments": {},
+      "routes": {}
+    }
+  }
+}
