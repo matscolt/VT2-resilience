@@ -161,6 +161,8 @@ DEFAULT_LOOKAHEAD_DAYS = 1
 BASE_SETTINGS = A_input.read_settings_json(ROOT / "data" / "base_settings.json")
 allowed_map = BASE_SETTINGS["ALLOWED_LOOKAHEAD_DAYS"]
 ALLOWED_LOOKAHEAD_DAYS = sorted(int(v) for v in allowed_map.values())
+GEN_NUM_SQUARED_CON = BASE_SETTINGS["GEN_NUM_SQUARED_CON"]
+GEN_NUM_CON = BASE_SETTINGS["GEN_NUM_CON"]
 GENERATION_LIMIT = BASE_SETTINGS["GENERATION_LIMIT"]
 CROSSOVER_RATE = BASE_SETTINGS["CROSSOVER_RATE"]
 MUTATION_RATE = BASE_SETTINGS["MUTATION_RATE"]
@@ -1030,7 +1032,7 @@ def insert_mutation(chrom):
     return chrom
 
 def best_generation_percentage(generation_number,best_fitness,counted_best_fitness):
-    percentage_needed = (0.002*generation_number**2+0.01*generation_number)/100
+    percentage_needed = (GEN_NUM_SQUARED_CON*generation_number**2+GEN_NUM_CON*generation_number)/100
     if counted_best_fitness >= 0:
         return counted_best_fitness*(1-percentage_needed)>best_fitness
     if counted_best_fitness < 0:
@@ -1338,7 +1340,7 @@ def _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_
 
     # If the schedule does not extend into at least the next day, treat as < 1 day left.
     print(f"max_abs_day: {max_abs_day} | current_abs_day {current_abs_day}")
-    return (max_abs_day - current_abs_day) < 1, max_abs_day < segment_end_day, segment_end_day - current_abs_day+2
+    return (max_abs_day - current_abs_day) < 3, max_abs_day < segment_end_day, segment_end_day - current_abs_day+2
 
 
 

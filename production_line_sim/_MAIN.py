@@ -281,8 +281,12 @@ def main():
         for dir in dirs[0:3]:
             subfolder = dir / f"run_{run_idx}"
             subfolder.mkdir(exist_ok=True)
-         
 
+        if run_idx not in (1,5,10):
+            print(f"not the loop we want --> run: {run_idx}")
+            continue
+        print(f"Running run: {run_idx}")
+        print(f"Algo: {a_name}")
         # creating the production plan
         label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
         order_csv_path = orders_dir / f"unsorted_orders_{label}.csv"
@@ -362,7 +366,10 @@ def main():
             if i == 0 or reaction_enabled:
                 print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
                 GAstart = ti.perf_counter()
-                C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
+                if a_name == "genetic algorithm":
+                    C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
+                if a_name == "simulated annealing":
+                    C_SA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
                 GAend = ti.perf_counter()
                 GAcalctime = GAend - GAstart
             else:
