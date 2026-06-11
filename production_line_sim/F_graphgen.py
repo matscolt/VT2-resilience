@@ -15,9 +15,9 @@ from typing import List, Optional, Tuple
 ROOTDIR = Path(__file__).parent
 RESULTSDIR = ROOTDIR / "RESULTS"
 SIM_DAY_SECONDS = 8 * 60 * 60
-THROUGHPUT_RATE_WINDOW_S = 7200
-THROUGHPUT_RATE_SAMPLE_S = 600
-THROUGHPUT_RATE_INTERVAL_S = 1800
+THROUGHPUT_RATE_WINDOW_S = 3200
+THROUGHPUT_RATE_SAMPLE_S = 320
+THROUGHPUT_RATE_INTERVAL_S = 320
 
 def display_station_name(name: str) -> str:
     if name in (None, ""):
