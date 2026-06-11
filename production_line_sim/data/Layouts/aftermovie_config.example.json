@@ -11,7 +11,7 @@
       20,
       20
     ],
-    "carrier_size_px": 63,
+    "carrier_size_px": 25,
     "queue_label_format": "Q: {count}",
     "warn_on_processing_overlap": true,
     "write_mp4": true
@@ -27,58 +27,58 @@
       "stations": {
         "Station 1: Bottom cover": {
           "processing_pos": [
-            450,
-            935
+            424,
+            200
           ],
           "queue_label_pos": [
-            500,
-            1022
+            330,
+            210
           ],
-          "label_pos": [
-            500,
-            1022
+          "dis_label_pos": [
+            330,
+            270
           ]
         },
         "Station 1.1: Bottom cover": {
           "processing_pos": [
-            450,
-            845
+            830,
+            200
           ],
           "queue_label_pos": [
-            500,
-            932
+            750,
+            210
           ],
-          "label_pos": [
-            500,
-            932
+          "dis_label_pos": [
+            750,
+            270
           ]
         },
         "Station 2: Drill station": {
           "processing_pos": [
-            930,
-            935
+            215,
+            530
           ],
           "queue_label_pos": [
-            980,
-            1022
+            130,
+            530
           ],
-          "label_pos": [
-            980,
-            1022
+          "dis_label_pos": [
+            130,
+            610
           ]
         },
         "Station 2.1: Drill station": {
           "processing_pos": [
-            930,
-            845
+            630,
+            530
           ],
           "queue_label_pos": [
-            980,
-            932
+            550,
+            530
           ],
-          "label_pos": [
-            980,
-            932
+          "dis_label_pos": [
+            550,
+            610
           ]
         },
         "Station 3: Robot cell": {
@@ -90,7 +90,7 @@
             1765,
             752
           ],
-          "label_pos": [
+          "dis_label_pos": [
             1765,
             752
           ]
@@ -104,7 +104,7 @@
             1765,
             842
           ],
-          "label_pos": [
+          "dis_label_pos": [
             1765,
             842
           ]
@@ -118,7 +118,7 @@
             1765,
             932
           ],
-          "label_pos": [
+          "dis_label_pos": [
             1765,
             932
           ]
@@ -132,7 +132,7 @@
             1765,
             1022
           ],
-          "label_pos": [
+          "dis_label_pos": [
             1765,
             1022
           ]
@@ -146,7 +146,7 @@
             1765,
             1112
           ],
-          "label_pos": [
+          "dis_label_pos": [
             1765,
             1112
           ]
@@ -160,7 +160,7 @@
             1200,
             752
           ],
-          "label_pos": [
+          "dis_label_pos": [
             1200,
             752
           ]
@@ -174,7 +174,7 @@
             1200,
             842
           ],
-          "label_pos": [
+          "dis_label_pos": [
             1200,
             842
           ]
@@ -188,7 +188,7 @@
             690,
             752
           ],
-          "label_pos": [
+          "dis_label_pos": [
             690,
             752
           ]
@@ -202,37 +202,37 @@
             690,
             842
           ],
-          "label_pos": [
+          "dis_label_pos": [
             690,
             842
           ]
         },
         "Station 6: Packaging": {
           "processing_pos": [
-            145,
-            665
+            480,
+            200
           ],
           "queue_label_pos": [
-            195,
-            752
+            560,
+            210
           ],
-          "label_pos": [
-            195,
-            752
+          "dis_label_pos": [
+            560,
+            270
           ]
         },
         "Station 6.1: Packaging": {
           "processing_pos": [
-            145,
-            755
+            890,
+            200
           ],
           "queue_label_pos": [
-            195,
-            842
+            990,
+            210
           ],
-          "label_pos": [
-            195,
-            842
+          "dis_label_pos": [
+            990,
+            270
           ]
         }
       },
@@ -602,16 +602,16 @@
       "stations": {
         "Station 1: Bottom cover": {
           "processing_pos": [
-            450,
-            935
+            424,
+            200
           ],
           "queue_label_pos": [
-            500,
-            1022
+            330,
+            210
           ],
-          "label_pos": [
-            500,
-            1022
+          "dis_label_pos": [
+            330,
+            270
           ]
         }
       },

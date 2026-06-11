@@ -277,6 +277,9 @@ def main():
     ):
         run_idx += 1
         run_time_start = ti.perf_counter()
+
+        #print(f"run_idx {run_idx}",f"layout_file {layout_file}", f"p_val {p_val}", f"r_val {r_val}", f"a_name {a_name}", f"seed {seed}")
+        #continue
         #creating the run dirs
         for dir in dirs[0:3]:
             subfolder = dir / f"run_{run_idx}"

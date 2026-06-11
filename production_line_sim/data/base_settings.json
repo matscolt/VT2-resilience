@@ -10,8 +10,7 @@
         "medium": 25
     },
     "algorithms": {
-        "1": "simulated annealing",
-        "2": "genetic algortihm"
+        "1": "simulated annealing"
     },
     "weightage": {
         "tardines": "?",
