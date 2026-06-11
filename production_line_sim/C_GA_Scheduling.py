@@ -161,6 +161,8 @@ DEFAULT_LOOKAHEAD_DAYS = 1
 BASE_SETTINGS = A_input.read_settings_json(ROOT / "data" / "base_settings.json")
 allowed_map = BASE_SETTINGS["ALLOWED_LOOKAHEAD_DAYS"]
 ALLOWED_LOOKAHEAD_DAYS = sorted(int(v) for v in allowed_map.values())
+GEN_NUM_SQUARED_CON = BASE_SETTINGS["GEN_NUM_SQUARED_CON"]
+GEN_NUM_CON = BASE_SETTINGS["GEN_NUM_CON"]
 GENERATION_LIMIT = BASE_SETTINGS["GENERATION_LIMIT"]
 CROSSOVER_RATE = BASE_SETTINGS["CROSSOVER_RATE"]
 MUTATION_RATE = BASE_SETTINGS["MUTATION_RATE"]
@@ -1030,7 +1032,7 @@ def insert_mutation(chrom):
     return chrom
 
 def best_generation_percentage(generation_number,best_fitness,counted_best_fitness):
-    percentage_needed = (0.002*generation_number**2+0.01*generation_number)/100
+    percentage_needed = (GEN_NUM_SQUARED_CON*generation_number**2+GEN_NUM_CON*generation_number)/100
     if counted_best_fitness >= 0:
         return counted_best_fitness*(1-percentage_needed)>best_fitness
     if counted_best_fitness < 0:

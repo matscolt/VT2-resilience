@@ -44,6 +44,8 @@
         "1":3,
         "2":5
     },
+    "GEN_NUM_SQUARED_CON":0.002,
+    "GEN_NUM_CON":0.01,
     "GENERATION_LIMIT" : 5,
     "CROSSOVER_RATE" : 0.9,
     "MUTATION_RATE" : 0.15,
