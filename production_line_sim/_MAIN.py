@@ -272,7 +272,7 @@ def main():
     max_idx = len(scenarios) * len(pressures) * len(ratios)* len(algos) * len(seeds)
     print("\n --- Running the different combinations of scenarios ---\n")
     action = "Running simulations: "
-    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name), (s_id, seed) in product(
+    for (a_id, a_name), (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (s_id, seed) in product(
         scenarios, pressures, ratios, algos, seeds
     ):
         run_idx += 1
@@ -365,7 +365,10 @@ def main():
             if i == 0 or reaction_enabled:
                 print(f"----MAIN.py: running GA in run {run_idx} at t={t_start}")
                 GAstart = ti.perf_counter()
-                C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
+                if a_name == "genetic algorithm":
+                    C_GA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
+                if a_name == "simulated annealing":
+                    C_SA_Scheduling.main(main_settings_dir, t_start,t_stop,seed,rescheduling_enabled)
                 GAend = ti.perf_counter()
                 GAcalctime = GAend - GAstart
             else:
