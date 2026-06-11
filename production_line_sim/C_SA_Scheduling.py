@@ -1,0 +1,1632 @@
+import random
+import copy
+import contextlib
+import io
+import math
+import shutil
+import json
+from pathlib import Path
+from dataclasses import dataclass
+from typing import List, Set, Tuple, Dict
+import pandas as pd
+import D_production_line_sim as simulator,A_input
+# OPTION A: if makespan > horizon_end_s for 1-day horizon, rerun GA with 5 days (no further fallback)
+### PATCH: NO BEST-SUMMARY FOLDER / ON_GOING ONLY
+# This file is auto-patched to ensure the SA scheduler only overwrites current_schedule.csv in ON_GOING_RUN_DIR.
+# All best-schedule summary folder creation/moves/cleanup are disabled.
+
+
+
+# ============================================================
+# PATHS / MAIN SETTINGS
+# ============================================================
+
+ROOT = Path(__file__).resolve().parent
+
+# These globals are configured at runtime from main_settings.json.
+MAIN_SETTINGS_PATH = None
+MAIN_SETTINGS = None
+ON_GOING_RUN_DIR = None
+OUTPUT_RUN_DIR = None
+PRODUCTION_PLAN_PATH = None
+DISRUPTION_HISTORY_PATH = None
+UNIT_SUMMARY_PATH = None
+CLEAN_TEMP_OUTPUTS = True
+# DISABLED: KEEP_ONLY_BEST_SUMMARY = True
+
+
+def load_main_settings(main_settings_path) -> dict:
+    """Load main_settings.json supplied by Main_script."""
+
+    path = Path(main_settings_path).expanduser().resolve()
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"main_settings.json not found: {path}"
+        )
+
+    with path.open("r", encoding="utf-8") as file:
+        settings = json.load(file)
+
+    return settings
+
+
+def configure_paths_from_main_settings(main_settings_path):
+    """Configure all scheduler paths from main_settings.json.
+
+    Expected main_settings fields:
+    - label
+    - pathlist.on_going_run
+    - pathlist.output_run (optional, but recommended)
+
+    The production plan is expected at:
+    on_going_run / f"production_plan_{label}.csv"
+
+    The simulator state files are expected in the same on_going_run folder:
+    - disruption_hist.csv
+    - unit_summary.csv
+    If they do not exist, the run is treated as t = 0 / no completed units.
+    """
+
+    global MAIN_SETTINGS_PATH, MAIN_SETTINGS, ON_GOING_RUN_DIR, OUTPUT_RUN_DIR
+    global PRODUCTION_PLAN_PATH, DISRUPTION_HISTORY_PATH, UNIT_SUMMARY_PATH
+
+    MAIN_SETTINGS_PATH = Path(main_settings_path).expanduser().resolve()
+    MAIN_SETTINGS = load_main_settings(MAIN_SETTINGS_PATH)
+
+    label = MAIN_SETTINGS.get("label")
+    pathlist = MAIN_SETTINGS.get("pathlist", {})
+
+    if not label:
+        raise KeyError("Missing 'label' in main_settings.json")
+
+    if "on_going_run" not in pathlist:
+        raise KeyError("Missing 'pathlist.on_going_run' in main_settings.json")
+
+    ON_GOING_RUN_DIR = Path(pathlist["on_going_run"])
+
+    # Event-driven state files
+    global DISRUPTION_HISTORY_PATH, UNIT_SUMMARY_PATH
+    DISRUPTION_HISTORY_PATH = Path(pathlist.get("on_going_run_dis_his", ON_GOING_RUN_DIR / "disruption_his.csv"))
+    UNIT_SUMMARY_PATH = Path(pathlist.get("on_going_run_unit_summary", ON_GOING_RUN_DIR / "unit_summary.csv")).expanduser().resolve()
+    OUTPUT_RUN_DIR = Path(pathlist.get("output_run", ON_GOING_RUN_DIR)).expanduser().resolve()
+
+    if not ON_GOING_RUN_DIR.exists():
+        raise FileNotFoundError(
+            f"on_going_run folder not found: {ON_GOING_RUN_DIR}"
+        )
+
+    PRODUCTION_PLAN_PATH = Path(pathlist.get("on_going_run_production_plan", ON_GOING_RUN_DIR / f"production_plan_{label}.csv")).expanduser().resolve()
+    DISRUPTION_HISTORY_PATH = Path(pathlist.get("on_going_run_dis_his", ON_GOING_RUN_DIR / "disruption_his.csv")).expanduser().resolve()
+    UNIT_SUMMARY_PATH = Path(pathlist.get("on_going_run_unit_summary", ON_GOING_RUN_DIR / "unit_summary.csv")).expanduser().resolve()
+
+    if not PRODUCTION_PLAN_PATH.exists():
+        raise FileNotFoundError(
+            f"Production plan not found: {PRODUCTION_PLAN_PATH}"
+        )
+
+    return MAIN_SETTINGS
+
+def get_completed_unit_ids_from_unit_summary(current_time_s: float) -> Set[str]:
+    """Return completed unit IDs from unit_summary.csv.
+
+    A unit is considered completed if completion_time_s <= current_time_s.
+    If unit_summary.csv does not exist, no units are completed.
+    """
+
+    if UNIT_SUMMARY_PATH is None or not UNIT_SUMMARY_PATH.exists():
+        return set()
+
+    unit_df = pd.read_csv(UNIT_SUMMARY_PATH)
+
+    if "completion_time_s" not in unit_df.columns:
+        raise KeyError(
+            f"Missing column 'completion_time_s' in {UNIT_SUMMARY_PATH}"
+        )
+
+    unit_id_columns = ["unit_id", "unitID", "unitId", "UnitID", "unit"]
+    unit_id_column = next((c for c in unit_id_columns if c in unit_df.columns), None)
+
+    completed_mask = (
+        pd.to_numeric(unit_df["completion_time_s"], errors="coerce")
+        <= current_time_s
+    )
+
+    if unit_id_column is None:
+        raise KeyError(
+            f"Missing unit ID column in {UNIT_SUMMARY_PATH}. "
+            "Expected one of: unit_id, unitID, unitId, UnitID, unit"
+        )
+
+    return set(
+        unit_df.loc[completed_mask, unit_id_column]
+        .dropna()
+        .astype(str)
+    )
+
+# ============================================================
+# SCHEDULER SETTINGS / ROLLING HORIZON SETTINGS
+# ============================================================
+
+# One production day is currently defined as 8 hours.
+SECONDS_PER_PRODUCTION_DAY = 8 * 60 * 60
+
+# Set these values here while testing.
+DEFAULT_LOOKAHEAD_DAYS = 1
+
+# Rolling horizon options:
+# 1 day  -> schedule the rest of current day only
+# 3 days -> schedule rest of current day + 2 full days
+# 5 days -> schedule rest of current day + 4 full days
+BASE_SETTINGS = A_input.read_settings_json(ROOT / "data" / "base_settings.json")
+allowed_map = BASE_SETTINGS["ALLOWED_LOOKAHEAD_DAYS"]
+ALLOWED_LOOKAHEAD_DAYS = sorted(int(v) for v in allowed_map.values())
+GENERATION_LIMIT = BASE_SETTINGS["GENERATION_LIMIT"]
+CROSSOVER_RATE = BASE_SETTINGS["CROSSOVER_RATE"]
+MUTATION_RATE = BASE_SETTINGS["MUTATION_RATE"]
+SWAPS_SCALE = BASE_SETTINGS["swaps_scale"]
+SWAPS_CONSTANT = BASE_SETTINGS["swaps_constant"]
+SWAPS_MIN = BASE_SETTINGS["swaps_min"]
+POPULATION_SCALE = BASE_SETTINGS["population_scale"]
+POPULATION_CONSTANT = BASE_SETTINGS["population_constant"]
+POPULATION_MIN = BASE_SETTINGS["population_min"]
+ELITE_SCALE = BASE_SETTINGS["elite_scale"]
+ELITE_CONSTANT = BASE_SETTINGS["elite_constant"]
+ELITE_MIN = BASE_SETTINGS["elite_min"]
+TOURNAMENT_SCALE = BASE_SETTINGS["tournament_scale"]
+TOURNAMENT_CONSTANT = BASE_SETTINGS["tournament_constant"]
+TOURNAMENT_MIN = BASE_SETTINGS["tournament_min"]
+fast_GA = BASE_SETTINGS["fast_GA"]
+if fast_GA == 1:
+    GENERATION_LIMIT = 2 
+    SWAPS_SCALE = 0
+    SWAPS_CONSTANT = 0
+    SWAPS_MIN = 2
+    POPULATION_SCALE = 0
+    POPULATION_CONSTANT = 0
+    POPULATION_MIN = 4
+    ELITE_SCALE = 0
+    ELITE_CONSTANT = 0
+    ELITE_MIN = 1
+    TOURNAMENT_SCALE = 0
+    TOURNAMENT_CONSTANT = 0
+    TOURNAMENT_MIN = 1
+
+
+
+SA_ITERATIONS_SCALE = 8
+SA_ITERATIONS_CONSTANT = 30
+SA_ITERATIONS_MIN = 25
+SA_MAX_ITERATIONS = None
+
+SA_INITIAL_TEMPERATURE = None
+SA_INITIAL_TEMPERATURE_FACTOR = 0.10
+SA_MIN_TEMPERATURE = 1e-4
+SA_COOLING_RATE = 0.985
+SA_RESTARTS = 1
+SA_PRINT_EVERY = 10
+
+# ============================================================
+# FITNESS WEIGHTS
+# ============================================================
+
+# Fitness model:
+#   1) Weighted exponential penalty for each delayed order
+#   2) Weighted extra exponential penalty for the worst delayed order
+#   3) Very small linear earliness reward as a tie-breaker
+# Notes:
+# Lower fitness is better.
+# Times from the simulator are in seconds, so tardiness/earliness are
+# converted to days before being used in the fitness function.
+
+ALPHA = BASE_SETTINGS["ALPHA"]
+BETA = BASE_SETTINGS["BETA"]
+GAMMA = BASE_SETTINGS["GAMMA"] # exponent for priority weighting (w_i = priority^gamma)
+DELTA = BASE_SETTINGS["DELTA"] 
+
+
+TIME_SCALE = 60 * 60  # 1 hours in seconds
+
+# ============================================================
+# DATA CLASSES
+# ============================================================
+
+@dataclass
+class Unit:
+    unit_id: str
+    order_id: int
+    variant: str
+    due_date: float
+    priority: int
+
+
+@dataclass
+class Order:
+    order_id: int
+    due_date: float
+    priority: int
+    total_units: int
+    planned_week: int = 1
+    planned_day: int = 1
+
+
+# ============================================================
+# LOAD FILES
+# ============================================================
+
+def load_production_plan(production_plan_path: Path) -> pd.DataFrame:
+
+    path = Path(production_plan_path)
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Production plan not found: {path}"
+        )
+
+    print(f"Loading production plan from: {path}")
+
+    if path.suffix.lower() == ".csv":
+        return pd.read_csv(path)
+
+    if path.suffix.lower() in [".xlsx", ".xls"]:
+        return pd.read_excel(path)
+
+    raise ValueError(
+        f"Unsupported production plan file type: {path.suffix}"
+    )
+
+
+# ============================================================
+# LOAD ORDERS AND UNITS
+# ============================================================
+
+def load_orders_and_units_from_file(df: pd.DataFrame):
+
+    orders = []
+    units = []
+    order_units = {}
+
+    global_unit_counter = 1
+
+    print("\n================================================")
+    print("LOADING ORDERS AND UNITS FROM FILE")
+    print("================================================")
+
+    for _, row in df.sort_values("order_id").iterrows():
+
+        order_id = int(row["order_id"])
+        due_date = float(row["due date"])
+        priority = int(row["priority"])
+
+        order_units[order_id] = []
+
+        total_units = 0
+
+        """print(
+            f"\nORDER {order_id} | "
+            f"Due={due_date} | "
+            f"Priority={priority} | "
+            f"Planned day={int(row['planned_day'])}"
+        )"""
+
+        for i in range(3):
+
+            variant = str(row[f"variant{i}"])
+            qty = int(row[f"quantity{i}"])
+
+            if qty <= 0:
+                continue
+
+            for _ in range(qty):
+
+                internal_unit_id = f"U{global_unit_counter:03d}"
+
+                unit = Unit(
+                    unit_id=internal_unit_id,
+                    order_id=order_id,
+                    variant=variant,
+                    due_date=due_date,
+                    priority=priority
+                )
+
+                units.append(unit)
+                order_units[order_id].append(internal_unit_id)
+
+                global_unit_counter += 1
+                total_units += 1
+
+        order = Order(
+            order_id=order_id,
+            due_date=due_date,
+            priority=priority,
+            total_units=total_units,
+            planned_week=int(row["planned_week"]),
+            planned_day=int(row["planned_day"])
+        )
+
+        orders.append(order)
+
+        #print(f"  Total units for order {order_id}: {total_units}")
+
+    print("\n================================================")
+    print(f"TOTAL ORDERS LOADED: {len(orders)}")
+    print(f"TOTAL UNITS LOADED: {len(units)}")
+    print("================================================\n")
+
+    return orders, units, order_units
+
+# ============================================================
+# ROLLING HORIZON / SIMULATION STATE HELPERS
+# ============================================================
+
+def get_current_planned_day(current_time_s: float) -> int:
+    """Return the production-plan day number containing current_time_s.
+
+    Day numbering follows the production_plan column planned_day:
+    current_time_s in [0, 28800) is planned_day 1,
+    current_time_s in [28800, 57600) is planned_day 2, etc.
+    """
+
+    return int(current_time_s // SECONDS_PER_PRODUCTION_DAY) + 1
+
+
+def get_planned_day_window(
+    current_time_s: float,
+    lookahead_days: int
+) -> Tuple[int, int]:
+    """
+    Calculate the planned_day interval for the rolling horizon.
+
+    lookahead_days=1 keeps only the current planned_day.
+    lookahead_days=3 keeps current planned_day + 2 following planned days.
+    lookahead_days=5 keeps current planned_day + 4 following planned days.
+    """
+
+    first_day = get_current_planned_day(current_time_s)
+    last_day = first_day + lookahead_days - 1
+
+    return first_day, last_day
+
+
+def normalize_completed_unit_ids(completed_unit_ids=None) -> Set[str]:
+    """
+    Normalise completed unit IDs from the main simulation.
+
+    Expected format is the scheduler internal unit_id format, e.g. '12.3'.
+    For now this can be left empty until the main simulation supplies it.
+    """
+
+    if completed_unit_ids is None:
+        return set()
+
+    return {str(unit_id) for unit_id in completed_unit_ids}
+
+
+def filter_orders_and_units_for_rolling_horizon(
+    orders: List[Order],
+    units: List[Unit],
+    order_units: dict,
+    current_time_s: float = 0.0,
+    segment_capacity: float = 0.0,
+    lookahead_days: int = ALLOWED_LOOKAHEAD_DAYS[0],
+    completed_unit_ids=None
+) -> Tuple[List[Order], List[Unit], dict, Dict[str, float]]:
+    """
+    Prepare a reduced scheduling problem for the SA scheduler.
+
+    The filter does two things:
+    1) Removes units that have already been completed by the main simulation.
+    2) Keeps all unfinished carry-over orders from earlier planned days plus
+       the orders up to the rolling look-ahead window end.
+
+    Important: If disruptions delay production, unfinished orders from earlier
+    planned days are carried into the next horizon instead of being discarded.
+    If an order has partly completed units, the remaining quantity is scheduled
+    as a reduced order with the same order_id/due_date/priority.
+    """
+    horizon_loop = 0
+    horizon_units = []
+    while len(horizon_units) < segment_capacity:
+        horizon_loop +=1
+        print(f"horizon_loop = {horizon_loop}")
+        if horizon_loop == 10:
+            print("cannot find more units to fit within this segment")
+            break
+        completed = normalize_completed_unit_ids(completed_unit_ids)
+
+        first_planned_day, last_planned_day = get_planned_day_window(
+            current_time_s=current_time_s,
+            lookahead_days=lookahead_days
+        )
+
+        units_by_id = {
+            unit.unit_id: unit
+            for unit in units
+        }
+
+        horizon_orders = []
+        horizon_units = []
+        horizon_order_units = {}
+
+        for order in orders:
+
+            # Carry-over logic:
+            # If an order was planned for an earlier day but did not finish because
+            # disruptions pushed the schedule late, it must stay in the scheduling
+            # problem until it is completed. Therefore the SA scheduler includes every
+            # unfinished order up to the end of the current look-ahead window,
+            # not only orders whose planned_day is inside [first_day, last_day].
+            if int(order.planned_day) > int(last_planned_day):
+                continue
+
+            remaining_unit_ids = [
+                unit_id
+                for unit_id in order_units[order.order_id]
+                if unit_id not in completed
+            ]
+
+            if not remaining_unit_ids:
+                continue
+
+            horizon_order_units[order.order_id] = remaining_unit_ids
+
+            horizon_orders.append(
+                Order(
+                    order_id=order.order_id,
+                    due_date=order.due_date,
+                    priority=order.priority,
+                    total_units=len(remaining_unit_ids),
+                    planned_week=order.planned_week,
+                    planned_day=order.planned_day
+                )
+            )
+
+            horizon_units.extend(
+                units_by_id[unit_id]
+                for unit_id in remaining_unit_ids
+            )
+        lookahead_days +=1
+
+    # Important:
+    # Horizon start is the actual current simulation time,
+    # not the start of the production day.
+    horizon_start_s = current_time_s
+
+    # Horizon end is the end of the last planned day included in the window.
+    horizon_end_s = last_planned_day * SECONDS_PER_PRODUCTION_DAY
+
+    horizon_info = {
+        "first_planned_day": first_planned_day,
+        "last_planned_day": last_planned_day,
+        "horizon_start_s": horizon_start_s,
+        "horizon_end_s": horizon_end_s,
+    }
+
+    return horizon_orders, horizon_units, horizon_order_units, horizon_info
+
+def is_schedule_feasible_within_horizon(simulation_result: dict, horizon_info: dict) -> bool:
+    """True if simulated makespan finishes within horizon end."""
+    if not simulation_result or not horizon_info:
+        if not simulation_result:
+            return True
+    makespan = simulation_result.get('makespan')
+    horizon_end = horizon_info.get('horizon_end_s')
+    if  horizon_end is None:
+        print("horizon is None!!")
+        return False
+    if makespan is None:
+        print("makespan is None!")
+        return False
+    try:
+        return float(makespan) <= float(horizon_end)
+    except (TypeError, ValueError):
+        return False
+
+
+def merge_schedule_with_previous_tail(
+    new_schedule_df: pd.DataFrame,
+    previous_schedule_df: pd.DataFrame,
+    planned_day_by_order: dict,
+    cut_day: int,
+    completed_unit_ids: Set[str]
+) -> pd.DataFrame:
+    """Merge the newly optimized horizon with any unfinished previous schedule rows.
+
+    This is the carry-over protection that prevents units/orders from being
+    discarded when disruptions push the makespan past the current horizon.
+
+    Rules:
+    - Start with the newly optimized schedule.
+    - Append every row from the previous current_schedule.csv that is not
+      completed and not already present in the new schedule.
+    - This keeps untouched future units, emergency/unknown-plan units, and any
+      older unfinished units that somehow were not included by the new horizon.
+    - Renumber unit_seq from 1..N.
+    """
+    if previous_schedule_df is None or previous_schedule_df.empty:
+        merged = new_schedule_df.copy()
+        merged['unit_seq'] = range(1, len(merged) + 1)
+        return merged
+
+    prev = previous_schedule_df.copy()
+
+    if 'unit_id' not in prev.columns:
+        merged = new_schedule_df.copy()
+        merged['unit_seq'] = range(1, len(merged) + 1)
+        return merged
+
+    # Remove completed units from the previous schedule snapshot.
+    if completed_unit_ids:
+        prev = prev[~prev['unit_id'].astype(str).isin({str(u) for u in completed_unit_ids})]
+
+    # Remove units already covered by the newly optimized horizon.
+    new_unit_ids = set(new_schedule_df['unit_id'].astype(str).tolist()) if 'unit_id' in new_schedule_df.columns else set()
+    if new_unit_ids:
+        prev = prev[~prev['unit_id'].astype(str).isin(new_unit_ids)]
+
+    merged = pd.concat([new_schedule_df, prev], ignore_index=True)
+
+    # Drop any accidental duplicate unit rows while preserving first occurrence.
+    if 'unit_id' in merged.columns:
+        merged = merged.drop_duplicates(subset=['unit_id'], keep='first')
+
+    # Renumber unit_seq.
+    merged['unit_seq'] = range(1, len(merged) + 1)
+
+    # Keep expected column order if possible.
+    cols = ['unit_seq', 'order_id', 'unit_id', 'variant', 'route_id']
+    merged = merged[[c for c in cols if c in merged.columns]]
+
+    return merged
+
+
+
+
+# ============================================================
+# INITIAL SEED - PURE EDD
+# ============================================================
+
+def create_initial_order(orders: List[Order]):
+
+    order_scores = []
+
+    for order in orders:
+        order_scores.append({
+            "order_id": order.order_id,
+            "due_date": order.due_date,
+            "priority": order.priority,
+            "total_units": order.total_units,
+            "planned_day": order.planned_day
+        })
+
+    order_scores.sort(
+        key=lambda x: x["due_date"]
+    )
+
+    initial = [
+        row["order_id"]
+        for row in order_scores
+    ]
+
+    print("\n================================================")
+    print("INITIAL ORDER USING PURE EDD")
+    print("================================================")
+
+    for row in order_scores:
+        print(
+            f"Order {row['order_id']} | "
+            f"Due={row['due_date']:.1f} | "
+            f"Priority={row['priority']} | "
+            f"Units={row['total_units']} | "
+            f"Planned day={row['planned_day']}"
+        )
+
+    print("================================================\n")
+
+    return initial
+
+
+# ============================================================
+# POPULATION
+# ============================================================
+
+def create_order_population(orders: List[Order],swaps,population_size):
+
+    if not orders:
+        return []
+
+    initial = create_initial_order(orders)
+
+    population = [initial]
+
+    print("\n================================================")
+    print("CREATING INITIAL POPULATION")
+    print("================================================")
+
+    print("\nChromosome 1 (initial):")
+    print(initial)
+
+    while len(population) < population_size:
+
+        chrom = copy.deepcopy(initial)
+
+        for _ in range(swaps):
+
+            i = random.randint(0, len(chrom) - 1)
+            j = random.randint(0, len(chrom) - 1)
+
+            chrom[i], chrom[j] = chrom[j], chrom[i]
+
+        population.append(chrom)
+
+        print(f"\nChromosome {len(population)}:")
+        print(chrom)
+
+    print("\n================================================")
+    print(f"TOTAL POPULATION CREATED: {len(population)}")
+    print("================================================\n")
+
+    return population
+
+
+# ============================================================
+# CONVERSIONS
+# ============================================================
+
+def order_chromosome_to_unit_sequence(
+    order_chromosome,
+    order_units
+):
+
+    unit_sequence = []
+
+    for order_id in order_chromosome:
+        unit_sequence.extend(order_units[order_id])
+
+    return unit_sequence
+
+def chromosome_to_unit_dataframe(
+    chromosome,
+    order_units,
+    units_lookup,
+    route_id=0,
+    route_id_by_unit_id=None,
+):
+
+    unit_sequence = order_chromosome_to_unit_sequence(
+        chromosome,
+        order_units
+    )
+
+    rows = []
+
+    for unit_seq, internal_unit_id in enumerate(
+        unit_sequence,
+        start=1
+    ):
+
+        unit = units_lookup[internal_unit_id]
+
+        rows.append({
+            "unit_seq": unit_seq,
+            "order_id": unit.order_id,
+            "unit_id": unit.unit_id,
+            "variant": unit.variant,
+            "route_id": (route_id_by_unit_id or {}).get(str(unit.unit_id), route_id)
+        })
+
+    return pd.DataFrame(rows)
+
+# ============================================================
+# EXPORT SCHEDULE
+# ============================================================
+
+
+def export_schedule(
+    chromosome,
+    order_units,
+    units_lookup,
+    filename="current_schedule.csv",
+    verbose=False,
+    route_id_by_unit_id=None,
+):
+    """Export ONLY the current schedule CSV into the on-going run folder.
+
+    The SA scheduler's sole filesystem side-effect should be overwriting:
+        ON_GOING_RUN_DIR / "current_schedule.csv"
+    """
+    unit_df = chromosome_to_unit_dataframe(
+        chromosome=chromosome,
+        order_units=order_units,
+        units_lookup=units_lookup,
+        route_id=0,
+        route_id_by_unit_id=route_id_by_unit_id,
+    )
+
+    if ON_GOING_RUN_DIR is None:
+        raise RuntimeError(
+            "ON_GOING_RUN_DIR is not configured. Call configure_paths_from_main_settings() first."
+        )
+
+    output_path = Path(ON_GOING_RUN_DIR) / "current_schedule.csv"
+    unit_df.to_csv(output_path, index=False)
+
+    if verbose:
+        print(f"Schedule saved to {output_path}")
+
+    return output_path
+
+
+
+def safe_delete_file(path: Path):
+    """NO-OP (disabled)."""
+    return
+
+
+
+def safe_delete_folder(path: Path):
+    """NO-OP (disabled)."""
+    return
+
+def find_summary_folder(
+    generation,
+    chromosome_index
+):
+    """Find the newest simulator summary folder/file for the evaluated schedule.
+
+    Preferred location is on_going_run/unit_summary.csv because the simulator
+    is expected to work from the same main_settings.json paths. If the
+    simulator writes summaries into output_run instead, the newest folder
+    containing unit_summary.csv is used.
+    """
+
+    candidates = []
+
+    if UNIT_SUMMARY_PATH is not None and UNIT_SUMMARY_PATH.exists():
+        candidates.append(ON_GOING_RUN_DIR)
+
+    if OUTPUT_RUN_DIR is not None and OUTPUT_RUN_DIR.exists():
+        if (OUTPUT_RUN_DIR / "unit_summary.csv").exists():
+            candidates.append(OUTPUT_RUN_DIR)
+
+        candidates.extend(
+            folder
+            for folder in OUTPUT_RUN_DIR.iterdir()
+            if folder.is_dir() and (folder / "unit_summary.csv").exists()
+        )
+
+    if not candidates:
+        raise FileNotFoundError(
+            f"No unit_summary.csv found in {ON_GOING_RUN_DIR} or {OUTPUT_RUN_DIR}"
+        )
+
+    return max(
+        candidates,
+        key=lambda folder: (folder / "unit_summary.csv").stat().st_mtime
+    )
+
+
+def read_simulation_result_from_unit_summary(
+    summary_folder: Path
+):
+
+    unit_summary_path = summary_folder / "unit_summary.csv"
+
+    if not unit_summary_path.exists():
+        raise FileNotFoundError(
+            f"unit_summary.csv not found in: {summary_folder}"
+        )
+
+    unit_df = pd.read_csv(unit_summary_path)
+
+    required_columns = [
+        "orderID",
+        "completion_time_s"
+    ]
+
+    for column in required_columns:
+        if column not in unit_df.columns:
+            raise KeyError(
+                f"Missing column '{column}' in {unit_summary_path}"
+            )
+
+    order_completion_times = (
+        unit_df
+        .groupby("orderID")["completion_time_s"]
+        .max()
+        .to_dict()
+    )
+
+    makespan = (
+        unit_df["completion_time_s"]
+        .max()
+    )
+
+    return {
+        "order_completion_times": order_completion_times,
+        "makespan": makespan
+    }
+
+
+# ============================================================
+# SIMULATOR WRAPPER
+# ============================================================
+def evaluate_schedule_with_simulator(
+    chromosome,
+    order_units,
+    units_lookup,
+    chromosome_index,
+    generation
+, current_time_s: float = 0.0):
+
+    filename = "current_schedule.csv"
+
+    schedule_path = export_schedule(
+        chromosome=chromosome,
+        order_units=order_units,
+        units_lookup=units_lookup,
+        filename=filename,
+        verbose=False
+    )
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        simulation_result = simulator.simulate_for_ga(str(MAIN_SETTINGS_PATH), current_time_s)
+
+    # No summary folder is produced when using simulate_for_ga (in-memory evaluation).
+    summary_folder = None
+    return simulation_result, summary_folder
+
+
+# ============================================================
+# FITNESS
+# ============================================================
+
+
+def calculate_fitness(
+    simulation_result,
+    orders
+):
+    """Calculate GA fitness for a simulated schedule.
+
+    Lower fitness is better.
+
+    Implements the hybrid objective that prioritizes avoiding tardiness while giving
+    only a very small reward for earliness (tie-breaker):
+
+        F = sum_i w_i * (exp(k * T_i) - 1)  -  ε * sum_i E_i
+
+    Where:
+      - T_i = tardiness in days (max(0, completion - due) / TIME_SCALE)
+      - E_i = earliness in days (max(0, due - completion) / TIME_SCALE)
+      - w_i = priority_i ** PRIORITY_GAMMA
+      - k   = ALPHA_TARDINESS
+      - ε   = GAMMA_EARLINESS
+
+    The simulator returns completion times in seconds, and due dates are assumed to
+    use the same unit.
+    """
+
+    if not simulation_result or "order_completion_times" not in simulation_result:
+        return {
+            "fitness": float("inf"),
+            "weighted_exp_tardiness": float("inf"),
+            "weighted_earliness_reward": 0.0,
+            "raw_exp_tardiness": float("inf"),
+            "raw_weighted_exp_tardiness": float("inf"),
+            "max_tardiness_days": None,
+            "raw_earliness_days": 0.0,
+            "late_orders": 0,
+        }
+
+    order_info = {
+        str(o.order_id): {
+            "due_date": float(o.due_date),
+            "priority": int(getattr(o, 'priority', 1) or 1),
+        }
+        for o in orders
+    }
+
+    k = float(ALPHA)
+    eps = float(BETA)
+
+    raw_exp_tardiness = 0.0
+    raw_weighted_exp_tardiness = 0.0
+    raw_earliness_days = 0.0
+    late_orders = 0
+
+    for order_id, completion in simulation_result["order_completion_times"].items():
+
+        order_id_key = str(order_id)
+        if order_id_key not in order_info:
+            continue
+
+        due = float(order_info[order_id_key]["due_date"])
+        priority = max(1, int(order_info[order_id_key].get("priority", 1)))
+        w = float(priority) ** float(GAMMA)
+
+        completion = float(completion)
+        lateness_s = completion - due
+
+        tardiness_s = max(0.0, lateness_s)
+        earliness_s = max(0.0, -lateness_s)
+
+        # Convert to days (or whatever TIME_SCALE represents)
+        T_hours = tardiness_s / float(TIME_SCALE)
+        E_hours = earliness_s / float(TIME_SCALE)
+
+        if tardiness_s > 0.0:
+            late_orders += 1
+
+        exp_term = math.exp(k * T_hours) - 1.0
+        raw_weighted_exp_tardiness += float(DELTA)*w * exp_term
+
+        raw_earliness_days += w * E_hours
+
+    weighted_exp_tardiness = raw_weighted_exp_tardiness
+    weighted_earliness_reward = eps * raw_earliness_days
+
+    fitness = weighted_exp_tardiness - weighted_earliness_reward
+
+    return {
+        "fitness": fitness,
+        "weighted_exp_tardiness": weighted_exp_tardiness,
+        "weighted_earliness_reward": weighted_earliness_reward,
+        "raw_exp_tardiness": raw_exp_tardiness,
+        "raw_weighted_exp_tardiness": raw_weighted_exp_tardiness,
+        "raw_earliness_days": raw_earliness_days,
+        "late_orders": late_orders,
+        "k_tardiness": k,
+        "priority_weight": float(GAMMA),
+        "epsilon_earliness": eps,
+    }
+
+
+# ============================================================
+# OLD GA OPERATORS (unused by SA, kept harmless for compatibility)
+# ============================================================
+
+def tournament_selection(
+    population,
+    fitnesses,
+    tournament_size
+):
+    sampled = random.sample(
+        list(zip(population, fitnesses)),
+        min(tournament_size, len(population))
+    )
+
+    sampled.sort(key=lambda x: x[1])
+
+    return copy.deepcopy(sampled[0][0])
+
+
+def order_crossover(p1, p2):
+
+    size = len(p1)
+
+    a = random.randint(0, size - 1)
+    b = random.randint(a, size - 1)
+
+    child = [-1] * size
+
+    child[a:b + 1] = p1[a:b + 1]
+
+    fill = [
+        g for g in p2
+        if g not in child
+    ]
+
+    ptr = 0
+
+    for i in range(size):
+
+        if child[i] == -1:
+
+            child[i] = fill[ptr]
+            ptr += 1
+
+    return child
+
+
+def insert_mutation(chrom):
+
+    chrom = copy.deepcopy(chrom)
+
+    i = random.randint(0, len(chrom) - 1)
+    j = random.randint(0, len(chrom) - 1)
+
+    gene = chrom.pop(i)
+
+    chrom.insert(j, gene)
+
+    return chrom
+
+def best_generation_percentage(generation_number,best_fitness,counted_best_fitness):
+    percentage_needed = (0.002*generation_number**2+0.01*generation_number)/100
+    if counted_best_fitness >= 0:
+        return counted_best_fitness*(1-percentage_needed)>best_fitness
+    if counted_best_fitness < 0:
+        return counted_best_fitness*(1+percentage_needed)>best_fitness
+
+
+# ============================================================
+# SA LOOP
+# ============================================================
+
+
+# ============================================================
+# SA NEIGHBOURHOOD + LOOP
+# ============================================================
+
+def create_neighbor(chromosome):
+    """Create a neighbouring order sequence for Simulated Annealing.
+
+    The chromosome is a permutation of order IDs. The neighbourhood uses only
+    permutation-safe moves, so all orders remain present exactly once.
+    """
+
+    neighbour = copy.deepcopy(chromosome)
+
+    if len(neighbour) < 2:
+        return neighbour
+
+    move = random.choice(["swap", "insert", "reverse", "adjacent_swap"])
+
+    if move == "swap":
+        i, j = random.sample(range(len(neighbour)), 2)
+        neighbour[i], neighbour[j] = neighbour[j], neighbour[i]
+
+    elif move == "insert":
+        i, j = random.sample(range(len(neighbour)), 2)
+        gene = neighbour.pop(i)
+        neighbour.insert(j, gene)
+
+    elif move == "reverse":
+        i, j = sorted(random.sample(range(len(neighbour)), 2))
+        neighbour[i:j + 1] = reversed(neighbour[i:j + 1])
+
+    else:  # adjacent_swap
+        i = random.randint(0, len(neighbour) - 2)
+        neighbour[i], neighbour[i + 1] = neighbour[i + 1], neighbour[i]
+
+    return neighbour
+
+
+def _accepted_by_sa(delta_fitness, temperature):
+    """Return True if a worse solution is accepted by the SA criterion."""
+
+    if delta_fitness <= 0:
+        return True
+
+    if temperature <= 0:
+        return False
+
+    # Avoid overflow/underflow problems for very large fitness deltas.
+    exponent = -float(delta_fitness) / float(temperature)
+    if exponent < -700:
+        return False
+
+    return random.random() < math.exp(exponent)
+
+
+def _initial_temperature_from_fitness(initial_fitness):
+    """Choose a robust initial temperature.
+
+    If SA_INITIAL_TEMPERATURE is set in base_settings.json, that value is used.
+    Otherwise the temperature is scaled from the first evaluated fitness.
+    """
+
+    if SA_INITIAL_TEMPERATURE is not None:
+        try:
+            return max(float(SA_INITIAL_TEMPERATURE), float(SA_MIN_TEMPERATURE))
+        except (TypeError, ValueError):
+            pass
+
+    try:
+        if math.isfinite(float(initial_fitness)):
+            return max(abs(float(initial_fitness)) * float(SA_INITIAL_TEMPERATURE_FACTOR), 1.0)
+    except (TypeError, ValueError):
+        pass
+
+    return 1.0
+
+
+def _iteration_limit(number_of_orders):
+    """Calculate number of SA iterations for the current horizon."""
+
+    if SA_MAX_ITERATIONS is not None:
+        return max(0, int(SA_MAX_ITERATIONS))
+
+    return int(max(
+        number_of_orders * float(SA_ITERATIONS_SCALE) + float(SA_ITERATIONS_CONSTANT),
+        float(SA_ITERATIONS_MIN)
+    ))
+
+
+def evaluate_sa_solution(
+    order_chromosome,
+    order_units,
+    units_lookup,
+    orders,
+    iteration,
+    current_time_s=0.0,
+):
+    """Evaluate one SA solution with the same simulator/fitness as the SA scheduler used."""
+
+    unit_sequence = order_chromosome_to_unit_sequence(
+        order_chromosome,
+        order_units
+    )
+
+    simulation_result, summary_folder = evaluate_schedule_with_simulator(
+        chromosome=order_chromosome,
+        order_units=order_units,
+        units_lookup=units_lookup,
+        chromosome_index=iteration,
+        generation=1,
+        current_time_s=current_time_s,
+    )
+
+    fitness_result = calculate_fitness(
+        simulation_result,
+        orders
+    )
+
+    return fitness_result, simulation_result, unit_sequence
+
+
+def run_sa(
+    orders,
+    units,
+    order_units,
+    current_time_s: float = 0.0,
+):
+    """Run Simulated Annealing on the order sequence.
+
+    This function intentionally returns the same tuple shape as run_ga did:
+        best_order_solution, best_unit_sequence, best_simulation_result, best_fitness
+
+    That keeps the rest of the scheduling pipeline unchanged.
+    """
+
+    units_lookup = {
+        u.unit_id: u
+        for u in units
+    }
+
+    if not orders:
+        print("No orders inside the selected rolling horizon.")
+        return (None, [], None, float("inf"))
+
+    max_iterations = _iteration_limit(len(orders))
+    restarts = max(1, int(SA_RESTARTS))
+
+    print(
+        "\n================================================\n"
+        "SIMULATED ANNEALING SETTINGS\n"
+        "================================================"
+    )
+    print(
+        f"orders: {len(orders)}\n"
+        f"iterations: {max_iterations}\n"
+        f"restarts: {restarts}\n"
+        f"cooling_rate: {SA_COOLING_RATE}\n"
+        f"min_temperature: {SA_MIN_TEMPERATURE}"
+    )
+
+    global_best_order_solution = None
+    global_best_unit_sequence = None
+    global_best_simulation_result = None
+    global_best_fitness = float("inf")
+
+    for restart in range(1, restarts + 1):
+
+        print(
+            "\n================================================\n"
+            f"SA RESTART {restart}/{restarts}\n"
+            "================================================"
+        )
+
+        # First restart starts from pure EDD. Later restarts start from a perturbed EDD
+        # sequence, which gives some diversity without losing a good baseline.
+        current_solution = create_initial_order(orders)
+
+        for _ in range(max(0, restart - 1)):
+            current_solution = create_neighbor(current_solution)
+
+        fitness_result, current_simulation_result, current_unit_sequence = evaluate_sa_solution(
+            order_chromosome=current_solution,
+            order_units=order_units,
+            units_lookup=units_lookup,
+            orders=orders,
+            iteration=0,
+            current_time_s=current_time_s,
+        )
+
+        current_fitness = fitness_result["fitness"]
+        temperature = _initial_temperature_from_fitness(current_fitness)
+
+        best_order_solution = copy.deepcopy(current_solution)
+        best_unit_sequence = copy.deepcopy(current_unit_sequence)
+        best_simulation_result = copy.deepcopy(current_simulation_result)
+        best_fitness = current_fitness
+
+        if current_fitness < global_best_fitness:
+            global_best_order_solution = copy.deepcopy(current_solution)
+            global_best_unit_sequence = copy.deepcopy(current_unit_sequence)
+            global_best_simulation_result = copy.deepcopy(current_simulation_result)
+            global_best_fitness = current_fitness
+
+        print(
+            f"SA init | "
+            f"Fitness {current_fitness:12.6f} | "
+            f"Late {fitness_result['late_orders']:2d} | "
+            f"Tardiness {fitness_result['weighted_exp_tardiness']:8.4f} | "
+            f"-Earliness {-fitness_result['weighted_earliness_reward']:8.4f} | "
+            f"T {temperature:.6g}"
+        )
+
+        accepted_moves = 0
+        worse_accepted = 0
+
+        for iteration in range(1, max_iterations + 1):
+
+            candidate_solution = create_neighbor(current_solution)
+
+            candidate_fitness_result, candidate_simulation_result, candidate_unit_sequence = evaluate_sa_solution(
+                order_chromosome=candidate_solution,
+                order_units=order_units,
+                units_lookup=units_lookup,
+                orders=orders,
+                iteration=iteration,
+                current_time_s=current_time_s,
+            )
+
+            candidate_fitness = candidate_fitness_result["fitness"]
+            delta = candidate_fitness - current_fitness
+
+            accepted = _accepted_by_sa(delta, temperature)
+
+            if accepted:
+                accepted_moves += 1
+                if delta > 0:
+                    worse_accepted += 1
+
+                current_solution = copy.deepcopy(candidate_solution)
+                current_fitness = candidate_fitness
+                current_simulation_result = copy.deepcopy(candidate_simulation_result)
+                current_unit_sequence = copy.deepcopy(candidate_unit_sequence)
+
+            is_restart_best = candidate_fitness < best_fitness
+            is_global_best = candidate_fitness < global_best_fitness
+
+            if is_restart_best:
+                best_order_solution = copy.deepcopy(candidate_solution)
+                best_unit_sequence = copy.deepcopy(candidate_unit_sequence)
+                best_simulation_result = copy.deepcopy(candidate_simulation_result)
+                best_fitness = candidate_fitness
+
+            if is_global_best:
+                global_best_order_solution = copy.deepcopy(candidate_solution)
+                global_best_unit_sequence = copy.deepcopy(candidate_unit_sequence)
+                global_best_simulation_result = copy.deepcopy(candidate_simulation_result)
+                global_best_fitness = candidate_fitness
+
+            print_this_iteration = (
+                iteration == 1
+                or iteration == max_iterations
+                or is_global_best
+                or (int(SA_PRINT_EVERY) > 0 and iteration % int(SA_PRINT_EVERY) == 0)
+            )
+
+            if print_this_iteration:
+                marker = " <-- NEW GLOBAL BEST" if is_global_best else ""
+                accept_text = "accepted" if accepted else "rejected"
+                print(
+                    f"SA iter {iteration:04d}/{max_iterations:04d} | "
+                    f"Fitness {candidate_fitness:12.6f} | "
+                    f"Current {current_fitness:12.6f} | "
+                    f"Best {global_best_fitness:12.6f} | "
+                    f"T {temperature:.6g} | "
+                    f"{accept_text}{marker}"
+                )
+
+            temperature = max(
+                float(temperature) * float(SA_COOLING_RATE),
+                float(SA_MIN_TEMPERATURE)
+            )
+
+        print(
+            f"\n>>> SA restart {restart} done | "
+            f"restart best fitness: {best_fitness:.6f} | "
+            f"global best fitness: {global_best_fitness:.6f} | "
+            f"accepted moves: {accepted_moves}/{max_iterations} | "
+            f"worse accepted: {worse_accepted}"
+        )
+
+    return (
+        global_best_order_solution,
+        global_best_unit_sequence,
+        global_best_simulation_result,
+        global_best_fitness,
+    )
+
+
+
+# ===============================
+# Schedule existence & coverage check
+# ===============================
+def _schedule_exists_and_has_content(schedule_path):
+    if schedule_path is None or not schedule_path.exists():
+        return False
+    try:
+        import pandas as pd
+        df = pd.read_csv(schedule_path)
+        return len(df) > 0
+    except Exception:
+        return False
+
+def segment_capacity_calc(current_time_s,segment_end_s):
+    layout_json = ROOT / "data" / "Layouts" / MAIN_SETTINGS["settings"]["Scenarios"]
+    monthly_capacity = simulator.load_json(layout_json)["monthly_capacity"]
+    hourly_capacity = int(monthly_capacity/(20*8))+1
+    segment_duration = int((segment_end_s - current_time_s)/3600)+1
+    return hourly_capacity*segment_duration
+
+
+def _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, production_plan_path):
+    """Return True if the existing schedule covers less than 1 production day beyond current time.
+
+    The schedule CSV does NOT include planned_day, so we infer coverage by:
+      1) Reading distinct order_id values from current_schedule.csv
+      2) Looking up each order_id in production_plan.csv to get planned_week/planned_day
+      3) Computing the maximum absolute planned day covered by the schedule
+      4) Comparing with the current absolute planned day derived from current_time_s
+
+    If any required file/column is missing, this returns True (forcing a full-horizon schedule).
+    """
+    print("Checking if the schedule has less than a day")
+    if schedule_path is None or production_plan_path is None:
+        return True
+
+    try:
+        schedule_df = pd.read_csv(schedule_path)
+    except Exception:
+        return True
+
+    if schedule_df is None or len(schedule_df) == 0 or 'order_id' not in schedule_df.columns:
+        return True
+
+    # Extract unique order IDs from schedule
+    order_ids = (
+        pd.to_numeric(schedule_df['order_id'], errors='coerce')
+        .dropna()
+        .astype(int)
+        .unique()
+        .tolist()
+    )
+    if not order_ids:
+        return True
+
+    try:
+        plan_df = pd.read_csv(production_plan_path)
+    except Exception:
+        return True
+
+    required_cols = {'order_id', 'planned_day'}
+    if plan_df is None or len(plan_df) == 0 or not required_cols.issubset(set(plan_df.columns)):
+        return True
+
+    # Normalize plan columns
+    plan_df = plan_df.copy()
+    plan_df['order_id'] = pd.to_numeric(plan_df['order_id'], errors='coerce')
+    plan_df['planned_day'] = pd.to_numeric(plan_df['planned_day'], errors='coerce')
+    plan_df = plan_df.dropna(subset=['order_id', 'planned_day'])
+
+    if len(plan_df) == 0:
+        return True
+
+    covered = plan_df[plan_df['order_id'].astype(int).isin([int(x) for x in order_ids])]
+    if len(covered) == 0:
+        return True
+
+    max_abs_day = int(covered['planned_day'].max())
+    segment_end_day = int(float(segment_end_time_s) // SECONDS_PER_PRODUCTION_DAY) + 1
+
+    
+    # Current absolute day from current_time_s (each production day = 8h)
+    try:
+        current_abs_day = int(float(current_time_s) // SECONDS_PER_PRODUCTION_DAY) + 1
+    except Exception:
+        current_abs_day = 1
+
+    # If the schedule does not extend into at least the next day, treat as < 1 day left.
+    print(f"max_abs_day: {max_abs_day} | current_abs_day {current_abs_day}")
+    return (max_abs_day - current_abs_day) < 1, max_abs_day < segment_end_day, segment_end_day - current_abs_day+2
+
+
+
+def main(
+    main_settings_path,
+    current_time_s,
+    segment_end_time_s,
+    seed,
+    rescheduling_enabled,
+    lookahead_days: int = ALLOWED_LOOKAHEAD_DAYS[0],
+    ):
+    random.seed(seed)
+    # Configure paths before the schedule pre-check, otherwise ON_GOING_RUN_DIR is still None.
+    configure_paths_from_main_settings(main_settings_path)
+
+    if rescheduling_enabled == 0:
+        global GENERATION_LIMIT, SWAPS_SCALE,SWAPS_CONSTANT,SWAPS_MIN,POPULATION_SCALE,POPULATION_CONSTANT,POPULATION_MIN,ELITE_SCALE,ELITE_CONSTANT,ELITE_MIN,TOURNAMENT_SCALE,TOURNAMENT_CONSTANT,TOURNAMENT_MIN, SA_MAX_ITERATIONS
+        GENERATION_LIMIT = 1
+        SWAPS_SCALE = 0
+        SWAPS_CONSTANT = 0
+        SWAPS_MIN = 0
+        POPULATION_SCALE = 0
+        POPULATION_CONSTANT = 0
+        POPULATION_MIN = 1
+        ELITE_SCALE = 0
+        ELITE_CONSTANT = 0
+        ELITE_MIN = 1
+        TOURNAMENT_SCALE = 0
+        TOURNAMENT_CONSTANT = 0
+        TOURNAMENT_MIN = 1
+        ALLOWED_LOOKAHEAD_DAYS.append(25)
+        SA_MAX_ITERATIONS = 0
+        print("rescheduling is disabled - SA will export the EDD baseline only")
+    # ===============================
+    # NEW: schedule pre-check
+    # ===============================
+    schedule_path = None
+    if ON_GOING_RUN_DIR is not None:
+        schedule_path = ON_GOING_RUN_DIR / "current_schedule.csv"
+
+    need_full_horizon = False
+    
+    if not _schedule_exists_and_has_content(schedule_path):
+        print("\nschedule is missing\n")
+        need_full_horizon = True
+        if segment_end_time_s/SECONDS_PER_PRODUCTION_DAY > max(ALLOWED_LOOKAHEAD_DAYS):
+            print(f"{segment_end_time_s/SECONDS_PER_PRODUCTION_DAY} days > {max(ALLOWED_LOOKAHEAD_DAYS)} days")
+            need_full_horizon = False
+            lookahead_days = int(segment_end_time_s/SECONDS_PER_PRODUCTION_DAY)+1
+    elif _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[0]:
+        print("\nhorizon less than a day\n")
+        need_full_horizon = True
+    elif _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[1]:
+        lookahead_days = _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_path, PRODUCTION_PLAN_PATH)[2]
+        print(f"The segment is longer than the horizon!\nnew lookahead_days: {lookahead_days}")
+    
+    if BASE_SETTINGS["segment_time"] ==1:
+        lookahead_days = max(lookahead_days,max(ALLOWED_LOOKAHEAD_DAYS))
+        print(f"lookahead days: {lookahead_days}")
+
+    if need_full_horizon:
+        print("!!!NEEDED A FULL HORIZON!!!")
+        lookahead_days = max(ALLOWED_LOOKAHEAD_DAYS)
+    # Snapshot the previous schedule BEFORE SA evaluations overwrite current_schedule.csv.
+    previous_schedule_df = None
+    prev_schedule_path = Path(ON_GOING_RUN_DIR) / 'current_schedule.csv'
+    if prev_schedule_path.exists():
+        try:
+            previous_schedule_df = pd.read_csv(prev_schedule_path)
+        except Exception:
+            previous_schedule_df = None
+
+    completed_units = get_completed_unit_ids_from_unit_summary(
+        current_time_s=current_time_s
+    )
+
+    production_df = load_production_plan(PRODUCTION_PLAN_PATH)
+
+    # Build order_id -> planned_day mapping for merge logic.
+    planned_day_by_order = (
+        production_df
+        .set_index('order_id')['planned_day']
+        .astype(int)
+        .to_dict()
+    )
+
+    all_orders, all_units, all_order_units = load_orders_and_units_from_file(production_df)
+    
+    segment_capacity = segment_capacity_calc(current_time_s,segment_end_time_s)
+
+
+    def _run_once(lookahead_days_local: int):
+        orders, units, order_units, horizon_info = filter_orders_and_units_for_rolling_horizon(
+            orders=all_orders,
+            units=all_units,
+            order_units=all_order_units,
+            current_time_s=current_time_s,
+            lookahead_days=lookahead_days_local,
+            completed_unit_ids=completed_units,
+            segment_capacity=segment_capacity
+        )
+
+        if not orders:
+            return None, None, float('inf'), None, horizon_info, units, order_units
+
+        best_order_solution, best_unit_sequence, best_simulation_result, best_fitness, *_ = run_sa(
+            orders=orders,
+            units=units,
+            order_units=order_units,
+            current_time_s=current_time_s,
+        )
+
+        return best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, order_units
+
+    # --- Try 1 day first (or the requested lookahead) ---
+    best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(lookahead_days)
+
+    feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
+    def horizon_print():
+        print(
+            f"\n[SA] Horizon feasibility check: \n"
+            f"-makespan={best_simulation_result.get('makespan') if best_simulation_result else None}, \n"
+            f"-horizon_window_s={(horizon_info.get('horizon_window_s') if horizon_info and horizon_info.get('horizon_window_s') is not None else ( (float(horizon_info.get('horizon_end_s')) - float(horizon_info.get('horizon_start_s'))) if horizon_info and horizon_info.get('horizon_end_s') is not None and horizon_info.get('horizon_start_s') is not None else None ))}, \n"
+            f"-horizon_start_s={horizon_info.get('horizon_start_s') if horizon_info else None}, \n"
+            f"-horizon_end_s={horizon_info.get('horizon_end_s') if horizon_info else None}, \n"
+            f"-feasible={feasible}\n"
+        )
+    horizon_print()
+    
+    if lookahead_days < max(ALLOWED_LOOKAHEAD_DAYS) and (not feasible):
+        best_order_solution, best_simulation_result, best_fitness, order_units, horizon_info, units, _ou = _run_once(max(ALLOWED_LOOKAHEAD_DAYS))
+        print(f"had to expand our horizon - running max: {max(ALLOWED_LOOKAHEAD_DAYS)}")
+        feasible = is_schedule_feasible_within_horizon(best_simulation_result, horizon_info)
+        
+        horizon_print()
+
+    # --- Export logic ---
+    if best_order_solution is None:
+        return
+
+    # Build the new schedule dataframe
+    units_lookup = {u.unit_id: u for u in units}
+    best_route_map = {}
+    if isinstance(best_simulation_result, dict):
+        best_route_map = dict(best_simulation_result.get("route_id_by_unit_id", {}))
+
+    new_schedule_df = chromosome_to_unit_dataframe(
+        chromosome=best_order_solution,
+        order_units=order_units,
+        units_lookup=units_lookup,
+        route_id=0,
+        route_id_by_unit_id=best_route_map,
+    )
+
+    # Always merge against the previous schedule when it exists.
+    # This prevents uncompleted units from being lost when disruptions make the
+    # chosen horizon finish late. Completed units are removed inside the merge.
+    if previous_schedule_df is not None:
+        cut_day = int(horizon_info.get('last_planned_day', get_current_planned_day(current_time_s)))
+        final_schedule_df = merge_schedule_with_previous_tail(
+            new_schedule_df=new_schedule_df,
+            previous_schedule_df=previous_schedule_df,
+            planned_day_by_order=planned_day_by_order,
+            cut_day=cut_day,
+            completed_unit_ids=completed_units
+        )
+    else:
+        final_schedule_df = new_schedule_df.copy()
+        final_schedule_df['unit_seq'] = range(1, len(final_schedule_df) + 1)
+
+    if "route_id" not in final_schedule_df.columns:
+        final_schedule_df["route_id"] = "0"
+    if best_route_map:
+        final_schedule_df["route_id"] = final_schedule_df.apply(
+            lambda row: best_route_map.get(str(row.get("unit_id")), row.get("route_id", "0")),
+            axis=1,
+        )
+
+    # Write final schedule (overwrite)
+    output_path = Path(ON_GOING_RUN_DIR) / 'current_schedule.csv'
+    final_schedule_df.to_csv(output_path, index=False)
+
+    return
+
+
+if __name__ == "__main__": #Kan slettes når koden kun skal køres af MAIN
+    print("\n lmao u idiot This scheduler is intended to be called from MAIN.py\n")

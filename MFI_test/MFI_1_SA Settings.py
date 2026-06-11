@@ -1,5 +1,3 @@
-SA Settings fra CHATGPT
-
 INITIAL_TEMPERATURE
 # Bestemmer hvor villig SA er til at acceptere dårligere løsninger i starten.
 # Høj temperatur -> meget exploration, accepterer mange dårlige løsninger, mere random søgning
