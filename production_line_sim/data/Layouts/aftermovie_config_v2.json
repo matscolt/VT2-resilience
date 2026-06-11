@@ -1,0 +1,751 @@
+{
+  "version": 2,
+  "description": "V2 config for instance-aware aftermovie rendering with 3-part routes: leaving + common + connecting.",
+  "assets_base_dir": "Scenarios",
+  "defaults": {
+    "fps": 30,
+    "sim_seconds_per_frame": 0.5,
+    "save_every_nth_png": 100,
+    "draw_time_label": true,
+    "time_label_pos": [
+      20,
+      20
+    ],
+    "carrier_size_px": 25,
+    "queue_label_format": "Q: {count}",
+    "warn_on_processing_overlap": true,
+    "write_mp4": true,
+    "draw_unit_ids": false,
+    "draw_queue_units": false
+  },
+  "layout_selection": {
+    "layout_2_2_5_2_2_2.json": "layout_2_2_5_2_2_2",
+    "layout_2_3_5_2_3_2.json": "layout_2_3_5_2_3_2"
+  },
+  "layouts": {
+    "layout_2_2_5_2_2_2": {
+      "background_png": "layout_2_2_5_2_2_2.png",
+      "carrier_png": "newcarrier.png",
+      "stations": {
+        "Station 1: Bottom cover": {
+          "processing_pos": [
+            424,
+            200
+          ],
+          "queue_label_pos": [
+            330,
+            210
+          ],
+          "dis_label_pos": [
+            330,
+            270
+          ]
+        },
+        "Station 1.1: Bottom cover": {
+          "processing_pos": [
+            830,
+            200
+          ],
+          "queue_label_pos": [
+            750,
+            210
+          ],
+          "dis_label_pos": [
+            750,
+            270
+          ]
+        },
+        "Station 2: Drill station": {
+          "processing_pos": [
+            215,
+            530
+          ],
+          "queue_label_pos": [
+            130,
+            530
+          ],
+          "dis_label_pos": [
+            130,
+            610
+          ]
+        },
+        "Station 2.1: Drill station": {
+          "processing_pos": [
+            630,
+            530
+          ],
+          "queue_label_pos": [
+            550,
+            530
+          ],
+          "dis_label_pos": [
+            550,
+            610
+          ]
+        },
+        "Station 3: Robot cell": {
+          "processing_pos": [
+            390,
+            875
+          ],
+          "queue_label_pos": [
+            290,
+            875
+          ],
+          "dis_label_pos": [
+            290,
+            955
+          ]
+        },
+        "Station 3.1: Robot cell": {
+          "processing_pos": [
+            800,
+            875
+          ],
+          "queue_label_pos": [
+            700,
+            875
+          ],
+          "dis_label_pos": [
+            700,
+            955
+          ]
+        },
+        "Station 3.2: Robot cell": {
+          "processing_pos": [
+            1210,
+            875
+          ],
+          "queue_label_pos": [
+            1120,
+            875
+          ],
+          "dis_label_pos": [
+            1120,
+            955
+          ]
+        },
+        "Station 3.3: Robot cell": {
+          "processing_pos": [
+            1620,
+            875
+          ],
+          "queue_label_pos": [
+            1520,
+            875
+          ],
+          "dis_label_pos": [
+            1520,
+            955
+          ]
+        },
+        "Station 3.4: Robot cell": {
+          "processing_pos": [
+            2030,
+            875
+          ],
+          "queue_label_pos": [
+            1930,
+            875
+          ],
+          "dis_label_pos": [
+            1930,
+            955
+          ]
+        },
+        "Station 4: Inspection": {
+          "processing_pos": [
+            215,
+            1220
+          ],
+          "queue_label_pos": [
+            130,
+            1220
+          ],
+          "dis_label_pos": [
+            130,
+            1300
+          ]
+        },
+        "Station 4.1: Inspection": {
+          "processing_pos": [
+            625,
+            1220
+          ],
+          "queue_label_pos": [
+            540,
+            1220
+          ],
+          "dis_label_pos": [
+            540,
+            1220
+          ]
+        },
+        "Station 5: Top cover": {
+          "processing_pos": [
+            280,
+            530
+          ],
+          "queue_label_pos": [
+            370,
+            530
+          ],
+          "dis_label_pos": [
+            370,
+            610
+          ]
+        },
+        "Station 5.1: Top cover": {
+          "processing_pos": [
+            690,
+            530
+          ],
+          "queue_label_pos": [
+            780,
+            530
+          ],
+          "dis_label_pos": [
+            780,
+            610
+          ]
+        },
+        "Station 6: Packaging": {
+          "processing_pos": [
+            480,
+            200
+          ],
+          "queue_label_pos": [
+            560,
+            210
+          ],
+          "dis_label_pos": [
+            560,
+            270
+          ]
+        },
+        "Station 6.1: Packaging": {
+          "processing_pos": [
+            890,
+            200
+          ],
+          "queue_label_pos": [
+            990,
+            210
+          ],
+          "dis_label_pos": [
+            990,
+            270
+          ]
+        }
+      },
+      "route_parts": {
+        "leaving_paths": {
+          "1.0": {
+            "type": "polyline",
+            "points": [
+              [
+                424,
+                200
+              ],
+              [
+                464,
+                200
+              ]
+            ]
+          },
+          "1.1": {
+            "type": "polyline",
+            "points": [
+              [
+                830,
+                200
+              ],
+              [
+                870,
+                200
+              ]
+            ]
+          },
+          "2.0": {
+            "type": "polyline",
+            "points": [
+              [
+                215,
+                530
+              ],
+              [
+                255,
+                530
+              ]
+            ]
+          },
+          "2.1": {
+            "type": "polyline",
+            "points": [
+              [
+                630,
+                530
+              ],
+              [
+                670,
+                530
+              ]
+            ]
+          },
+          "3.0": {
+            "type": "polyline",
+            "points": [
+              [
+                390,
+                875
+              ],
+              [
+                430,
+                875
+              ]
+            ]
+          },
+          "3.1": {
+            "type": "polyline",
+            "points": [
+              [
+                800,
+                875
+              ],
+              [
+                840,
+                875
+              ]
+            ]
+          },
+          "3.2": {
+            "type": "polyline",
+            "points": [
+              [
+                1210,
+                875
+              ],
+              [
+                1250,
+                875
+              ]
+            ]
+          },
+          "3.3": {
+            "type": "polyline",
+            "points": [
+              [
+                1620,
+                875
+              ],
+              [
+                1660,
+                875
+              ]
+            ]
+          },
+          "3.4": {
+            "type": "polyline",
+            "points": [
+              [
+                2030,
+                875
+              ],
+              [
+                2070,
+                875
+              ]
+            ]
+          },
+          "4.0": {
+            "type": "polyline",
+            "points": [
+              [
+                215,
+                1220
+              ],
+              [
+                175,
+                1220
+              ]
+            ]
+          },
+          "4.1": {
+            "type": "polyline",
+            "points": [
+              [
+                625,
+                1220
+              ],
+              [
+                585,
+                1220
+              ]
+            ]
+          },
+          "5.0": {
+            "type": "polyline",
+            "points": [
+              [
+                280,
+                530
+              ],
+              [
+                240,
+                530
+              ]
+            ]
+          },
+          "5.1": {
+            "type": "polyline",
+            "points": [
+              [
+                690,
+                530
+              ],
+              [
+                650,
+                530
+              ]
+            ]
+          },
+          "6.0": {
+            "type": "polyline",
+            "points": [
+              [
+                480,
+                200
+              ],
+              [
+                440,
+                200
+              ]
+            ]
+          },
+          "6.1": {
+            "type": "polyline",
+            "points": [
+              [
+                890,
+                200
+              ],
+              [
+                850,
+                200
+              ]
+            ]
+          }
+        },
+        "common_paths": {
+          "1->2": {
+            "type": "polyline",
+            "points": [
+              [
+                465,
+                200
+              ],
+              [
+                465,
+                355
+              ],
+              [
+                215,
+                355
+              ],
+              [
+                215,
+                530
+              ]
+            ]
+          },
+          "2->3": {
+            "type": "polyline",
+            "points": [
+              [
+                215,
+                530
+              ],
+              [
+                215,
+                700
+              ],
+              [
+                390,
+                700
+              ],
+              [
+                390,
+                875
+              ]
+            ]
+          },
+          "3->4": {
+            "type": "polyline",
+            "points": [
+              [
+                390,
+                875
+              ],
+              [
+                390,
+                1045
+              ],
+              [
+                215,
+                1045
+              ],
+              [
+                215,
+                1220
+              ]
+            ]
+          },
+          "4->5": {
+            "type": "polyline",
+            "points": [
+              [
+                215,
+                1220
+              ],
+              [
+                215,
+                875
+              ],
+              [
+                280,
+                875
+              ],
+              [
+                280,
+                530
+              ]
+            ]
+          },
+          "5->6": {
+            "type": "polyline",
+            "points": [
+              [
+                280,
+                530
+              ],
+              [
+                280,
+                355
+              ],
+              [
+                480,
+                355
+              ],
+              [
+                480,
+                200
+              ]
+            ]
+          }
+        },
+        "connecting_paths": {
+          "1.0": {
+            "type": "polyline",
+            "points": [
+              [
+                384,
+                200
+              ],
+              [
+                424,
+                200
+              ]
+            ]
+          },
+          "1.1": {
+            "type": "polyline",
+            "points": [
+              [
+                790,
+                200
+              ],
+              [
+                830,
+                200
+              ]
+            ]
+          },
+          "2.0": {
+            "type": "polyline",
+            "points": [
+              [
+                175,
+                530
+              ],
+              [
+                215,
+                530
+              ]
+            ]
+          },
+          "2.1": {
+            "type": "polyline",
+            "points": [
+              [
+                590,
+                530
+              ],
+              [
+                630,
+                530
+              ]
+            ]
+          },
+          "3.0": {
+            "type": "polyline",
+            "points": [
+              [
+                350,
+                875
+              ],
+              [
+                390,
+                875
+              ]
+            ]
+          },
+          "3.1": {
+            "type": "polyline",
+            "points": [
+              [
+                760,
+                875
+              ],
+              [
+                800,
+                875
+              ]
+            ]
+          },
+          "3.2": {
+            "type": "polyline",
+            "points": [
+              [
+                1170,
+                875
+              ],
+              [
+                1210,
+                875
+              ]
+            ]
+          },
+          "3.3": {
+            "type": "polyline",
+            "points": [
+              [
+                1580,
+                875
+              ],
+              [
+                1620,
+                875
+              ]
+            ]
+          },
+          "3.4": {
+            "type": "polyline",
+            "points": [
+              [
+                1990,
+                875
+              ],
+              [
+                2030,
+                875
+              ]
+            ]
+          },
+          "4.0": {
+            "type": "polyline",
+            "points": [
+              [
+                255,
+                1220
+              ],
+              [
+                215,
+                1220
+              ]
+            ]
+          },
+          "4.1": {
+            "type": "polyline",
+            "points": [
+              [
+                665,
+                1220
+              ],
+              [
+                625,
+                1220
+              ]
+            ]
+          },
+          "5.0": {
+            "type": "polyline",
+            "points": [
+              [
+                320,
+                530
+              ],
+              [
+                280,
+                530
+              ]
+            ]
+          },
+          "5.1": {
+            "type": "polyline",
+            "points": [
+              [
+                730,
+                530
+              ],
+              [
+                690,
+                530
+              ]
+            ]
+          },
+          "6.0": {
+            "type": "polyline",
+            "points": [
+              [
+                520,
+                200
+              ],
+              [
+                480,
+                200
+              ]
+            ]
+          },
+          "6.1": {
+            "type": "polyline",
+            "points": [
+              [
+                930,
+                200
+              ],
+              [
+                890,
+                200
+              ]
+            ]
+          }
+        }
+      },
+      "routing_notes": {
+        "method": "full route = leaving_paths[from_id] + common_paths[from_type->to_type] + connecting_paths[to_id]",
+        "station_name_rule": "Station 1 maps to 1.0; Station 1.1 maps to 1.1",
+        "important": "The generated common path coordinates are starter values. Tune points to match the physical tubes on the PNG."
+      }
+    }
+  }
+}

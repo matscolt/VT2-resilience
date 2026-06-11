@@ -23,7 +23,7 @@
   "layouts": {
     "layout_2_2_5_2_2_2": {
       "background_png": "layout_2_2_5_2_2_2.png",
-      "carrier_png": "newcarrier.png",
+      "carrier_png": "new_carrier.png",
       "stations": {
         "Station 1: Bottom cover": {
           "processing_pos": [
@@ -83,128 +83,128 @@
         },
         "Station 3: Robot cell": {
           "processing_pos": [
-            1715,
-            665
+            390,
+            875
           ],
           "queue_label_pos": [
-            1765,
-            752
+            290,
+            875
           ],
           "dis_label_pos": [
-            1765,
-            752
+            290,
+            955
           ]
         },
         "Station 3.1: Robot cell": {
           "processing_pos": [
-            1715,
-            755
+            800,
+            875
           ],
           "queue_label_pos": [
-            1765,
-            842
+            700,
+            875
           ],
           "dis_label_pos": [
-            1765,
-            842
+            700,
+            955
           ]
         },
         "Station 3.2: Robot cell": {
           "processing_pos": [
-            1715,
-            845
+            1210,
+            875
           ],
           "queue_label_pos": [
-            1765,
-            932
+            1120,
+            875
           ],
           "dis_label_pos": [
-            1765,
-            932
+            1120,
+            955
           ]
         },
         "Station 3.3: Robot cell": {
           "processing_pos": [
-            1715,
-            935
+            1620,
+            875
           ],
           "queue_label_pos": [
-            1765,
-            1022
+            1520,
+            875
           ],
           "dis_label_pos": [
-            1765,
-            1022
+            1520,
+            955
           ]
         },
         "Station 3.4: Robot cell": {
           "processing_pos": [
-            1715,
-            1025
+            2030,
+            875
           ],
           "queue_label_pos": [
-            1765,
-            1112
+            1930,
+            875
           ],
           "dis_label_pos": [
-            1765,
-            1112
+            1930,
+            955
           ]
         },
         "Station 4: Inspection": {
           "processing_pos": [
-            1140,
-            665
+            215,
+            1220
           ],
           "queue_label_pos": [
-            1200,
-            752
+            130,
+            1220
           ],
           "dis_label_pos": [
-            1200,
-            752
+            130,
+            1300
           ]
         },
         "Station 4.1: Inspection": {
           "processing_pos": [
-            1140,
-            755
+            625,
+            1220
           ],
           "queue_label_pos": [
-            1200,
-            842
+            540,
+            1220
           ],
           "dis_label_pos": [
-            1200,
-            842
+            540,
+            1220
           ]
         },
         "Station 5: Top cover": {
           "processing_pos": [
-            640,
-            665
+            280,
+            530
           ],
           "queue_label_pos": [
-            690,
-            752
+            370,
+            530
           ],
           "dis_label_pos": [
-            690,
-            752
+            370,
+            610
           ]
         },
         "Station 5.1: Top cover": {
           "processing_pos": [
-            640,
-            755
+            690,
+            530
           ],
           "queue_label_pos": [
-            690,
-            842
+            780,
+            530
           ],
           "dis_label_pos": [
-            690,
-            842
+            780,
+            610
           ]
         },
         "Station 6: Packaging": {
