@@ -10,8 +10,8 @@
         "medium": 25
     },
     "algorithms": {
-        "1": "genetic algortihm"
-    },
+    "1": "SA"
+    },  
     "weightage": {
         "tardines": "?",
         "max_lateness": "?",
@@ -50,7 +50,7 @@
 
     "ALPHA":0.1,
     "BETA":0.001,
-    "GAMMA":1.1,
+    "GAMMA":1.5,
     "DELTA":1000,
 
     "swaps_scale":0.15,
