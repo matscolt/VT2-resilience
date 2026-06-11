@@ -272,7 +272,7 @@ def main():
     max_idx = len(scenarios) * len(pressures) * len(ratios)* len(algos) * len(seeds)
     print("\n --- Running the different combinations of scenarios ---\n")
     action = "Running simulations: "
-    for (a_id, a_name), (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (s_id, seed) in product(
+    for (sc_name, layout_file), (p_name, p_val), (r_name, r_val), (a_id, a_name), (s_id, seed) in product(
         scenarios, pressures, ratios, algos, seeds
     ):
         run_idx += 1
@@ -286,6 +286,7 @@ def main():
             print(f"not the loop we want --> run: {run_idx}")
             continue
         print(f"Running run: {run_idx}")
+        print(f"Algo: {a_name}")
         # creating the production plan
         label = f"{sc_idx[sc_name]}_{p_idx[p_name]}_{r_idx[r_name]}_{s_idx[s_id]}"
         order_csv_path = orders_dir / f"unsorted_orders_{label}.csv"
