@@ -29,7 +29,7 @@
       "stations": {
         "Station 1: Bottom cover": {
           "processing_pos": [
-            424,
+            422,
             200
           ],
           "queue_label_pos": [
@@ -43,7 +43,7 @@
         },
         "Station 1.1: Bottom cover": {
           "processing_pos": [
-            830,
+            831,
             200
           ],
           "queue_label_pos": [
@@ -57,7 +57,7 @@
         },
         "Station 2: Drill station": {
           "processing_pos": [
-            215,
+            217,
             530
           ],
           "queue_label_pos": [
@@ -99,7 +99,7 @@
         },
         "Station 3.1: Robot cell": {
           "processing_pos": [
-            800,
+            799,
             875
           ],
           "queue_label_pos": [
@@ -113,7 +113,7 @@
         },
         "Station 3.2: Robot cell": {
           "processing_pos": [
-            1210,
+            1208,
             875
           ],
           "queue_label_pos": [
@@ -127,7 +127,7 @@
         },
         "Station 3.3: Robot cell": {
           "processing_pos": [
-            1620,
+            1617,
             875
           ],
           "queue_label_pos": [
@@ -141,7 +141,7 @@
         },
         "Station 3.4: Robot cell": {
           "processing_pos": [
-            2030,
+            2034,
             875
           ],
           "queue_label_pos": [
@@ -248,8 +248,8 @@
                 200
               ],
               [
-                464,
-                200
+                424,
+                335
               ]
             ]
           },
@@ -261,8 +261,8 @@
                 200
               ],
               [
-                870,
-                200
+                830,
+                335
               ]
             ]
           },
@@ -441,20 +441,20 @@
             "type": "polyline",
             "points": [
               [
-                465,
-                200
+                420,
+                335
               ],
               [
-                465,
-                355
+                200,
+                335
+              ],
+              [
+                200,
+                400
               ],
               [
                 215,
-                355
-              ],
-              [
-                215,
-                530
+                400
               ]
             ]
           },
@@ -574,8 +574,8 @@
             "type": "polyline",
             "points": [
               [
-                175,
-                530
+                215,
+                400
               ],
               [
                 215,
@@ -587,8 +587,8 @@
             "type": "polyline",
             "points": [
               [
-                590,
-                530
+                630,
+                400
               ],
               [
                 630,

@@ -31,6 +31,7 @@ from pathlib import Path
 from collections import deque
 from typing import Dict, Iterable, List, Tuple, Optional
 
+import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 
@@ -223,18 +224,6 @@ def paste_center(base: Image.Image, sprite: Image.Image, center: Point):
 def draw_text_center(draw: ImageDraw.ImageDraw, pos: Tuple[int, int], text: str, font, fill, anchor="mm"):
     draw.text(tuple(pos), text, font=font, fill=fill, anchor=anchor)
 
-
-def maybe_make_mp4(frames_dir: Path, output_mp4: Path, fps: int):
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        print("ffmpeg not found; PNG frames were written but MP4 was not created.")
-        return
-    cmd = [
-        ffmpeg, "-y", "-framerate", str(fps),
-        "-i", str(frames_dir / "frame_%06d.png"),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(output_mp4)
-    ]
-    subprocess.run(cmd, check=True)
 
 
 
@@ -570,10 +559,12 @@ def render_after_movie(
     carrier = Image.open(carrier_path).convert("RGBA").resize((carrier_size, carrier_size), Image.LANCZOS)
 
     movie_dir = data_dir / "movie"
+    # Only every n'th PNG is saved. The old all-frame folder is removed if it exists.
     frames_dir = movie_dir / "frames"
     saved_frames_dir = movie_dir / "saved_every_nth"
     movie_dir.mkdir(parents=True, exist_ok=True)
-    clear_frames_folder(frames_dir)
+    if frames_dir.exists():
+        shutil.rmtree(frames_dir)
     clear_frames_folder(saved_frames_dir)
 
     full_t0 = 0.0
@@ -603,6 +594,19 @@ def render_after_movie(
     reset_progress_update()
     next_pct = 0
     frame_idx = 0
+    saved_png_count = 0
+
+    writer = None
+    mp4_path = movie_dir / "after_movie.mp4"
+    if write_mp4:
+        try:
+            import imageio.v2 as imageio
+            writer = imageio.get_writer(str(mp4_path), fps=fps, macro_block_size=1)
+        except Exception as e:
+            writer = None
+            print("WARNING: Could not create MP4 writer. Every n'th PNG will still be saved.")
+            print("Reason:", e)
+
     t = t0
     while t <= t_end + 1e-9:
         frame = background.copy()
@@ -626,17 +630,13 @@ def render_after_movie(
                     tuple(defaults.get("queue_label_color", [0, 0, 0, 255])),
                 )
 
-        # Processing units are visible at processing_pos.
+        # Processing units are visible exactly at processing_pos.
+        # No offset is applied: the coordinate in aftermovie_config_v2.json is treated as the carrier center.
         processing = station_df[(station_df["start_time_s"] <= t) & (station_df["finish_time_s"] > t)]
-        occupied_counts: Dict[str, int] = {}
         for _, row in processing.iterrows():
             st = stations[row["station_name"]]
             x, y = st["processing_pos"]
-            k = occupied_counts.get(row["station_name"], 0)
-            occupied_counts[row["station_name"]] = k + 1
-            dx = (k % 3 - 1) * (carrier_size * 0.35)
-            dy = (k // 3) * (carrier_size * 0.35)
-            center = (x + dx, y + dy)
+            center = (float(x), float(y))
             proc_duration = float(row["finish_time_s"]) - float(row["start_time_s"])
             if proc_duration <= 1e-9:
                 proc_progress = 1.0
@@ -677,20 +677,27 @@ def render_after_movie(
             pos = tuple(defaults.get("time_label_pos", [20, 20]))
             draw.text(pos, f"t = {t:0.1f}s", font=time_font, fill=tuple(defaults.get("time_label_color", [0, 0, 0, 255])))
 
-        frame_path = frames_dir / f"frame_{frame_idx:06d}.png"
-        frame.save(frame_path)
+        if writer is not None:
+            writer.append_data(np.asarray(frame.convert("RGB")))
+
         if save_every_nth > 0 and frame_idx % save_every_nth == 0:
-            frame.save(saved_frames_dir / frame_path.name)
+            frame_path = saved_frames_dir / f"frame_{frame_idx:06d}.png"
+            frame.save(frame_path)
+            saved_png_count += 1
 
         frame_idx += 1
         next_pct = progress_update(frame_idx, total_frames_est, next_pct)
         t += sim_seconds_per_frame
 
+    if writer is not None:
+        writer.close()
+
     next_pct = progress_update(total_frames_est, total_frames_est, next_pct)
     print()
-    if write_mp4:
-        maybe_make_mp4(frames_dir, movie_dir / "after_movie.mp4", fps)
-    print(f"Done. Wrote {frame_idx} frames to {frames_dir}")
+    if write_mp4 and writer is not None:
+        print(f"MP4 saved to {mp4_path}")
+    print(f"Done. Rendered {frame_idx} frames to the MP4 stream.")
+    print(f"Saved {saved_png_count} PNG frame(s) to {saved_frames_dir} (every {save_every_nth} frame(s)).")
     return movie_dir, frame_idx
 
 
