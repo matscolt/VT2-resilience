@@ -13,10 +13,11 @@ Key changes from the old approach:
 - Disruption label/timer uses dis_label_pos from the JSON.
 
 Expected files by default:
-- aftermovie_config_v2.json
-- station_schedule.csv
-- transport_schedule.csv
-- layout/background PNG and carrier PNG as referenced by config
+- data/Layouts/aftermovie_config_v2.json
+- data/Layouts/<layout/background PNG referenced by config>
+- data/Layouts/<carrier PNG referenced by config>
+- RESULTS/output/<main_folder>/<run_folder>/results/station_schedule.csv
+- RESULTS/output/<main_folder>/<run_folder>/results/transport_schedule.csv
 """
 
 import json
@@ -25,7 +26,9 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
+from collections import deque
 from typing import Dict, Iterable, List, Tuple, Optional
 
 import pandas as pd
@@ -34,6 +37,15 @@ from PIL import Image, ImageDraw, ImageFont
 Point = Tuple[float, float]
 ROOTDIR = Path(__file__).resolve().parent
 LAYOUTDIR = ROOTDIR / "data" / "Layouts"
+
+# Loading bar shown above units while they are processing.
+# These match the old script defaults.
+BAR_W = 50
+BAR_H = 8
+BAR_GAP = 6
+BAR_BG_COLOR = (255, 255, 255, 255)
+BAR_BORDER_COLOR = (255, 255, 255, 255)
+BAR_FILL_COLOR = (0, 200, 0, 255)
 
 def station_id_from_name(station_name: str) -> str:
     """Return instance id like '1.0', '1.1', '3.4' from names like 'Station 1: ...'."""
@@ -62,17 +74,58 @@ def load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def resolve_path(base_dir: Path, value: str | None) -> Optional[Path]:
+def resolve_project_path(value: str | Path | None, *, fallback_dir: Path = ROOTDIR) -> Optional[Path]:
+    """Resolve a general project path relative to ROOTDIR first, then fallback_dir."""
     if not value:
         return None
     p = Path(value)
-    if p.is_absolute() and p.exists():
+    if p.is_absolute():
         return p
-    candidates = [ROOTDIR / p, base_dir / p, ROOTDIR / "data" / "Layouts" / p, ROOTDIR / "Scenarios" / p]
-    for c in candidates:
-        if c.exists():
-            return c
-    return ROOTDIR / p
+    for candidate in (ROOTDIR / p, fallback_dir / p):
+        if candidate.exists():
+            return candidate
+    return fallback_dir / p
+
+
+def resolve_layout_asset_path(value: str | Path | None) -> Optional[Path]:
+    """
+    Resolve layout assets such as layout PNGs and carrier PNGs.
+
+    All layout-related files are expected to live in:
+        production_line_sim/data/Layouts/
+
+    The config should therefore only need file names such as:
+        "layout_2_2_5_2_2_2.png"
+        "carrier.png"
+        "new_carrier.png"
+    """
+    if not value:
+        return None
+
+    p = Path(value)
+    if p.is_absolute():
+        return p
+
+    candidates = [
+        LAYOUTDIR / p.name,   # preferred location: data/Layouts/<file>
+        LAYOUTDIR / p,        # supports nested names under data/Layouts if ever needed
+        ROOTDIR / p,          # supports values like data/Layouts/<file>
+    ]
+
+    # Backward-compatible spelling support.
+    # Earlier config versions used "newcarrier.png";
+    # your folder screenshot shows "new_carrier.png".
+    if p.name == "newcarrier.png":
+        candidates.append(LAYOUTDIR / "new_carrier.png")
+    if p.name == "new_carrier.png":
+        candidates.append(LAYOUTDIR / "newcarrier.png")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    # Return the expected location so FileNotFoundError clearly points to data/Layouts.
+    return LAYOUTDIR / p.name
 
 
 def choose_layout(config: dict, layout_name: Optional[str]) -> Tuple[str, dict]:
@@ -190,8 +243,6 @@ def maybe_make_mp4(frames_dir: Path, output_mp4: Path, fps: int):
 # ----------------------------
 RESULTS_OUTPUTDIR = ROOTDIR / "RESULTS" / "output"
 CONFIG_JSON = LAYOUTDIR / "aftermovie_config_v2.json"
-if not CONFIG_JSON.exists():
-    CONFIG_JSON = ROOTDIR / "aftermovie_config_v2.json"
 
 
 def list_folders(parent: Path, prefix: str | None = None) -> List[Path]:
@@ -294,6 +345,136 @@ def clear_frames_folder(frames_dir: Path) -> None:
     frames_dir.mkdir(parents=True, exist_ok=True)
 
 
+
+def _format_eta(seconds):
+    if seconds is None or seconds != seconds or seconds < 0:
+        return "--:--"
+    seconds = int(round(seconds))
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    return f"{h:d}:{m:02d}:{s:02d}" if h > 0 else f"{m:02d}:{s:02d}"
+
+
+def reset_progress_update() -> None:
+    """Reset persistent timing state for the terminal progress bar."""
+    for attr in ("_last_tick", "_dts", "_avg_fps", "_eta_seconds"):
+        if hasattr(progress_update, attr):
+            delattr(progress_update, attr)
+
+
+def progress_update(frame_idx: int, total_frames: int, next_pct: int, bar_width: int = 60, action="rendering: ") -> int:
+    """Terminal progress bar copied from the old script style."""
+    now = time.perf_counter()
+
+    if not hasattr(progress_update, "_last_tick"):
+        progress_update._last_tick = now
+        progress_update._dts = deque(maxlen=100)
+        progress_update._avg_fps = None
+        progress_update._eta_seconds = None
+
+    dt = now - progress_update._last_tick
+    progress_update._last_tick = now
+
+    if dt > 0:
+        progress_update._dts.append(dt)
+
+    if len(progress_update._dts) > 0:
+        avg_dt = sum(progress_update._dts) / len(progress_update._dts)
+        progress_update._avg_fps = 1.0 / avg_dt if avg_dt > 1e-9 else None
+    else:
+        progress_update._avg_fps = None
+
+    remaining = max(int(total_frames) - int(frame_idx), 0)
+    if progress_update._avg_fps and progress_update._avg_fps > 0:
+        progress_update._eta_seconds = remaining / progress_update._avg_fps
+    else:
+        progress_update._eta_seconds = None
+
+    if total_frames <= 0:
+        return next_pct
+
+    pct = int((frame_idx / total_frames) * 100)
+    if pct < next_pct and frame_idx != total_frames:
+        return next_pct
+
+    pct = min(100, max(0, pct))
+
+    fps_str = f"{progress_update._avg_fps:5.1f} fps" if (progress_update._avg_fps and progress_update._avg_fps > 0) else "--.- fps"
+    eta_str = _format_eta(progress_update._eta_seconds)
+
+    filled = int(round((pct / 100) * bar_width))
+    bar = "#" * filled + "-" * (bar_width - filled)
+    msg = f"{action}[{bar}] {pct:3d}%  ({frame_idx}/{total_frames})  {fps_str}  ETA {eta_str}"
+    print("\r" + msg, end="", flush=True)
+
+    if pct >= 100:
+        return 101
+
+    return next_pct + 1
+
+
+def draw_loading_bar(
+    frame_rgba: Image.Image,
+    center_xy: Tuple[float, float],
+    progress_0_1: float,
+    carrier_size_px: int,
+    bar_w: int = BAR_W,
+    bar_h: int = BAR_H,
+    bar_gap: int = BAR_GAP,
+) -> None:
+    """White bar filled green above the carrier, matching the old script."""
+    progress = float(max(0.0, min(1.0, progress_0_1)))
+    cx, cy = center_xy
+
+    x0 = int(round(cx - bar_w / 2))
+    y0 = int(round(cy - carrier_size_px / 2 - bar_gap - bar_h))
+    x1 = x0 + bar_w
+    y1 = y0 + bar_h
+
+    draw = ImageDraw.Draw(frame_rgba)
+    draw.rectangle([x0, y0, x1, y1], fill=BAR_BG_COLOR, outline=BAR_BORDER_COLOR)
+
+    fill_w = int(round(bar_w * progress))
+    if fill_w > 0:
+        draw.rectangle([x0, y0, x0 + fill_w, y1], fill=BAR_FILL_COLOR)
+
+
+def prompt_time_period(run_dir: Path) -> Tuple[float, float]:
+    """Ask for the render time period. This is intentionally the last prompt before rendering."""
+    data_dir = data_dir_from_run_folder(run_dir)
+    station_schedule = data_dir / "station_schedule.csv"
+    transport_schedule = data_dir / "transport_schedule.csv"
+
+    station_df = pd.read_csv(station_schedule)
+    transport_df = pd.read_csv(transport_schedule)
+
+    min_time = 0.0
+    if "arrival_time_s" in station_df.columns and len(station_df):
+        min_time = min(min_time, float(station_df["arrival_time_s"].min()))
+    if "start_time_s" in transport_df.columns and len(transport_df):
+        min_time = min(min_time, float(transport_df["start_time_s"].min()))
+
+    max_time = max(float(station_df["finish_time_s"].max()), float(transport_df["finish_time_s"].max()))
+
+    print("\nSimulation time range available:")
+    print(f"  from: {min_time:0.2f} s")
+    print(f"  to  : {max_time:0.2f} s")
+    print(f"  max : {max_time:0.2f} s")
+
+    while True:
+        from_s = prompt_float("Render from time [s]", min_time)
+        to_s = prompt_float("Render to time [s]", max_time)
+        if from_s < min_time:
+            print(f"From-time is below available minimum. Using {min_time:0.2f} s instead.")
+            from_s = min_time
+        if to_s > max_time:
+            print(f"To-time is above available maximum. Using {max_time:0.2f} s instead.")
+            to_s = max_time
+        if to_s > from_s:
+            return from_s, to_s
+        print("The 'to' time must be greater than the 'from' time. Please try again.")
+
 def pick_coords_interactive(image_path: Path) -> None:
     """Click the layout image to print pixel coordinates. Requires matplotlib."""
     try:
@@ -329,7 +510,8 @@ def render_after_movie(
     layout_name: Optional[str] = None,
     fps_override: Optional[int] = None,
     sim_seconds_per_frame_override: Optional[float] = None,
-    max_time: Optional[float] = None,
+    start_time: Optional[float] = None,
+    end_time: Optional[float] = None,
 ) -> Tuple[Path, int]:
     """Render one selected run folder and return (movie_dir, number_of_frames)."""
     if not config_path.exists():
@@ -360,9 +542,10 @@ def render_after_movie(
     draw_unit_ids = bool(defaults.get("draw_unit_ids", False))
     queue_fmt = defaults.get("queue_label_format", "Q: {count}")
 
-    assets_base_dir = resolve_path(ROOTDIR, config.get("assets_base_dir", ".")) or ROOTDIR
-    bg_path = resolve_path(assets_base_dir, layout.get("background_png"))
-    carrier_path = resolve_path(assets_base_dir, layout.get("carrier_png"))
+    # Layout images/carrier images are always loaded from data/Layouts.
+    # The config should contain only the file names.
+    bg_path = resolve_layout_asset_path(layout.get("background_png"))
+    carrier_path = resolve_layout_asset_path(layout.get("carrier_png"))
     if not bg_path or not bg_path.exists():
         raise FileNotFoundError(f"Background PNG not found: {bg_path}")
     if not carrier_path or not carrier_path.exists():
@@ -393,10 +576,12 @@ def render_after_movie(
     clear_frames_folder(frames_dir)
     clear_frames_folder(saved_frames_dir)
 
-    t0 = 0.0
-    t_end = max(float(station_df["finish_time_s"].max()), float(transport_df["finish_time_s"].max()))
-    if max_time is not None:
-        t_end = min(t_end, max_time)
+    full_t0 = 0.0
+    full_t_end = max(float(station_df["finish_time_s"].max()), float(transport_df["finish_time_s"].max()))
+    t0 = full_t0 if start_time is None else max(full_t0, float(start_time))
+    t_end = full_t_end if end_time is None else min(full_t_end, float(end_time))
+    if t_end <= t0:
+        raise ValueError(f"Invalid render time period: from {t0} s to {t_end} s")
 
     label_font = load_font(int(defaults.get("queue_font_size", 24)), bold=True)
     dis_font = load_font(int(defaults.get("disruption_font_size", 24)), bold=True)
@@ -411,9 +596,12 @@ def render_after_movie(
     print(f"  fps             : {fps}")
     print(f"  sim sec/frame   : {sim_seconds_per_frame}")
     print(f"  save every nth  : {save_every_nth}")
+    print(f"  render period   : {t0:0.2f}s -> {t_end:0.2f}s")
     print(f"  movie folder    : {movie_dir}")
 
     total_frames_est = int(math.floor((t_end - t0) / sim_seconds_per_frame)) + 1
+    reset_progress_update()
+    next_pct = 0
     frame_idx = 0
     t = t0
     while t <= t_end + 1e-9:
@@ -448,9 +636,16 @@ def render_after_movie(
             occupied_counts[row["station_name"]] = k + 1
             dx = (k % 3 - 1) * (carrier_size * 0.35)
             dy = (k // 3) * (carrier_size * 0.35)
-            paste_center(frame, carrier, (x + dx, y + dy))
+            center = (x + dx, y + dy)
+            proc_duration = float(row["finish_time_s"]) - float(row["start_time_s"])
+            if proc_duration <= 1e-9:
+                proc_progress = 1.0
+            else:
+                proc_progress = (t - float(row["start_time_s"])) / proc_duration
+            draw_loading_bar(frame, center, proc_progress, carrier_size)
+            paste_center(frame, carrier, center)
             if draw_unit_ids:
-                draw_text_center(draw, (int(x + dx), int(y + dy)), str(row["unit_id"]), unit_font, (0, 0, 0, 255))
+                draw_text_center(draw, (int(center[0]), int(center[1])), str(row["unit_id"]), unit_font, (0, 0, 0, 255))
 
             # Disruption timer: show extra processing time beyond base_process_time_s.
             if "base_process_time_s" in row and pd.notna(row.get("base_process_time_s")):
@@ -487,13 +682,11 @@ def render_after_movie(
         if save_every_nth > 0 and frame_idx % save_every_nth == 0:
             frame.save(saved_frames_dir / frame_path.name)
 
-        if frame_idx % 50 == 0 or frame_idx == total_frames_est - 1:
-            pct = 100.0 * frame_idx / max(total_frames_est - 1, 1)
-            print(f"  frame {frame_idx:6d}/{total_frames_est - 1:6d} ({pct:5.1f}%)", end="\r")
-
         frame_idx += 1
+        next_pct = progress_update(frame_idx, total_frames_est, next_pct)
         t += sim_seconds_per_frame
 
+    next_pct = progress_update(total_frames_est, total_frames_est, next_pct)
     print()
     if write_mp4:
         maybe_make_mp4(frames_dir, movie_dir / "after_movie.mp4", fps)
@@ -518,6 +711,16 @@ def main():
     run_dir = prompt_for_run_folder(main_dir)
     fps = prompt_int("FPS", default_fps)
     spf = prompt_float("Simulation seconds per frame", default_spf)
-    render_after_movie(run_dir, config_path=config_path, fps_override=fps, sim_seconds_per_frame_override=spf)
+    render_from_s, render_to_s = prompt_time_period(run_dir)
+    render_after_movie(
+        run_dir,
+        config_path=config_path,
+        fps_override=fps,
+        sim_seconds_per_frame_override=spf,
+        start_time=render_from_s,
+        end_time=render_to_s,
+    )
+
+
 if __name__ == "__main__":
     main()
