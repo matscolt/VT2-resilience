@@ -183,7 +183,7 @@
         },
         "Station 5: Top cover": {
           "processing_pos": [
-            280,
+            277,
             530
           ],
           "queue_label_pos": [
@@ -244,11 +244,11 @@
             "type": "polyline",
             "points": [
               [
-                424,
+                422,
                 200
               ],
               [
-                424,
+                420,
                 335
               ]
             ]
@@ -257,11 +257,11 @@
             "type": "polyline",
             "points": [
               [
-                830,
+                831,
                 200
               ],
               [
-                830,
+                420,
                 335
               ]
             ]
@@ -270,11 +270,11 @@
             "type": "polyline",
             "points": [
               [
-                215,
+                217,
                 530
               ],
               [
-                215,
+                217,
                 665
               ]
             ]
@@ -287,7 +287,7 @@
                 530
               ],
               [
-                630,
+                215,
                 665
               ]
             ]
@@ -300,8 +300,12 @@
                 875
               ],
               [
-                430,
-                875
+                420,
+                935
+              ],
+              [
+                420,
+                1030
               ]
             ]
           },
@@ -309,12 +313,16 @@
             "type": "polyline",
             "points": [
               [
-                800,
+                799,
                 875
               ],
               [
-                840,
-                875
+                829,
+                935
+              ],
+              [
+                829,
+                1030
               ]
             ]
           },
@@ -322,12 +330,16 @@
             "type": "polyline",
             "points": [
               [
-                1210,
+                1208,
                 875
               ],
               [
-                1250,
-                875
+                1237,
+                935
+              ],
+              [
+                1237,
+                1030
               ]
             ]
           },
@@ -335,12 +347,16 @@
             "type": "polyline",
             "points": [
               [
-                1620,
+                1617,
                 875
               ],
               [
-                1660,
-                875
+                1646,
+                935
+              ],
+              [
+                1646,
+                1030
               ]
             ]
           },
@@ -348,12 +364,16 @@
             "type": "polyline",
             "points": [
               [
-                2030,
+                2034,
                 875
               ],
               [
-                2070,
-                875
+                2063,
+                935
+              ],
+              [
+                2063,
+                1030
               ]
             ]
           },
@@ -365,9 +385,18 @@
                 1220
               ],
               [
-                175,
+                215,
+                1275
+              ],
+              [
+                278,
+                1275
+              ],
+              [
+                278,
                 1220
               ]
+
             ]
           },
           "4.1": {
@@ -378,7 +407,15 @@
                 1220
               ],
               [
-                585,
+                625,
+                1275
+              ],
+              [
+                688,
+                1275
+              ],
+              [
+                688,
                 1220
               ]
             ]
@@ -387,12 +424,12 @@
             "type": "polyline",
             "points": [
               [
-                280,
+                277,
                 530
               ],
               [
-                240,
-                530
+                277,
+                396
               ]
             ]
           },
@@ -400,12 +437,12 @@
             "type": "polyline",
             "points": [
               [
-                690,
+                687,
                 530
               ],
               [
-                650,
-                530
+                687,
+                396
               ]
             ]
           },
@@ -415,10 +452,6 @@
               [
                 480,
                 200
-              ],
-              [
-                440,
-                200
               ]
             ]
           },
@@ -427,10 +460,6 @@
             "points": [
               [
                 890,
-                200
-              ],
-              [
-                850,
                 200
               ]
             ]
@@ -564,11 +593,7 @@
             "type": "polyline",
             "points": [
               [
-                384,
-                200
-              ],
-              [
-                424,
+                422,
                 200
               ]
             ]
@@ -577,11 +602,7 @@
             "type": "polyline",
             "points": [
               [
-                790,
-                200
-              ],
-              [
-                830,
+                831,
                 200
               ]
             ]
@@ -594,7 +615,7 @@
                 400
               ],
               [
-                215,
+                217,
                 530
               ]
             ]
@@ -603,7 +624,7 @@
             "type": "polyline",
             "points": [
               [
-                630,
+                215,
                 400
               ],
               [
@@ -616,8 +637,8 @@
             "type": "polyline",
             "points": [
               [
-                350,
-                875
+                420,
+                727
               ],
               [
                 390,
@@ -629,11 +650,11 @@
             "type": "polyline",
             "points": [
               [
-                760,
-                875
+                420,
+                727
               ],
               [
-                800,
+                799,
                 875
               ]
             ]
@@ -642,11 +663,11 @@
             "type": "polyline",
             "points": [
               [
-                1170,
-                875
+                420,
+                727
               ],
               [
-                1210,
+                1208,
                 875
               ]
             ]
@@ -655,11 +676,11 @@
             "type": "polyline",
             "points": [
               [
-                1580,
-                875
+                420,
+                727
               ],
               [
-                1620,
+                1617,
                 875
               ]
             ]
@@ -668,11 +689,11 @@
             "type": "polyline",
             "points": [
               [
-                1990,
-                875
+                420,
+                727
               ],
               [
-                2030,
+                2034,
                 875
               ]
             ]
@@ -681,8 +702,8 @@
             "type": "polyline",
             "points": [
               [
-                255,
-                1220
+                215,
+                1090
               ],
               [
                 215,
@@ -694,8 +715,8 @@
             "type": "polyline",
             "points": [
               [
-                665,
-                1220
+                215,
+                1090
               ],
               [
                 625,
@@ -707,8 +728,8 @@
             "type": "polyline",
             "points": [
               [
-                320,
-                530
+                687,
+                665
               ],
               [
                 280,
@@ -720,11 +741,11 @@
             "type": "polyline",
             "points": [
               [
-                730,
-                530
+                687,
+                665
               ],
               [
-                690,
+                687,
                 530
               ]
             ]
@@ -733,8 +754,8 @@
             "type": "polyline",
             "points": [
               [
-                520,
-                200
+                890,
+                335
               ],
               [
                 480,
@@ -746,8 +767,8 @@
             "type": "polyline",
             "points": [
               [
-                930,
-                200
+                890,
+                335
               ],
               [
                 890,
@@ -760,7 +781,10 @@
       "routing_notes": {
         "method": "full route = leaving_paths[from_id] + common_paths[from_type->to_type] + connecting_paths[to_id]",
         "station_name_rule": "Station 1 maps to 1.0; Station 1.1 maps to 1.1",
-        "important": "The generated common path coordinates are starter values. Tune points to match the physical tubes on the PNG."
+        "important": "The generated common path coordinates are starter values. Tune points to match the physical tubes on the PNG.",
+        "leaving_paths_rule": "Each leaving path is [source processing_pos, first point of common_paths[source_type->next_type]].",
+        "connecting_paths_rule": "Each connecting path is [last point of common_paths[previous_type->target_type], target processing_pos].",
+        "coordinate_system": "All coordinates are center points in pixel coordinates with (0,0) at the top-left of the layout image."
       }
     }
   }
