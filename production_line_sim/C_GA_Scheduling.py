@@ -874,7 +874,8 @@ def evaluate_schedule_with_simulator(
 
 def calculate_fitness(
     simulation_result,
-    orders
+    orders,
+    current_time_s
 ):
     """Calculate GA fitness for a simulated schedule.
 
@@ -934,7 +935,7 @@ def calculate_fitness(
         priority = max(1, int(order_info[order_id_key].get("priority", 1)))
         w = float(priority) ** float(GAMMA)
 
-        completion = float(completion)
+        completion = float(completion) + current_time_s
         lateness_s = completion - due
 
         tardiness_s = max(0.0, lateness_s)
@@ -948,12 +949,13 @@ def calculate_fitness(
             late_orders += 1
 
         exp_term = math.exp(k * T_hours) - 1.0
-        raw_weighted_exp_tardiness += float(DELTA)*w * exp_term
+        raw_weighted_exp_tardiness += float(DELTA)*w * exp_term 
 
         raw_earliness_days += w * E_hours
 
     weighted_exp_tardiness = raw_weighted_exp_tardiness
     weighted_earliness_reward = eps * raw_earliness_days
+    weighted_earliness_reward = 0
 
     fitness = weighted_exp_tardiness - weighted_earliness_reward
 
@@ -1120,7 +1122,8 @@ def run_ga(
 
             fitness_result = calculate_fitness(
                 simulation_result,
-                orders
+                orders,
+                current_time_s
             )
 
             fitness = fitness_result["fitness"]
@@ -1340,7 +1343,7 @@ def _schedule_has_less_than_one_day(current_time_s,segment_end_time_s, schedule_
 
     # If the schedule does not extend into at least the next day, treat as < 1 day left.
     print(f"max_abs_day: {max_abs_day} | current_abs_day {current_abs_day}")
-    return (max_abs_day - current_abs_day) < 3, max_abs_day < segment_end_day, segment_end_day - current_abs_day+2
+    return (max_abs_day - current_abs_day) < min(ALLOWED_LOOKAHEAD_DAYS), max_abs_day < segment_end_day, segment_end_day - current_abs_day+2
 
 
 

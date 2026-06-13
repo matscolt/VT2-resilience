@@ -58,6 +58,289 @@ def station_id_from_name(station_name: str) -> str:
     return f"{station_type}.{instance}"
 
 
+def normalize_station_id_value(value) -> Optional[str]:
+    """Normalize station IDs from disruption CSV: 1 -> 1.0, 1.1 -> 1.1."""
+    if value is None or pd.isna(value):
+        return None
+    s = str(value).strip()
+    if s == "":
+        return None
+    if s.lower().startswith("station"):
+        return station_id_from_name(s)
+    m = re.match(r"^(\d+)(?:\.(\d+))?$", s)
+    if not m:
+        return None
+    station_type = int(m.group(1))
+    instance = int(m.group(2) or 0)
+    return f"{station_type}.{instance}"
+
+
+def active_disruption_for_station(disruption_intervals_by_station: Dict[str, list], station_id: str, t: float) -> Optional[dict]:
+    """Return the active disruption interval for a station at time t, if any."""
+    for interval in disruption_intervals_by_station.get(station_id, []):
+        if interval["start"] <= t < interval["end"]:
+            return interval
+    return None
+
+
+def productive_work_elapsed(
+    station_id: str,
+    start_time: float,
+    current_time: float,
+    disruption_intervals_by_station: Dict[str, list],
+) -> float:
+    """
+    Calculate effective processing time elapsed between start_time and current_time.
+
+    Normal operation contributes at rate 1.0.
+    Efficiency loss contributes at efficiency_percentage / 100.
+    Breakdown contributes at rate 0.0.
+    """
+    if current_time <= start_time:
+        return 0.0
+
+    intervals = [
+        d for d in disruption_intervals_by_station.get(station_id, [])
+        if d["end"] > start_time and d["start"] < current_time
+    ]
+    intervals.sort(key=lambda d: d["start"])
+
+    elapsed = 0.0
+    cursor = float(start_time)
+    end = float(current_time)
+
+    for d in intervals:
+        ds = max(float(d["start"]), start_time)
+        de = min(float(d["end"]), end)
+        if de <= cursor:
+            continue
+
+        # Normal segment before disruption.
+        if ds > cursor:
+            elapsed += ds - cursor
+
+        # Disrupted segment.
+        if d.get("category") == "efficiency_loss":
+            elapsed += (de - ds) * (float(d.get("efficiency_percentage", 100.0)) / 100.0)
+        else:
+            # Breakdown: no progress.
+            elapsed += 0.0
+
+        cursor = de
+
+    if cursor < end:
+        elapsed += end - cursor
+
+    return max(0.0, elapsed)
+
+
+def merge_station_schedule_same_unit_arrival(station_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merge split station_schedule rows that represent the same continuous station visit.
+
+    Why this exists:
+      The simulation CSV can split one continuous stay at a station into multiple rows,
+      especially around disruption boundaries. If the after-movie renders those fragments
+      separately, the same unit can appear queued and processing at the same station, and
+      the processing progress bar can reset.
+
+    Conservative grouping rule:
+      - same unit_id
+      - same order_id, variant when present
+      - same station_index, station_name when present
+      - same arrival_time_s
+
+    This keeps real rework/restart visits separate, because a unit returning to the same
+    station after failing inspection should have a new arrival_time_s at that station.
+    """
+    if station_df.empty:
+        return station_df
+
+    required = {"unit_id", "arrival_time_s"}
+    if not required.issubset(station_df.columns):
+        return station_df
+
+    df = station_df.copy()
+    df["__original_order"] = range(len(df))
+
+    numeric_cols = [
+        "station_index",
+        "arrival_time_s",
+        "start_time_s",
+        "finish_time_s",
+        "process_time_s",
+        "base_process_time_s",
+        "wait_time_s",
+        "queue_length_on_arrival",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    group_cols = [
+        col for col in [
+            "unit_id",
+            "order_id",
+            "variant",
+            "station_index",
+            "station_name",
+            "arrival_time_s",
+        ]
+        if col in df.columns
+    ]
+
+    sort_cols = group_cols + [col for col in ["start_time_s", "finish_time_s", "__original_order"] if col in df.columns]
+    df = df.sort_values(sort_cols)
+
+    merged_rows = []
+    for _, group in df.groupby(group_cols, sort=False, dropna=False):
+        if len(group) == 1:
+            row = group.iloc[0].drop(labels=["__original_order"]).to_dict()
+            merged_rows.append(row)
+            continue
+
+        row = group.iloc[0].drop(labels=["__original_order"]).to_dict()
+
+        if "arrival_time_s" in group.columns:
+            row["arrival_time_s"] = float(group["arrival_time_s"].min())
+        if "start_time_s" in group.columns:
+            row["start_time_s"] = float(group["start_time_s"].min())
+        if "finish_time_s" in group.columns:
+            row["finish_time_s"] = float(group["finish_time_s"].max())
+
+        # Total station stay used by the animation.
+        if "process_time_s" in group.columns and "start_time_s" in row and "finish_time_s" in row:
+            row["process_time_s"] = max(float(row["finish_time_s"]) - float(row["start_time_s"]), 0.0)
+
+        # For split fragments, summing base_process_time_s can double-count.
+        # The maximum is the safer representation of the actual base operation time.
+        if "base_process_time_s" in group.columns:
+            row["base_process_time_s"] = float(group["base_process_time_s"].max())
+
+        if "wait_time_s" in group.columns and "arrival_time_s" in row and "start_time_s" in row:
+            row["wait_time_s"] = max(float(row["start_time_s"]) - float(row["arrival_time_s"]), 0.0)
+
+        if "queue_length_on_arrival" in group.columns:
+            row["queue_length_on_arrival"] = group["queue_length_on_arrival"].iloc[0]
+
+        merged_rows.append(row)
+
+    merged = pd.DataFrame(merged_rows)
+
+    # Preserve original column order as much as possible.
+    ordered_cols = [col for col in station_df.columns if col in merged.columns]
+    extra_cols = [col for col in merged.columns if col not in ordered_cols]
+    merged = merged[ordered_cols + extra_cols]
+
+    # Chronological order for rendering.
+    render_sort_cols = [col for col in ["arrival_time_s", "start_time_s", "finish_time_s", "unit_id", "station_name"] if col in merged.columns]
+    if render_sort_cols:
+        merged = merged.sort_values(render_sort_cols).reset_index(drop=True)
+    else:
+        merged = merged.reset_index(drop=True)
+
+    removed = len(station_df) - len(merged)
+    if removed > 0:
+        print(
+            f"Merged {removed} split station_schedule row(s) "
+            "with same unit/order/variant/station/arrival_time_s for after-movie rendering."
+        )
+
+    return merged
+
+
+def queue_visit_key_for_counter(row: pd.Series) -> tuple:
+    """
+    Key used for queue counting.
+
+    The queue counter should count physical station visits, not raw station_schedule rows.
+    Using arrival_time_s keeps real rework/restart visits separate, while grouping split
+    rows from the same station visit together.
+    """
+    def value_or_empty(column_name: str):
+        if column_name not in row.index:
+            return ""
+        value = row.get(column_name)
+        if pd.isna(value):
+            return ""
+        return value
+
+    arrival = value_or_empty("arrival_time_s")
+    try:
+        arrival = round(float(arrival), 6)
+    except Exception:
+        pass
+
+    station_index = value_or_empty("station_index")
+    try:
+        station_index = int(float(station_index)) if station_index != "" else ""
+    except Exception:
+        pass
+
+    return (
+        str(value_or_empty("unit_id")),
+        str(value_or_empty("order_id")),
+        str(value_or_empty("variant")),
+        station_index,
+        str(value_or_empty("station_name")),
+        arrival,
+    )
+
+
+def add_queue_counter_keys(station_df: pd.DataFrame) -> pd.DataFrame:
+    """Add internal keys used for queue counting without changing exported columns."""
+    if "__queue_visit_key" in station_df.columns:
+        return station_df
+    station_df = station_df.copy()
+    station_df["__queue_visit_key"] = station_df.apply(queue_visit_key_for_counter, axis=1)
+    return station_df
+
+
+def queue_count_for_station(station_df: pd.DataFrame, station_name: str, t: float) -> int:
+    """
+    Count queued physical units/visits for one station.
+
+    A raw split row may look queued at the same time the same unit is processing another
+    fragment at the same station. This function removes queued rows belonging to units
+    that are already processing at that station at time t.
+    """
+    station_rows = station_df[station_df["station_name"] == station_name]
+    if station_rows.empty:
+        return 0
+
+    queued = station_rows[
+        (station_rows["arrival_time_s"] <= t)
+        & (station_rows["start_time_s"] > t)
+    ]
+    if queued.empty:
+        return 0
+
+    processing = station_rows[
+        (station_rows["start_time_s"] <= t)
+        & (station_rows["finish_time_s"] > t)
+    ]
+
+    if not processing.empty:
+        processing_unit_station_keys = set(
+            zip(
+                processing["unit_id"].astype(str),
+                processing["station_name"].astype(str),
+            )
+        )
+
+        keep_mask = []
+        for _, qrow in queued.iterrows():
+            queued_unit_station_key = (str(qrow["unit_id"]), str(qrow["station_name"]))
+            keep_mask.append(queued_unit_station_key not in processing_unit_station_keys)
+        queued = queued[keep_mask]
+
+    if queued.empty:
+        return 0
+
+    # Count unique visits, not duplicate rows.
+    return len(set(queued["__queue_visit_key"]))
+
+
 def station_type_from_id(station_id: str) -> int:
     return int(str(station_id).split(".")[0])
 
@@ -436,6 +719,7 @@ def prompt_time_period(run_dir: Path) -> Tuple[float, float]:
     transport_schedule = data_dir / "transport_schedule.csv"
 
     station_df = pd.read_csv(station_schedule)
+    station_df = merge_station_schedule_same_unit_arrival(station_df)
     transport_df = pd.read_csv(transport_schedule)
 
     min_time = 0.0
@@ -541,11 +825,54 @@ def render_after_movie(
         raise FileNotFoundError(f"Carrier PNG not found: {carrier_path}")
 
     station_df = pd.read_csv(station_schedule)
+    station_df = merge_station_schedule_same_unit_arrival(station_df)
     transport_df = pd.read_csv(transport_schedule)
 
     station_df["station_id"] = station_df["station_name"].apply(station_id_from_name)
+    station_df = add_queue_counter_keys(station_df)
     transport_df["from_station_id"] = transport_df["from_station"].apply(station_id_from_name)
     transport_df["to_station_id"] = transport_df["to_station"].apply(station_id_from_name)
+
+    # Optional disruption file located next to station_schedule.csv and transport_schedule.csv.
+    # Supports both spellings used during development: disruption_used.csv and disruptions_used.csv.
+    # Rows with a station_id and valid start/end are treated as station-affecting disruptions.
+    #   - efficiency_loss rows keep the loading bar visible but slow its progress.
+    #   - breakdown rows hide the loading bar while active.
+    #   - all timed station disruptions display a countdown at dis_label_pos.
+    disruption_candidates = [data_dir / "disruptions_used.csv", data_dir / "disruption_used.csv"]
+    disruptions_path = next((p for p in disruption_candidates if p.exists()), None)
+    disruption_intervals_by_station: Dict[str, list] = {}
+    if disruptions_path is not None:
+        disruptions_df = pd.read_csv(disruptions_path)
+        required_cols = {"disruption_type", "station_id", "start_time", "end_time", "efficiency_percentage"}
+        if required_cols.issubset(disruptions_df.columns):
+            disruptions_df["station_id_norm"] = disruptions_df["station_id"].apply(normalize_station_id_value)
+            disruptions_df["start_time"] = pd.to_numeric(disruptions_df["start_time"], errors="coerce")
+            disruptions_df["end_time"] = pd.to_numeric(disruptions_df["end_time"], errors="coerce")
+            disruptions_df["efficiency_percentage"] = pd.to_numeric(disruptions_df["efficiency_percentage"], errors="coerce")
+
+            timed_station_disruptions = disruptions_df[
+                disruptions_df["station_id_norm"].notna()
+                & disruptions_df["start_time"].notna()
+                & disruptions_df["end_time"].notna()
+            ]
+            for _, drow in timed_station_disruptions.iterrows():
+                sid = drow["station_id_norm"]
+                dtype = str(drow.get("disruption_type", "disruption"))
+                eff = drow.get("efficiency_percentage")
+                eff_value = float(eff) if pd.notna(eff) else 0.0
+                category = "efficiency_loss" if dtype == "efficiency_loss" or eff_value > 0 else "breakdown"
+                disruption_intervals_by_station.setdefault(sid, []).append({
+                    "start": float(drow["start_time"]),
+                    "end": float(drow["end_time"]),
+                    "type": dtype,
+                    "category": category,
+                    "efficiency_percentage": eff_value if category == "efficiency_loss" else 0.0,
+                })
+            for intervals in disruption_intervals_by_station.values():
+                intervals.sort(key=lambda item: item["start"])
+        else:
+            print(f"WARNING: {disruptions_path} is missing required columns: {sorted(required_cols)}")
 
     stations = layout.get("stations", {})
     for name in station_df["station_name"].dropna().unique():
@@ -613,13 +940,10 @@ def render_after_movie(
         draw = ImageDraw.Draw(frame)
 
         # Queue counters only; no individual queued units.
+        # Count physical station visits, not raw CSV rows. This prevents split fragments
+        # caused by disruptions from increasing the queue while the same unit is processing.
         for station_name, st in stations.items():
-            q = station_df[
-                (station_df["station_name"] == station_name)
-                & (station_df["arrival_time_s"] <= t)
-                & (station_df["start_time_s"] > t)
-            ]
-            count = len(q)
+            count = queue_count_for_station(station_df, station_name, t)
             qpos = st.get("queue_label_pos")
             if qpos is not None:
                 draw_text_center(
@@ -630,6 +954,23 @@ def render_after_movie(
                     tuple(defaults.get("queue_label_color", [0, 0, 0, 255])),
                 )
 
+        # Disruption timers are drawn independently of whether a unit is currently processing.
+        # Both efficiency-loss intervals and breakdown intervals count down at dis_label_pos.
+        for station_name, st in stations.items():
+            sid = station_id_from_name(station_name)
+            active_disruption = active_disruption_for_station(disruption_intervals_by_station, sid, t)
+            if active_disruption is not None:
+                dpos = st.get("dis_label_pos")
+                if dpos is not None:
+                    remaining = max(active_disruption["end"] - t, 0.0)
+                    draw_text_center(
+                        draw,
+                        tuple(dpos),
+                        f"DISR {remaining:0.1f}s",
+                        dis_font,
+                        tuple(defaults.get("disruption_label_color", [255, 0, 0, 255])),
+                    )
+
         # Processing units are visible exactly at processing_pos.
         # No offset is applied: the coordinate in aftermovie_config_v2.json is treated as the carrier center.
         processing = station_df[(station_df["start_time_s"] <= t) & (station_df["finish_time_s"] > t)]
@@ -637,30 +978,36 @@ def render_after_movie(
             st = stations[row["station_name"]]
             x, y = st["processing_pos"]
             center = (float(x), float(y))
-            proc_duration = float(row["finish_time_s"]) - float(row["start_time_s"])
-            if proc_duration <= 1e-9:
-                proc_progress = 1.0
+            # Old after-movie processing-bar logic:
+            # extra time in station_schedule.csv is treated as disruption/lost time first,
+            # followed by the actual base processing phase where the bar fills from 0..100%.
+            start_s = float(row["start_time_s"])
+            finish_s = float(row["finish_time_s"])
+            total_duration = max(finish_s - start_s, 0.0)
+
+            if "process_time_s" in row and "base_process_time_s" in row and pd.notna(row.get("base_process_time_s")):
+                process_time_s = float(row.get("process_time_s", total_duration))
+                base_process_time_s = float(row["base_process_time_s"])
+                disruption_time = max(process_time_s - base_process_time_s, 0.0)
+                disruption_time = min(disruption_time, total_duration)
+                proc_start = start_s + disruption_time
+                proc_dur = max(finish_s - proc_start, 0.0)
             else:
-                proc_progress = (t - float(row["start_time_s"])) / proc_duration
-            draw_loading_bar(frame, center, proc_progress, carrier_size)
+                proc_start = start_s
+                proc_dur = total_duration
+
+            # During the disruption/lost-time phase, show the carrier without the bar.
+            # During the processing phase, show the bar and let it fill normally.
+            if t >= proc_start:
+                if proc_dur <= 1e-9:
+                    proc_progress = 1.0
+                else:
+                    proc_progress = (t - proc_start) / proc_dur
+                draw_loading_bar(frame, center, proc_progress, carrier_size)
+
             paste_center(frame, carrier, center)
             if draw_unit_ids:
                 draw_text_center(draw, (int(center[0]), int(center[1])), str(row["unit_id"]), unit_font, (0, 0, 0, 255))
-
-            # Disruption timer: show extra processing time beyond base_process_time_s.
-            if "base_process_time_s" in row and pd.notna(row.get("base_process_time_s")):
-                base_done = float(row["start_time_s"]) + float(row["base_process_time_s"])
-                if t >= base_done and float(row["finish_time_s"]) > base_done:
-                    elapsed = t - base_done
-                    dpos = st.get("dis_label_pos")
-                    if dpos is not None:
-                        draw_text_center(
-                            draw,
-                            tuple(dpos),
-                            f"DISR {elapsed:0.1f}s",
-                            dis_font,
-                            tuple(defaults.get("disruption_label_color", [255, 0, 0, 255])),
-                        )
 
         # Transporting units are visible along the composed instance-aware route.
         moving = transport_df[(transport_df["start_time_s"] <= t) & (transport_df["finish_time_s"] > t)]
