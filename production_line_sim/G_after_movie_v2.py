@@ -412,6 +412,41 @@ def resolve_layout_asset_path(value: str | Path | None) -> Optional[Path]:
     return LAYOUTDIR / p.name
 
 
+def layout_name_from_settings_used(data_dir: Path) -> Optional[str]:
+    """
+    Read the simulation layout from settings_used.json located next to the result CSVs.
+
+    Expected structure:
+        {
+            "settings": {
+                "Scenarios": "layout_2_3_5_2_3_2.json"
+            }
+        }
+
+    The returned value is intentionally the scenario JSON filename. choose_layout() can
+    map this through config["layout_selection"] to the internal layout key.
+    """
+    settings_path = data_dir / "settings_used.json"
+    if not settings_path.exists():
+        return None
+
+    try:
+        with open(settings_path, encoding="utf-8") as f:
+            settings_used = json.load(f)
+    except Exception as e:
+        print(f"WARNING: Could not read {settings_path}: {e}")
+        return None
+
+    settings = settings_used.get("settings", {})
+    scenario_name = settings.get("Scenarios")
+    if scenario_name is None:
+        print(f"WARNING: {settings_path} does not contain settings['Scenarios']; using default layout selection.")
+        return None
+
+    scenario_name = str(scenario_name).strip()
+    return scenario_name or None
+
+
 def choose_layout(config: dict, layout_name: Optional[str]) -> Tuple[str, dict]:
     layouts = config.get("layouts", {})
     if layout_name:
@@ -800,7 +835,14 @@ def render_after_movie(
 
     config = json.load(open(config_path, encoding="utf-8"))
     defaults = config.get("defaults", {})
-    layout_key, layout = choose_layout(config, layout_name)
+
+    # Layout selection:
+    # 1) explicit layout_name argument if one is ever provided programmatically
+    # 2) settings_used.json next to the result CSVs, using settings["Scenarios"]
+    # 3) fallback to the first layout in aftermovie_config_v2.json
+    layout_name_from_settings = layout_name_from_settings_used(data_dir)
+    requested_layout_name = layout_name if layout_name is not None else layout_name_from_settings
+    layout_key, layout = choose_layout(config, requested_layout_name)
 
     fps = int(fps_override if fps_override is not None else defaults.get("fps", 30))
     sim_seconds_per_frame = float(
@@ -910,6 +952,8 @@ def render_after_movie(
     print(f"  main/run folder : {run_dir}")
     print(f"  data folder     : {data_dir}")
     print(f"  config          : {config_path}")
+    if requested_layout_name is not None:
+        print(f"  layout requested: {requested_layout_name}")
     print(f"  layout          : {layout_key}")
     print(f"  fps             : {fps}")
     print(f"  sim sec/frame   : {sim_seconds_per_frame}")
