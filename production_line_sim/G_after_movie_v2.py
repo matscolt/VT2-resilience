@@ -341,6 +341,137 @@ def queue_count_for_station(station_df: pd.DataFrame, station_name: str, t: floa
     return len(set(queued["__queue_visit_key"]))
 
 
+def infer_missing_transport_rows(station_df: pd.DataFrame, transport_df: pd.DataFrame, eps: float = 1e-6) -> pd.DataFrame:
+    """
+    Infer missing transport rows from consecutive station visits.
+
+    This fixes cases where a unit finishes processing at one station, the next station row
+    exists later, but transport_schedule.csv has no row for that move. Without a transport
+    row, the after-movie has no state for the unit during that interval, so it disappears.
+
+    We only infer forward one-step process moves, e.g. 1->2, 2->3, ..., 5->6.
+    Queue time is still respected because the inferred transport ends at the next station's
+    arrival_time_s, not at start_time_s.
+    """
+    if station_df.empty:
+        return transport_df
+
+    required_station_cols = {"unit_id", "station_name", "arrival_time_s", "start_time_s", "finish_time_s"}
+    if not required_station_cols.issubset(station_df.columns):
+        return transport_df
+
+    if transport_df is None or transport_df.empty:
+        transport_df = pd.DataFrame(columns=[
+            "unit_id", "order_id", "variant", "transport_index", "transport_name",
+            "from_station", "to_station", "start_time_s", "finish_time_s", "transport_time_s"
+        ])
+    else:
+        transport_df = transport_df.copy()
+
+    for col in ["arrival_time_s", "start_time_s", "finish_time_s"]:
+        station_df[col] = pd.to_numeric(station_df[col], errors="coerce")
+    for col in ["start_time_s", "finish_time_s", "transport_time_s"]:
+        if col in transport_df.columns:
+            transport_df[col] = pd.to_numeric(transport_df[col], errors="coerce")
+
+    existing_keys = set()
+    if {"unit_id", "from_station", "to_station", "start_time_s", "finish_time_s"}.issubset(transport_df.columns):
+        for _, tr in transport_df.iterrows():
+            try:
+                existing_keys.add((
+                    str(tr["unit_id"]),
+                    str(tr["from_station"]),
+                    str(tr["to_station"]),
+                    round(float(tr["start_time_s"]), 4),
+                    round(float(tr["finish_time_s"]), 4),
+                ))
+            except Exception:
+                pass
+
+    sort_cols = [c for c in ["unit_id", "order_id", "variant", "arrival_time_s", "start_time_s", "finish_time_s"] if c in station_df.columns]
+    df = station_df.sort_values(sort_cols).reset_index(drop=True)
+
+    group_cols = [c for c in ["unit_id", "order_id", "variant"] if c in df.columns]
+    if "unit_id" not in group_cols:
+        return transport_df
+
+    inferred = []
+    for _, group in df.groupby(group_cols, sort=False, dropna=False):
+        group = group.sort_values(["arrival_time_s", "start_time_s", "finish_time_s"]).reset_index(drop=True)
+        for i in range(len(group) - 1):
+            cur = group.iloc[i]
+            nxt = group.iloc[i + 1]
+
+            try:
+                from_id = station_id_from_name(cur["station_name"])
+                to_id = station_id_from_name(nxt["station_name"])
+                from_type = station_type_from_id(from_id)
+                to_type = station_type_from_id(to_id)
+            except Exception:
+                continue
+
+            # Only infer normal forward moves in the production flow.
+            if to_type != from_type + 1:
+                continue
+
+            start = float(cur["finish_time_s"])
+            finish = float(nxt["arrival_time_s"])
+            if not math.isfinite(start) or not math.isfinite(finish):
+                continue
+            if finish <= start + eps:
+                continue
+
+            key = (
+                str(cur["unit_id"]),
+                str(cur["station_name"]),
+                str(nxt["station_name"]),
+                round(start, 4),
+                round(finish, 4),
+            )
+            if key in existing_keys:
+                continue
+
+            # Also avoid adding if an existing transport for same unit/from/to overlaps the same interval.
+            if {"unit_id", "from_station", "to_station", "start_time_s", "finish_time_s"}.issubset(transport_df.columns):
+                same_move = transport_df[
+                    (transport_df["unit_id"].astype(str) == str(cur["unit_id"]))
+                    & (transport_df["from_station"].astype(str) == str(cur["station_name"]))
+                    & (transport_df["to_station"].astype(str) == str(nxt["station_name"]))
+                    & (abs(transport_df["start_time_s"].astype(float) - start) <= 1e-3)
+                    & (abs(transport_df["finish_time_s"].astype(float) - finish) <= 1e-3)
+                ]
+                if not same_move.empty:
+                    continue
+
+            inferred.append({
+                "unit_id": cur.get("unit_id", ""),
+                "order_id": cur.get("order_id", "") if "order_id" in cur.index else "",
+                "variant": cur.get("variant", "") if "variant" in cur.index else "",
+                "transport_index": from_type,
+                "transport_name": f"Inferred Transportation {from_type}",
+                "from_station": cur["station_name"],
+                "to_station": nxt["station_name"],
+                "start_time_s": start,
+                "finish_time_s": finish,
+                "transport_time_s": finish - start,
+                "__inferred": True,
+            })
+
+    if inferred:
+        inferred_df = pd.DataFrame(inferred)
+        for col in inferred_df.columns:
+            if col not in transport_df.columns:
+                transport_df[col] = np.nan
+        for col in transport_df.columns:
+            if col not in inferred_df.columns:
+                inferred_df[col] = np.nan
+        transport_df = pd.concat([transport_df, inferred_df[transport_df.columns]], ignore_index=True)
+        transport_df = transport_df.sort_values(["start_time_s", "finish_time_s", "unit_id"]).reset_index(drop=True)
+        print(f"Inferred {len(inferred)} missing transport row(s) from consecutive station visits for after-movie rendering.")
+
+    return transport_df
+
+
 def station_type_from_id(station_id: str) -> int:
     return int(str(station_id).split(".")[0])
 
@@ -869,6 +1000,7 @@ def render_after_movie(
     station_df = pd.read_csv(station_schedule)
     station_df = merge_station_schedule_same_unit_arrival(station_df)
     transport_df = pd.read_csv(transport_schedule)
+    transport_df = infer_missing_transport_rows(station_df, transport_df)
 
     station_df["station_id"] = station_df["station_name"].apply(station_id_from_name)
     station_df = add_queue_counter_keys(station_df)
