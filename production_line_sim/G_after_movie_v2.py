@@ -794,6 +794,22 @@ def _format_eta(seconds):
     return f"{h:d}:{m:02d}:{s:02d}" if h > 0 else f"{m:02d}:{s:02d}"
 
 
+def format_sim_time_8h_day(seconds: float) -> str:
+    """
+    Format simulation time as day:hour:min:sec.
+    One simulation day is defined as 8 hours.
+    """
+    total_seconds = max(0, int(round(float(seconds))))
+    seconds_per_day = 8 * 60 * 60
+    day = total_seconds // seconds_per_day
+    remainder = total_seconds % seconds_per_day
+    hour = remainder // 3600
+    remainder %= 3600
+    minute = remainder // 60
+    second = remainder % 60
+    return f"{day}:{hour:02d}:{minute:02d}:{second:02d}"
+
+
 def reset_progress_update() -> None:
     """Reset persistent timing state for the terminal progress bar."""
     for attr in ("_last_tick", "_dts", "_avg_fps", "_eta_seconds"):
@@ -1198,7 +1214,7 @@ def render_after_movie(
 
         if draw_time_label:
             pos = tuple(defaults.get("time_label_pos", [20, 20]))
-            draw.text(pos, f"t = {t:0.1f}s", font=time_font, fill=tuple(defaults.get("time_label_color", [0, 0, 0, 255])))
+            draw.text(pos, f"t = {format_sim_time_8h_day(t)}", font=time_font, fill=tuple(defaults.get("time_label_color", [0, 0, 0, 255])))
 
         if writer is not None:
             writer.append_data(np.asarray(frame.convert("RGB")))
